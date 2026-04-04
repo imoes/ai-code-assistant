@@ -1,0 +1,209 @@
+{
+  "name": "ai-code-assistant",
+  "displayName": "AI Code Assistant (llama.cpp MCP)",
+  "description": "Autonomer AI Code Assistant basierend auf llama.cpp MCP – erstellt, bearbeitet und testet Code direkt im Workspace.",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "ai",
+    "llama",
+    "mcp",
+    "code assistant",
+    "copilot"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aiAssistant.openPanel",
+        "title": "AI Assistant: Panel öffnen",
+        "icon": "$(robot)"
+      },
+      {
+        "command": "aiAssistant.sendPrompt",
+        "title": "AI Assistant: Anweisung senden"
+      },
+      {
+        "command": "aiAssistant.undoLastAction",
+        "title": "AI Assistant: Letzte KI-Aktion rückgängig machen",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "aiAssistant.undoAllActions",
+        "title": "AI Assistant: Alle KI-Aktionen rückgängig machen"
+      },
+      {
+        "command": "aiAssistant.showLog",
+        "title": "AI Assistant: Log anzeigen"
+      },
+      {
+        "command": "aiAssistant.testConnection",
+        "title": "AI Assistant: llama.cpp Verbindung testen"
+      },
+      {
+        "command": "aiAssistant.toggleMode",
+        "title": "AI Assistant: Modus umschalten (Auto ↔ Manuell)"
+      },
+      {
+        "command": "aiAssistant.toggleAutoTest",
+        "title": "AI Assistant: Auto-Test umschalten"
+      },
+      {
+        "command": "aiAssistant.openSettings",
+        "title": "AI Assistant: Einstellungen öffnen"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiAssistant",
+          "title": "AI Code Assistant",
+          "icon": "$(robot)"
+        }
+      ]
+    },
+    "views": {
+      "aiAssistant": [
+        {
+          "type": "tree",
+          "id": "aiAssistant.sessionsView",
+          "name": "Sessions"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "aiAssistant.sessionsView",
+        "contents": "Öffne einen neuen AI-Chat als Editor-Tab.\n\n[➕  Neue Chat-Session](command:aiAssistant.openPanel)\n\nJeder Klick öffnet eine eigene Session."
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "aiAssistant.openPanel"
+        },
+        {
+          "command": "aiAssistant.undoLastAction"
+        },
+        {
+          "command": "aiAssistant.undoAllActions"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "aiAssistant.sendPrompt",
+          "group": "aiAssistant",
+          "when": "editorHasSelection"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AI Code Assistant",
+      "properties": {
+        "aiAssistant.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "URL des llama.cpp Servers (z.B. http://localhost:8080)"
+        },
+        "aiAssistant.mcpEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "MCP-Protokoll statt direkter HTTP-API verwenden"
+        },
+        "aiAssistant.model": {
+          "type": "string",
+          "default": "",
+          "description": "Modellname (leer = Serverstandard)"
+        },
+        "aiAssistant.maxTokens": {
+          "type": "number",
+          "default": 2048,
+          "description": "Maximale Token-Anzahl pro Antwort"
+        },
+        "aiAssistant.temperature": {
+          "type": "number",
+          "default": 0.2,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Kreativitäts-Faktor (0 = deterministisch, 2 = sehr kreativ)"
+        },
+        "aiAssistant.autoApply": {
+          "type": "boolean",
+          "default": false,
+          "description": "KI-Änderungen automatisch anwenden (ohne Bestätigung)"
+        },
+        "aiAssistant.allowShellCommands": {
+          "type": "boolean",
+          "default": true,
+          "description": "Shell-Befehle durch die KI erlauben"
+        },
+        "aiAssistant.confirmDangerousOps": {
+          "type": "boolean",
+          "default": true,
+          "description": "Vor potenziell gefährlichen Operationen warnen"
+        },
+        "aiAssistant.systemPrompt": {
+          "type": "string",
+          "default": "Du bist ein erfahrener Software-Entwickler und AI Code Assistant. Du hast Zugriff auf den Workspace des Benutzers und kannst Dateien erstellen, bearbeiten, löschen und Shell-Befehle ausführen. Antworte immer auf Deutsch, sofern nicht anders gewünscht. Sei präzise und erkläre deine Aktionen.",
+          "description": "System-Prompt für den AI-Assistenten"
+        },
+        "aiAssistant.autoTest": {
+          "type": "boolean",
+          "default": false,
+          "description": "Nach KI-Dateiänderungen automatisch Tests ausführen. Die KI erkennt den Testbefehl (npm test, pytest, cargo test usw.) anhand der Projektstruktur selbst."
+        },
+        "aiAssistant.autoFixOnError": {
+          "type": "boolean",
+          "default": true,
+          "description": "KI analysiert Shell-Fehlerausgaben automatisch und versucht den Code zu korrigieren."
+        },
+        "aiAssistant.autoFixIterations": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Maximale Anzahl automatischer Korrektur-Iterationen bei Shell-Fehlern."
+        },
+        "aiAssistant.contextWarningThreshold": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 1000,
+          "description": "Schwellenwert (in Token) ab dem eine Kontext-Warnung angezeigt wird."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "lint": "eslint src --ext ts"
+  },
+  "overrides": {
+    "undici": "5"
+  },
+  "dependencies": {
+    "eventsource": "^2.0.2",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.105.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "@vscode/vsce": "^2.15.0",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.0"
+  }
+}

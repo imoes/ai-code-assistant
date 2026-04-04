@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(cmd.exe /c \"npm --version\")",
+      "Bash(cmd.exe /c \"where npm\")",
+      "Bash(wsl npm:*)",
+      "Bash(wsl node:*)",
+      "Bash(wsl bash:*)",
+      "Bash(npm run:*)",
+      "Read(//mnt/d/Dev/code/**)",
+      "Bash(cmd.exe /c \"cd /d d:\\\\Dev\\\\code\\\\ai-code-asisstant && npm run compile 2>&1\")",
+      "WebFetch(domain:192.168.178.57)"
+    ]
+  }
+}
