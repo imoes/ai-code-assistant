@@ -109,8 +109,11 @@ export class AIEngine {
         let workspaceContext = '';
         try {
             const root = this.fileManager.getWorkspaceRoot();
-            const tree = this.fileManager.getWorkspaceTree(80);
-            workspaceContext = `\n\nAktueller Workspace: ${root}\n\nDateistruktur:\n${tree}`;
+            const allFilesList = this.fileManager.listFiles();
+            const tree = allFilesList.slice(0, 80)
+                .map(f => path.relative(root, f)).join('\n');
+            this.logger.info(`Workspace-Scan: ${allFilesList.length} Datei(en) in ${root}`);
+            workspaceContext = `\n\nAktueller Workspace: ${root}\n\nDateistruktur (${allFilesList.length} Dateien):\n${tree}`;
 
             // Aktive Editor-Datei einbinden (mit Zeilennummern für replace_lines)
             const editor = vscode.window.activeTextEditor;
@@ -121,8 +124,7 @@ export class AIEngine {
             }
 
             // Weitere im Prompt erwähnte Dateien automatisch einlesen
-            const allFiles = this.fileManager.listFiles();
-            const relFiles = allFiles.map(f => path.relative(root, f));
+            const relFiles = allFilesList.map(f => path.relative(root, f));
             const mentionedFiles = relFiles.filter(rel => {
                 const filename = path.basename(rel);
                 return userPrompt.includes(filename) || userPrompt.includes(rel);
@@ -200,15 +202,19 @@ und füge ihn als letzten action:shell Block an.` : '';
         const cleanText = this.stripActionBlocks(rawResponse);
 
         // ── History speichern ─────────────────────────────────────────────────
-        if (_depth === 0) {
-            this.historyManager?.addUserMessage(userPrompt);
+        if (!this.historyManager) {
+            this.logger.warn('History: HistoryManager ist null – kein Eintrag gespeichert.');
+        } else {
+            if (_depth === 0) {
+                this.historyManager.addUserMessage(userPrompt);
+            }
+            this.historyManager.addAssistantMessage(cleanText, actions.map(a => ({
+                type: a.type,
+                description: a.description,
+                success: a.success,
+                output: a.output
+            })));
         }
-        this.historyManager?.addAssistantMessage(cleanText, actions.map(a => ({
-            type: a.type,
-            description: a.description,
-            success: a.success,
-            output: a.output
-        })));
 
         // ── Shell-Feedback-Loop ───────────────────────────────────────────────
         const maxIterations = config.get<number>('autoFixIterations', 3);
@@ -511,11 +517,43 @@ und füge ihn als letzten action:shell Block an.` : '';
         }
 
         const trimmed = command.trim();
+
+        // cat/head/tail: VOR dem Confirm-Dialog abfangen und direkt lesen
+        let workDirEarly: string;
+        try { workDirEarly = this.fileManager.getWorkspaceRoot(); } catch { workDirEarly = ''; }
+        if (workDirEarly) {
+            const intercepted = ShellRunner.interceptFileReadCommand(trimmed, workDirEarly, this.logger);
+            if (intercepted) {
+                this.logger.info(`Dateilese-Befehl abgefangen (kein WSL): ${trimmed}`);
+                return {
+                    type: 'shell',
+                    description: `Datei gelesen: ${trimmed}`,
+                    success: intercepted.exitCode === 0,
+                    output: intercepted.stdout || intercepted.stderr
+                };
+            }
+        }
+
         const choice = await confirm(
             `Shell-Befehl ausführen (WSL):\n\`${trimmed}\``,
-            ['Ausführen', 'Ablehnen']
+            ['Ausführen', 'Etwas anderes', 'Ablehnen']
         );
-        if (choice !== 'Ausführen') {
+
+        let commandToRun = trimmed;
+
+        if (choice === 'Etwas anderes') {
+            const altCommand = await vscode.window.showInputBox({
+                prompt: 'Alternativen Befehl eingeben',
+                value: trimmed,
+                placeHolder: 'z.B. npm run dev',
+                ignoreFocusOut: true
+            });
+            if (!altCommand?.trim()) {
+                return { type: 'shell', description: `Abgelehnt: ${trimmed}`, success: false };
+            }
+            commandToRun = altCommand.trim();
+            this.logger.info(`Shell: Benutzer ersetzte Befehl: ${trimmed} → ${commandToRun}`);
+        } else if (choice !== 'Ausführen') {
             return { type: 'shell', description: `Abgelehnt: ${trimmed}`, success: false };
         }
 
@@ -523,11 +561,11 @@ und füge ihn als letzten action:shell Block an.` : '';
         try { workDir = this.fileManager.getWorkspaceRoot(); }
         catch { return { type: 'shell', description: 'Kein Workspace', success: false }; }
 
-        const result = await this.shellRunner.run(trimmed, workDir, 120_000, confirm);
+        const result = await this.shellRunner.run(commandToRun, workDir, 120_000, confirm);
         const output = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, 4000);
         return {
             type: 'shell',
-            description: `Shell: ${trimmed.slice(0, 60)}`,
+            description: `Shell: ${commandToRun.slice(0, 60)}`,
             success: result.exitCode === 0,
             output: output || '(keine Ausgabe)'
         };
@@ -567,8 +605,9 @@ und füge ihn als letzten action:shell Block an.` : '';
         try {
             const root = this.fileManager.getWorkspaceRoot();
             this.historyManager = new HistoryManager(root);
-        } catch {
-            // kein Workspace → kein History
+            this.logger.info(`HistoryManager initialisiert: ${root}`);
+        } catch (err) {
+            this.logger.warn(`HistoryManager konnte nicht initialisiert werden: ${(err as Error).message}`);
         }
     }
 

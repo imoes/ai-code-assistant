@@ -89,6 +89,18 @@ export class ChatPanel {
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
 
         this.postSystem(`AI Chat Session #${sessionId} bereit.`);
+
+        // Workspace scannen und Ergebnis im Chat anzeigen
+        try {
+            const root = this.fileManager.getWorkspaceRoot();
+            const files = this.fileManager.listFiles();
+            this.postSystem(`📁 Workspace: ${root} — ${files.length} Datei(en) gefunden`);
+        } catch {
+            this.postSystem('⚠ Kein Workspace geöffnet. Bitte einen Ordner öffnen.');
+        }
+
+        // Log-Kanal sofort einblenden (preserveFocus=true → Fokus bleibt im Editor)
+        this.logger.show();
     }
 
     /**
@@ -809,7 +821,7 @@ window.addEventListener('message', (ev) => {
         scrollBottom();
       } break;
     case 'assistantMessageEnd':
-      currentAssistantEl = null; setInputEnabled(true); break;
+      currentAssistantEl = null; setThinking(false); setInputEnabled(true); break;
     case 'thinking':
       setThinking(msg.value);
       if (msg.value) setInputEnabled(false); break;

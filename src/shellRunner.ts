@@ -90,7 +90,7 @@ export class ShellRunner {
         }
 
         // cat/head/tail abfangen: direkt einlesen statt WSL-Befehl ausführen
-        const fileReadResult = this.interceptFileReadCommand(command, workDir);
+        const fileReadResult = ShellRunner.interceptFileReadCommand(command, workDir, this.logger);
         if (fileReadResult) {
             return fileReadResult;
         }
@@ -183,8 +183,10 @@ export class ShellRunner {
      * Fängt Dateilese-Befehle ab (cat, head, tail) und liest die Datei direkt
      * über Node.js ein — kein WSL-Prozess nötig, keine Pfadprobleme.
      * Gibt null zurück wenn der Befehl kein Dateilese-Befehl ist.
+     *
+     * Public static damit aiEngine.ts es vor dem Confirm-Dialog aufrufen kann.
      */
-    private interceptFileReadCommand(command: string, workDir: string): ShellResult | null {
+    static interceptFileReadCommand(command: string, workDir: string, logger?: Logger): ShellResult | null {
         const trimmed = command.trim();
         // Matcht: cat file, head -n 20 file, tail -n 50 file
         const match = trimmed.match(/^(cat|head|tail)(?:\s+-n\s*(\d+))?\s+["']?([^"'|&;<>\n]+?)["']?\s*$/);
@@ -210,7 +212,7 @@ export class ShellRunner {
                 const lines = content.split('\n');
                 content = (cmd === 'head' ? lines.slice(0, n) : lines.slice(-n)).join('\n');
             }
-            this.logger.info(`[cat intercepted] ${absPath} (${content.length} Zeichen)`);
+            (logger ?? Logger.getInstance()).info(`[cat intercepted] ${absPath} (${content.length} Zeichen)`);
             return { stdout: content, stderr: '', exitCode: 0, command: trimmed, timedOut: false };
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);

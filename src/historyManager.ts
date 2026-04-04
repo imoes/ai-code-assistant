@@ -155,8 +155,10 @@ export class HistoryManager {
                 JSON.stringify(this.data, null, 2),
                 'utf-8'
             );
+            const session = this.currentSession();
+            this.logger.info(`History gespeichert: ${this.historyPath} (${session?.messages.length ?? 0} Nachrichten in aktueller Session)`);
         } catch (err) {
-            this.logger.warn(`History konnte nicht gespeichert werden: ${(err as Error).message}`);
+            this.logger.warn(`History konnte nicht gespeichert werden: ${this.historyPath} — ${(err as Error).message}`);
         }
     }
 
