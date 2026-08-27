@@ -147,6 +147,12 @@ export class SettingsPanel {
                 {
                     key: 'contextWarningThreshold', label: 'Kontext-Warnung ab (Token)', kind: 'number',
                     min: 1000, max: 1000000
+                },
+                {
+                    key: 'streamIdleTimeoutSeconds', label: 'Abbrechen bei Stille (Sekunden)',
+                    kind: 'number', min: 30, max: 3600,
+                    hint: 'Gemessen wird die Pause zwischen zwei Antwortteilen, nicht die Gesamtdauer. '
+                        + 'Bei einem ausgelasteten Server höher setzen.'
                 }
             ]
         },

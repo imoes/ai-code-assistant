@@ -433,6 +433,36 @@ export class MCPClient {
             this.abortFlag = false;
             let fullContent = '';
 
+            // Untätigkeits-Timeout.
+            //
+            // Die Streaming-Anfrage hatte bisher gar keinen: blieb der Server
+            // mitten im Stream stehen, wartete der Assistent unbegrenzt – ohne
+            // Meldung und ohne Ausweg außer "Abbrechen". Beobachtet bei einem
+            // ausgelasteten llama.cpp-Server: 50 Minuten Stille.
+            //
+            // Gemessen wird die Pause ZWISCHEN zwei Chunks, nicht die
+            // Gesamtdauer: eine lange Antwort ist in Ordnung, Stillstand nicht.
+            const idleMs = Math.max(30, vscode.workspace
+                .getConfiguration('aiAssistant')
+                .get<number>('streamIdleTimeoutSeconds', 180)) * 1000;
+
+            let idleTimer: NodeJS.Timeout | undefined;
+            let settled = false;
+
+            const clearIdle = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = undefined; };
+
+            const armIdle = (onIdle: () => void) => {
+                clearIdle();
+                idleTimer = setTimeout(() => {
+                    if (settled) return;
+                    settled = true;
+                    this.logger.warn(
+                        `Server antwortet seit ${Math.round(idleMs / 1000)}s nicht mehr – Anfrage abgebrochen.`
+                    );
+                    onIdle();
+                }, idleMs);
+            };
+
             // tool_calls kommen im Stream stückweise: der Name im ersten Chunk,
             // die Argumente über mehrere verteilt. Gesammelt wird nach dem
             // index-Feld, das die OpenAI-API pro Aufruf mitschickt.
@@ -467,11 +497,35 @@ export class MCPClient {
                 res.setEncoding('utf-8');
                 let buffer = '';
 
+                // Ab jetzt zählt die Stille zwischen den Chunks
+                armIdle(() => {
+                    res.destroy();
+                    req.destroy();
+                    onStream('', true);
+                    reject(new Error(
+                        `Der Server hat ${Math.round(idleMs / 1000)}s lang nichts mehr gesendet. ` +
+                        `Ist das Modell überlastet? (aiAssistant.streamIdleTimeoutSeconds erhöht die Wartezeit)`
+                    ));
+                });
+
                 res.on('data', (chunk: string) => {
+                    // Es kommt etwas – Uhr zurücksetzen
+                    if (!settled) {
+                        armIdle(() => {
+                            res.destroy();
+                            req.destroy();
+                            onStream('', true);
+                            reject(new Error(
+                                `Der Server hat ${Math.round(idleMs / 1000)}s lang nichts mehr gesendet. ` +
+                                `Ist das Modell überlastet? (aiAssistant.streamIdleTimeoutSeconds erhöht die Wartezeit)`
+                            ));
+                        });
+                    }
+
                     if (this.abortFlag) {
                         res.destroy();
                         onStream('', true);
-                        resolve({ content: fullContent, finishReason: 'cancelled', toolCalls: collectedToolCalls() });
+                        clearIdle(); if (!settled) { settled = true; resolve({ content: fullContent, finishReason: 'cancelled', toolCalls: collectedToolCalls() }); }
                         return;
                     }
                     buffer += chunk;
@@ -483,7 +537,7 @@ export class MCPClient {
                         const data = line.slice(6).trim();
                         if (data === '[DONE]') {
                             onStream('', true);
-                            resolve({ content: fullContent, finishReason: toolAcc.size > 0 ? 'tool_calls' : 'stop', toolCalls: collectedToolCalls() });
+                            clearIdle(); if (!settled) { settled = true; resolve({ content: fullContent, finishReason: toolAcc.size > 0 ? 'tool_calls' : 'stop', toolCalls: collectedToolCalls() }); }
                             return;
                         }
                         try {
@@ -529,15 +583,15 @@ export class MCPClient {
                 res.on('end', () => {
                     this.currentReq = null;
                     onStream('', true);
-                    resolve({ content: fullContent, finishReason: toolAcc.size > 0 ? 'tool_calls' : 'stop', toolCalls: collectedToolCalls() });
+                    clearIdle(); if (!settled) { settled = true; resolve({ content: fullContent, finishReason: toolAcc.size > 0 ? 'tool_calls' : 'stop', toolCalls: collectedToolCalls() }); }
                 });
 
                 res.on('error', (err) => {
                     this.currentReq = null;
                     if (this.abortFlag) {
-                        resolve({ content: fullContent, finishReason: 'cancelled', toolCalls: collectedToolCalls() });
+                        clearIdle(); if (!settled) { settled = true; resolve({ content: fullContent, finishReason: 'cancelled', toolCalls: collectedToolCalls() }); }
                     } else {
-                        reject(err);
+                        clearIdle(); if (!settled) { settled = true; reject(err); }
                     }
                 });
             });
@@ -546,9 +600,9 @@ export class MCPClient {
             req.on('error', (err) => {
                 this.currentReq = null;
                 if (this.abortFlag) {
-                    resolve({ content: fullContent, finishReason: 'cancelled', toolCalls: collectedToolCalls() });
+                    clearIdle(); if (!settled) { settled = true; resolve({ content: fullContent, finishReason: 'cancelled', toolCalls: collectedToolCalls() }); }
                 } else {
-                    reject(err);
+                    clearIdle(); if (!settled) { settled = true; reject(err); }
                 }
             });
             req.write(postData);

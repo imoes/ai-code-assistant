@@ -2,7 +2,7 @@
   "name": "ai-code-assistant",
   "displayName": "AI Code Assistant (llama.cpp MCP)",
   "description": "Autonomer AI Code Assistant basierend auf llama.cpp MCP – erstellt, bearbeitet und testet Code direkt im Workspace.",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "repository": {
     "type": "git",
     "url": "https://gitlab.ippen.media/mutkluge/ai-code-assistant"
@@ -203,6 +203,13 @@
           "default": 6000,
           "minimum": 1000,
           "description": "Schwellenwert (in Token) ab dem eine Kontext-Warnung angezeigt wird."
+        },
+        "aiAssistant.streamIdleTimeoutSeconds": {
+          "type": "number",
+          "default": 180,
+          "minimum": 30,
+          "maximum": 3600,
+          "description": "Abbrechen, wenn der Server so lange nichts mehr sendet. Gemessen wird die Pause zwischen zwei Antwortteilen, nicht die Gesamtdauer – eine lange Antwort ist also in Ordnung. Bei einem ausgelasteten Server höher setzen."
         },
         "aiAssistant.showConsole": {
           "type": "boolean",

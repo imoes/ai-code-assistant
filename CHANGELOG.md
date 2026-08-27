@@ -2,6 +2,15 @@
 
 Alle nennenswerten Änderungen an diesem Projekt. Neueste Version oben.
 
+## 0.7.3
+
+- **Kein endloses Warten mehr, wenn der Server verstummt.** Die Streaming-Anfrage hatte
+  gar kein Zeitlimit: brach die Verbindung mitten in der Antwort ab (VPN weg, Server
+  überlastet), wartete der Assistent unbegrenzt – ohne Meldung, ohne Ausweg außer
+  „Abbrechen". Jetzt bricht er nach 180 Sekunden Stille ab und sagt, was los ist.
+  Gemessen wird die Pause zwischen zwei Antwortteilen, nicht die Gesamtdauer – eine
+  lange Antwort bleibt also erlaubt. Einstellbar über `aiAssistant.streamIdleTimeoutSeconds`.
+
 ## 0.7.1
 
 - **Shell-Befehle laufen jetzt auch unter Linux und macOS.** `wsl` war fest verdrahtet,
