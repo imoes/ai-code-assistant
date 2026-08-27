@@ -1625,7 +1625,7 @@ function renderMd(text) {
 
   // Unvollständiger Block (sollte nach Stream nicht mehr vorkommen)
   return (before ? renderMdBasic(before) : '') +
-    '<details class="think-block" open>' +
+    '<details class="think-block">' +
       '<summary><span class="think-toggle">▶</span><span class="think-label">🧠 Reasoning\u2026</span></summary>' +
       '<div class="think-content">' + renderMdBasic(afterOpen) + '</div>' +
     '</details>';

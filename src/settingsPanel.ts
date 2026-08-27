@@ -98,6 +98,20 @@ export class SettingsPanel {
                 {
                     key: 'autoAnalyze', label: 'Erst analysieren, dann schreiben', kind: 'boolean',
                     hint: 'Bestehenden Code mit read_file/grep/glob prüfen, bevor er geändert wird.'
+                },
+                {
+                    key: 'showConsole', label: 'Arbeitsprotokoll im Terminal', kind: 'boolean',
+                    hint: 'Schreibt jeden Schritt, jeden Befehl und jede Ausgabe in ein Terminal '
+                        + '"AI Assistant". Dort wird nichts ausgeführt, nur angezeigt.'
+                },
+                {
+                    key: 'autoCompact', label: 'Langen Verlauf zusammenfassen', kind: 'boolean',
+                    hint: 'Fasst den Verlauf zusammen, wenn er den Kontext des Modells zu füllen droht. '
+                        + 'Ohne das bricht die Anfrage bei langen Sitzungen ab.'
+                },
+                {
+                    key: 'compactThresholdPercent', label: 'Zusammenfassen ab (% des Kontexts)',
+                    kind: 'number', min: 50, max: 99
                 }
             ]
         },
