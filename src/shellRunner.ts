@@ -112,20 +112,35 @@ export class ShellRunner {
             }
         }
 
-        const wslWorkDir = ShellRunner.windowsToWslPath(workDir);
+        // Unter Windows läuft die Shell über WSL, sonst direkt über bash.
+        // Vorher war `wsl` hart verdrahtet – auf Linux und macOS scheiterte
+        // damit JEDER Befehl, auch `echo test`.
+        const useWsl = process.platform === 'win32';
+
+        const shellWorkDir = useWsl
+            ? ShellRunner.windowsToWslPath(workDir)
+            : workDir;
         // Windows-Pfade im Befehl selbst konvertieren (z.B. cd d:\foo → cd /mnt/d/foo)
-        const convertedCommand = ShellRunner.convertWindowsPathsInCommand(command);
-        const fullCommand = `cd ${ShellRunner.escapeShellArg(wslWorkDir)} && ${convertedCommand}`;
+        const convertedCommand = useWsl
+            ? ShellRunner.convertWindowsPathsInCommand(command)
+            : command;
+        const fullCommand = `cd ${ShellRunner.escapeShellArg(shellWorkDir)} && ${convertedCommand}`;
 
         if (convertedCommand !== command) {
             this.logger.info(`Shell: Windows-Pfade konvertiert: ${command} → ${convertedCommand}`);
         }
-        this.logger.info(`Shell (WSL): ${convertedCommand}  [in ${wslWorkDir}]`);
+        this.logger.info(
+            `Shell (${useWsl ? 'WSL' : process.platform}): ${convertedCommand}  [in ${shellWorkDir}]`
+        );
 
         return new Promise<ShellResult>((resolve) => {
             let timedOut = false;
 
-            const proc = cp.spawn('wsl', ['bash', '-c', fullCommand], {
+            const [exe, args] = useWsl
+                ? ['wsl', ['bash', '-c', fullCommand]]
+                : ['bash', ['-c', fullCommand]] as [string, string[]];
+
+            const proc = cp.spawn(exe as string, args as string[], {
                 shell: false,
                 windowsHide: true
             });

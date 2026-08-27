@@ -2,6 +2,13 @@
 
 Alle nennenswerten Änderungen an diesem Projekt. Neueste Version oben.
 
+## 0.7.1
+
+- **Shell-Befehle laufen jetzt auch unter Linux und macOS.** `wsl` war fest verdrahtet,
+  dadurch scheiterte dort jeder Befehl – auch `echo test`. Unter Windows läuft weiterhin
+  alles über WSL. Ohne funktionierende Shell kann der Assistent seine Änderungen nicht
+  testen und findet eigene Fehler nicht.
+
 ## 0.7.0
 
 - **Der Assistent sagt bei jedem Schritt an, was er tut** – nicht nur beim ersten.
