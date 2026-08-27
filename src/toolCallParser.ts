@@ -156,6 +156,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         parameters: {
             type: 'object',
             properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 path: strProp('Pfad relativ zum Workspace, z.B. src/parser.js'),
                 offset: numProp('1-basierte Startzeile (optional, Standard 1)'),
                 limit: numProp('Maximale Zeilenanzahl (optional, Standard 400)')
@@ -170,6 +171,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         parameters: {
             type: 'object',
             properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 pattern: strProp('Regulärer Ausdruck, z.B. class\\s+\\w+Service'),
                 glob: strProp('Dateifilter (optional), z.B. **/*.ts'),
                 path: strProp('Auf diesen Unterordner beschränken (optional)'),
@@ -183,7 +185,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         description: 'Findet Dateien nach Namensmuster, z.B. alle Testdateien.',
         parameters: {
             type: 'object',
-            properties: { pattern: strProp('Glob-Muster, z.B. **/*.test.js') },
+            properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
+                pattern: strProp('Glob-Muster, z.B. **/*.test.js')
+            },
             required: ['pattern']
         }
     },
@@ -192,7 +197,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         description: 'Listet den Inhalt eines Verzeichnisses auf.',
         parameters: {
             type: 'object',
-            properties: { path: strProp('Verzeichnis relativ zum Workspace, z.B. src') },
+            properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
+                path: strProp('Verzeichnis relativ zum Workspace, z.B. src')
+            },
             required: ['path']
         }
     },
@@ -204,6 +212,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         parameters: {
             type: 'object',
             properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 steps: strProp('Eine Zeile pro Schritt: "- [ ] offen", "- [>] in Arbeit", "- [x] erledigt"')
             },
             required: ['steps']
@@ -215,6 +224,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         parameters: {
             type: 'object',
             properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 path: strProp('Pfad relativ zum Workspace'),
                 patch: strProp('Ein oder mehrere Blöcke der Form: '
                     + '<<<SEARCH\\n<exakter bestehender Code>\\n>>>REPLACE\\n<neuer Code>')
@@ -228,6 +238,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         parameters: {
             type: 'object',
             properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 path: strProp('Pfad relativ zum Workspace'),
                 start_line: numProp('Erste zu ersetzende Zeile (1-basiert, inklusiv)'),
                 end_line: numProp('Letzte zu ersetzende Zeile (inklusiv)'),
@@ -242,6 +253,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         parameters: {
             type: 'object',
             properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 path: strProp('Pfad relativ zum Workspace'),
                 content: strProp('Vollständiger Dateiinhalt')
             },
@@ -255,6 +267,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         parameters: {
             type: 'object',
             properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 path: strProp('Pfad relativ zum Workspace'),
                 content: strProp('Vollständiger neuer Dateiinhalt, alle Zeilen enthalten')
             },
@@ -266,7 +279,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         description: 'Löscht eine Datei.',
         parameters: {
             type: 'object',
-            properties: { path: strProp('Pfad relativ zum Workspace') },
+            properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
+                path: strProp('Pfad relativ zum Workspace')
+            },
             required: ['path']
         }
     },
@@ -276,7 +292,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             + 'Für Build und Tests, NICHT zum Lesen von Dateien.',
         parameters: {
             type: 'object',
-            properties: { command: strProp('Der Befehl, z.B. npm test') },
+            properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
+                command: strProp('Der Befehl, z.B. npm test')
+            },
             required: ['command']
         }
     },
@@ -285,7 +304,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         description: 'Sucht im Internet, wenn aktuelles Wissen fehlt.',
         parameters: {
             type: 'object',
-            properties: { query: strProp('Suchbegriff') },
+            properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
+                query: strProp('Suchbegriff')
+            },
             required: ['query']
         }
     },
@@ -295,7 +317,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             + 'wirklich nichts mehr zu tun ist.',
         parameters: {
             type: 'object',
-            properties: { zusammenfassung: strProp('Was erledigt wurde') },
+            properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
+                zusammenfassung: strProp('Was erledigt wurde')
+            },
             required: ['zusammenfassung']
         }
     }
@@ -335,7 +360,30 @@ export function toolCallsToActionBlocks(
     calls: NativeToolCall[],
     logger?: ToolCallLogger
 ): string {
+    return toolCallsToActions(calls, logger).blocks;
+}
+
+/** Ergebnis der Übersetzung: Aktions-Blöcke plus die Ansagen des Modells. */
+export interface ConvertedToolCalls {
+    /** Aktions-Blöcke zum Ausführen */
+    blocks: string;
+    /**
+     * Was das Modell zu jedem Aufruf gesagt hat (`absicht`).
+     *
+     * Nötig, weil Modelle bei nativen Werkzeugaufrufen `content: null` liefern:
+     * sie stecken alles in den Aufruf und schreiben keine Prosa. Ohne diese
+     * Ansagen sähe der Benutzer nur eine Liste von Aktionen ohne Begründung.
+     */
+    intents: string[];
+}
+
+/** Serverseitig geparste Werkzeugaufrufe übersetzen, inklusive Ansagen. */
+export function toolCallsToActions(
+    calls: NativeToolCall[],
+    logger?: ToolCallLogger
+): ConvertedToolCalls {
     const blocks: string[] = [];
+    const intents: string[] = [];
     const unknown: string[] = [];
 
     for (const call of calls) {
@@ -344,7 +392,15 @@ export function toolCallsToActionBlocks(
             unknown.push(call.name);
             continue;
         }
-        blocks.push(renderActionBlock(name, normalizeArgs(toStringMap(call.arguments))));
+
+        const args = normalizeArgs(toStringMap(call.arguments));
+
+        // Die Ansage sammeln – renderActionBlock setzt sie vor den Block und
+        // entfernt sie aus den Argumenten.
+        const intent = (args.absicht ?? '').replace(/\s+/g, ' ').trim();
+        if (intent) intents.push(intent);
+
+        blocks.push(renderActionBlock(name, args));
     }
 
     if (blocks.length > 0) {
@@ -353,7 +409,7 @@ export function toolCallsToActionBlocks(
     if (unknown.length > 0) {
         logger?.warn(`Tool-Calling: unbekannte Werkzeuge ignoriert: ${unknown.join(', ')}.`);
     }
-    return blocks.join('');
+    return { blocks: blocks.join(''), intents };
 }
 
 /** Argumente, die als Blockinhalt (nach dem "---") gehören, nicht als Kopfzeile. */
@@ -456,6 +512,32 @@ export function normalizeToolCalls(text: string, logger?: ToolCallLogger): strin
         );
     }
     return out;
+}
+
+/**
+ * Tool-Call-Markup aus Code entfernen, der in eine Datei geschrieben werden soll.
+ *
+ * Modelle lassen gelegentlich Reste ihrer eigenen Serialisierung im
+ * Argumentwert stehen – beobachtet: eine Zeile `</arg_value>` mitten im
+ * Quellcode, die die Datei unbrauchbar machte. Solche Zeilen sind in keiner
+ * Programmiersprache gültig, also raus damit, bevor geschrieben wird.
+ *
+ * Entfernt werden nur Zeilen, die AUSSCHLIESSLICH aus solchem Markup bestehen –
+ * eine Zeile wie `if (a < b)` bleibt unangetastet.
+ */
+export function stripToolMarkupFromCode(code: string): { code: string; removed: string[] } {
+    const MARKUP = /^[ \t]*<\/?(tool_call|function_call|tool_use|invoke|arg_key|arg_value|parameter|function|arguments|parameters|name)\b[^>]*>[ \t]*$/i;
+
+    const removed: string[] = [];
+    const kept = code.split('\n').filter(line => {
+        if (MARKUP.test(line)) {
+            removed.push(line.trim());
+            return false;
+        }
+        return true;
+    });
+
+    return { code: removed.length > 0 ? kept.join('\n') : code, removed };
 }
 
 /** Rohes Tool-Call-Markup aus dem Anzeigetext entfernen. */
@@ -565,11 +647,22 @@ function normalizeArgs(args: Record<string, string>): Record<string, string> {
     return out;
 }
 
-/** Aktions-Block aus Name und Argumenten bauen. */
-function renderActionBlock(name: string, args: Record<string, string>): string {
+/**
+ * Aktions-Block aus Name und Argumenten bauen.
+ *
+ * Die `absicht` wird als normaler Text VOR den Block gesetzt, nicht als
+ * Kopfzeile: sie ist für den Benutzer bestimmt und hätte im Dateiinhalt
+ * oder im Shell-Befehl nichts zu suchen.
+ */
+function renderActionBlock(name: string, argsIn: Record<string, string>): string {
+    const args = { ...argsIn };
+    const intent = (args.absicht ?? '').replace(/\s+/g, ' ').trim();
+    delete args.absicht;
+    const prefix = intent ? `\n${intent}\n` : '\n';
+
     if (BODY_ONLY.has(name)) {
         const body = Object.values(args).join('\n').trim();
-        return `\n\`\`\`action:${name}\n${body}\n\`\`\`\n`;
+        return `${prefix}\`\`\`action:${name}\n${body}\n\`\`\`\n`;
     }
 
     const headers: string[] = [];
@@ -584,7 +677,7 @@ function renderActionBlock(name: string, args: Record<string, string>): string {
         ? `${headers.join('\n')}\n---\n${bodies.join('\n')}`
         : headers.join('\n');
 
-    return `\n\`\`\`action:${name}\n${block}\n\`\`\`\n`;
+    return `${prefix}\`\`\`action:${name}\n${block}\n\`\`\`\n`;
 }
 
 /** Inhalt eines <tool_call>-Umschlags zerlegen – vier bekannte Varianten. */

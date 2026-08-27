@@ -617,13 +617,22 @@ export class ChatPanel {
       font-style: italic;
     }
 
-    /* ── Kennzahlen in der Denk-Leiste ── */
+    /* ── Kennzahlen unter der Eingabe ──
+       Bewusst NICHT in der Denk-Leiste: die wird zwischen den Schritten der
+       Agenten-Schleife aus- und wieder eingeschaltet, die Zahlen wären dann
+       ständig weg. Hier bleiben sie über die ganze Aufgabe stehen. */
+    #input-footer {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 5px;
+    }
     #stats-bar {
       display: none;
       align-items: center;
       gap: 8px;
-      margin-left: 10px;
-      font-size: 11px;
+      margin-left: auto;
+      font-size: 10px;
       color: var(--fg-muted);
       font-family: var(--font-mono);
       white-space: nowrap;
@@ -845,6 +854,7 @@ export class ChatPanel {
     }
     .think-block summary::-webkit-details-marker { display: none; }
     .think-toggle { font-size: 9px; transition: transform .15s; display: inline-block; }
+    .think-meta { font-size: 10px; opacity: .65; }
     details.think-block[open] .think-toggle { transform: rotate(90deg); }
     .think-content {
       padding: 8px 12px;
@@ -985,10 +995,6 @@ export class ChatPanel {
 <div id="thinking">
   <div class="dot"></div><div class="dot"></div><div class="dot"></div>
   <span id="thinking-label">KI denkt...</span>
-  <span id="stats-bar">
-    <span id="stats-progress"><span id="stats-progress-fill"></span></span>
-    <span id="stats-text"></span>
-  </span>
   <button id="btn-abort">⏹ Abbrechen</button>
 </div>
 
@@ -999,7 +1005,13 @@ export class ChatPanel {
       rows="1"></textarea>
     <button id="send-btn" title="Senden (Enter)">➤</button>
   </div>
-  <div id="hint">Enter zum Senden &nbsp;·&nbsp; Shift+Enter für Zeilenumbruch</div>
+  <div id="input-footer">
+    <span id="hint">Enter zum Senden &nbsp;·&nbsp; Shift+Enter für Zeilenumbruch</span>
+    <span id="stats-bar">
+      <span id="stats-progress"><span id="stats-progress-fill"></span></span>
+      <span id="stats-text"></span>
+    </span>
+  </div>
 </div>
 
 <script nonce="${nonce}">
@@ -1277,6 +1289,17 @@ function fmtNum(n) {
   return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n));
 }
 
+const thinkingLabel = document.getElementById('thinking-label');
+
+/**
+ * Beschriftung der Denk-Leiste an die aktuelle Phase anpassen.
+ * "KI denkt…" sagt nichts – waehrend der Eingabe-Auswertung will man wissen,
+ * dass gerechnet wird und wie weit.
+ */
+function setThinkingPhase(text) {
+  if (thinkingLabel) thinkingLabel.textContent = text;
+}
+
 function renderStats(s) {
   if (!s || !statsBar) return;
   statsBar.classList.add('visible');
@@ -1288,10 +1311,14 @@ function renderStats(s) {
   if (p && p.fraction < 1) {
     statsProgress.classList.add('visible');
     statsFill.style.width = Math.round(p.fraction * 100) + '%';
-    parts.push('Eingabe ' + Math.round(p.fraction * 100) + '% ('
-      + fmtNum(p.processed) + '/' + fmtNum(p.total) + ')');
+    const pct = Math.round(p.fraction * 100);
+    parts.push('Eingabe ' + pct + '% (' + fmtNum(p.processed) + '/' + fmtNum(p.total) + ')');
+    setThinkingPhase('Eingabe wird ausgewertet… ' + pct + '%');
   } else {
     statsProgress.classList.remove('visible');
+    if (s.predictedTokens > 0) {
+      setThinkingPhase('Antwort wird erzeugt… ' + fmtNum(s.predictedTokens) + ' Tok');
+    }
   }
 
   if (s.promptTokens > 0) {
@@ -1316,6 +1343,7 @@ function resetStats() {
   statsProgress.classList.remove('visible');
   statsText.textContent = '';
   statsFill.style.width = '0%';
+  setThinkingPhase("KI denkt...");
 }
 
 let lastProgressEl = null;
@@ -1522,9 +1550,9 @@ function updateAssistantEl(el) {
   if (!details) {
     // Erstmalig aufbauen
     el.innerHTML = (beforeThink ? renderMdBasic(beforeThink) : '') +
-      '<details class="think-block" open>' +
+      '<details class="think-block">' +
         '<summary><span class="think-toggle">▶</span>' +
-        '<span class="think-label">🧠 Reasoning\u2026</span></summary>' +
+        '<span class="think-label">🧠 Reasoning</span><span class="think-meta"></span></summary>' +
         '<div class="think-content"></div>' +
       '</details>' +
       '<div class="think-after"></div>';
@@ -1543,15 +1571,22 @@ function updateAssistantEl(el) {
   const contentEl = el.querySelector('.think-content');
   if (contentEl) contentEl.innerHTML = renderMdBasic(thinkText);
 
+  // Umfang in der Kopfzeile: auch zugeklappt soll man sehen, dass (und wie
+  // viel) gedacht wird. Sonst wirkt ein zugeklappter Block wie nichts.
+  const metaEl = el.querySelector('.think-meta');
+  if (metaEl) {
+    const lines = thinkText ? thinkText.split('\\n').length : 0;
+    metaEl.textContent = isStreaming ? ' · denkt… ' + lines + ' Z.' : ' · ' + lines + ' Z.';
+  }
+
   // Wenn Streaming fertig: einklappen (außer Benutzer hat manuell geöffnet)
   if (!isStreaming) {
     const label = el.querySelector('.think-label');
     if (label) label.textContent = '🧠 Reasoning';
 
-    // Nur einklappen wenn noch im automatisch geöffneten Zustand
-    if (!details.dataset.userOpened) {
-      details.removeAttribute('open');
-    }
+    // Kein automatisches Ein- oder Ausklappen: der Zustand gehoert dem Benutzer.
+    // Vorher wurde hier beim Fertigwerden wieder zugeklappt - das hat gegen
+    // jeden Klick gearbeitet, den der Benutzer waehrend des Denkens gemacht hat.
 
     // Text nach </think> rendern
     const afterEl = el.querySelector('.think-after');

@@ -9,12 +9,15 @@ import { Logger } from './logger';
 import { ConfirmFn, autoConfirmFn } from './confirm';
 import { WebSearcher } from './webSearch';
 import { CodeAnalyzer } from './codeAnalyzer';
+import { AgentConsole } from './agentConsole';
 import {
     toolsForMode,
     READ_ONLY_ACTIONS,
     toolCallsToActionBlocks,
     normalizeToolCalls,
-    stripToolCallMarkup
+    stripToolCallMarkup,
+    stripToolMarkupFromCode,
+    toolCallsToActions
 } from './toolCallParser';
 
 /** Arbeitsmodus des Assistenten. */
@@ -89,6 +92,7 @@ export class AIEngine {
     private fileManager = FileManager.getInstance();
     private shellRunner = ShellRunner.getInstance();
     private analyzer = CodeAnalyzer.getInstance();
+    private console = AgentConsole.getInstance();
     private logger = Logger.getInstance();
 
     /** Aktueller Arbeitsplan (Todo-Liste) der laufenden Aufgabe */
@@ -105,6 +109,12 @@ export class AIEngine {
 
     /** Plan-Modus: nur lesen und planen, keine Änderungen */
     private planModeActive = false;
+
+    /** Fingerabdruck der Aktionen der letzten Runde – erkennt Kreisläufe */
+    private lastActionSignature = '';
+
+    /** Wie oft dieselbe Runde in Folge auftrat */
+    private repeatCount = 0;
 
     /** Konversationsverlauf (In-Memory, wird auch in History gespeichert) */
     private conversationHistory: ChatMessage[] = [];
@@ -206,7 +216,15 @@ export class AIEngine {
         if (_depth === 0) {
             this.taskComplete = false;
             this.plan = [];
+            this.lastActionSignature = '';
+            this.repeatCount = 0;
             this.logger.info(`Arbeitsmodus: ${mode}`);
+
+            // Arbeitsprotokoll im Terminal beginnen, wenn gewünscht
+            if (config.get<boolean>('showConsole', true)) {
+                this.console.task(userPrompt, mode);
+                this.console.show(false);   // anlegen, aber nicht den Fokus klauen
+            }
         }
 
         // Im Plan-Modus sind Änderungen gesperrt – auch dann, wenn das Modell
@@ -332,6 +350,8 @@ und füge ihn als letzten action:shell Block an.` : '';
 
         let rawResponse = '';
         let nativeCalls = '';
+        /** Ansagen aus den Werkzeugaufrufen (`absicht`) – siehe unten */
+        let toolIntents: string[] = [];
         try {
             const result = await this.mcpClient.complete(
                 messages,
@@ -344,7 +364,9 @@ und füge ihn als letzten action:shell Block an.` : '';
             rawResponse = result.content;
 
             if (result.toolCalls?.length) {
-                nativeCalls = toolCallsToActionBlocks(result.toolCalls, this.logger);
+                const converted = toolCallsToActions(result.toolCalls, this.logger);
+                nativeCalls = converted.blocks;
+                toolIntents = converted.intents;
             }
         } catch (err) {
             this.logger.error('KI-Anfrage fehlgeschlagen', err);
@@ -371,9 +393,18 @@ und füge ihn als letzten action:shell Block an.` : '';
         if (this.conversationHistory.length > 30) {
             this.conversationHistory = this.conversationHistory.slice(-30);
         }
+        // Ansage des Assistenten VOR den Aktionen – sonst stehen die Aktionen
+        // ohne Begründung da.
+        //
+        // Bei nativen Werkzeugaufrufen liefern Modelle `content: null`: sie
+        // stecken alles in den Aufruf und schreiben keine Prosa. Deshalb tragen
+        // die Werkzeuge ein Feld `absicht`, das hier einspringt.
+        const prose = this.cleanForDisplay(rawResponse);
+        const cleanText = prose || toolIntents.join('\n');
+        this.console.narration(cleanText);
+
         const actions = await this.parseAndExecuteActions(actionSource, confirm, onActionProgress);
         const thinkingBlock = this.extractThinkingBlock(rawResponse);
-        const cleanText = this.cleanForDisplay(rawResponse);
 
         // ── Beispiel-Erkennung: KI hat nur Beispiel gezeigt statt zu handeln ──
         if (_depth === 0 && actions.length === 0 && config.get<boolean>('autoFixOnError', true)) {
@@ -419,6 +450,7 @@ und füge ihn als letzten action:shell Block an.` : '';
 
         if (step) {
             this.logger.info(`Agenten-Schleife Schritt ${_depth + 1}: ${step.reason}`);
+            this.console.step(_depth + 1, step.reason);
             onIteration?.(_depth + 1, step.reason);
 
             const nextResult = await this.process(
@@ -483,9 +515,40 @@ und füge ihn als letzten action:shell Block an.` : '';
 
         const analyses = actions.filter(a => a.type === 'analysis' && a.output?.trim());
         const failedShells = actions.filter(a => a.type === 'shell' && !a.success && a.output?.trim());
-        const hasFileActions = actions.some(
-            a => a.type === 'file_create' || a.type === 'file_edit' || a.type === 'file_delete'
+
+        // Fehlgeschlagene Änderungen (Patch griff nicht, Datei fehlt, abgelehnt).
+        // Die MÜSSEN zurückgemeldet werden: sonst wiederholt das Modell denselben
+        // Patch endlos, weil es nie erfährt, dass er nicht gegriffen hat.
+        const isFileAction = (t: ExecutedAction['type']) =>
+            t === 'file_create' || t === 'file_edit' || t === 'file_delete';
+        const failedFileActions = actions.filter(
+            a => (isFileAction(a.type) || a.type === 'info') && !a.success && a.output?.trim()
         );
+
+        // Nur ERFOLGREICHE Änderungen zählen als getane Arbeit. Vorher galt auch
+        // ein gescheiterter Patch als Dateiänderung – dadurch wurden die
+        // Befehlsausgaben unterdrückt und die Schleife lief blind weiter.
+        const hasFileActions = actions.some(a => isFileAction(a.type) && a.success);
+
+        // ── Wiederholung erkennen ─────────────────────────────────────────────
+        // Liefert eine Runde exakt dasselbe Ergebnis wie die vorherige, bringt
+        // Weitermachen nichts: das Modell dreht sich im Kreis.
+        const signature = actions
+            .map(a => `${a.success ? '+' : '-'}${a.type}:${a.description}`)
+            .join('|');
+        if (signature && signature === this.lastActionSignature) {
+            this.repeatCount++;
+        } else {
+            this.repeatCount = 0;
+            this.lastActionSignature = signature;
+        }
+        if (this.repeatCount >= 2) {
+            this.logger.warn(
+                `Agenten-Schleife beendet: dieselbe Runde ${this.repeatCount + 1}× wiederholt ` +
+                `(${signature.slice(0, 160)}). Das Modell kommt nicht weiter.`
+            );
+            return null;
+        }
         // Erfolgreiche Ausgaben nur weiterleiten wenn KEINE Dateiänderung stattfand
         // (= die KI hat nur Infos gesammelt, aber noch nichts umgesetzt)
         const successfulWithOutput = !hasFileActions
@@ -514,6 +577,21 @@ und füge ihn als letzten action:shell Block an.` : '';
                     `Falls du dafür Code sehen musst: nutze read_file oder grep. ` +
                     `Korrigiere den Fehler dann mit den passenden Aktions-Blöcken. ` +
                     `Antworte NICHT mit "okay" oder einer Erklärung ohne Aktion.`
+            };
+        }
+
+        // ── 1b. Änderung ist nicht durchgegangen: Ursache zurückmelden ────────
+        if (failedFileActions.length > 0 && autoFix) {
+            return {
+                reason: `${failedFileActions.length} Änderung(en) nicht angewendet – korrigiere…`,
+                prompt:
+                    `EINE ÄNDERUNG WURDE NICHT ANGEWENDET:\n\n` +
+                    `${this.formatOutputs(failedFileActions)}\n\n` +
+                    `Lies die Begründung genau. Wiederhole NICHT denselben Aufruf.\n` +
+                    `- Ist die Änderung laut Meldung schon vorhanden: gehe zum nächsten Punkt weiter.\n` +
+                    `- Passt der Suchtext nicht: lies die Datei mit read_file neu und patche gegen ` +
+                    `den tatsächlichen Inhalt, oder nutze replace_lines mit Zeilennummern.\n` +
+                    `- Ist alles erledigt: schließe mit action:done ab.`
             };
         }
 
@@ -697,6 +775,27 @@ und füge ihn als letzten action:shell Block an.` : '';
             `Web-Suche:\n\`\`\`action:web_search\nquery: suchbegriff\n\`\`\`\n`
         );
 
+        // ── Ansage vor jeder Aktion ──────────────────────────────────────────
+        // Ohne diese Anweisung führt das Modell Werkzeuge stumm aus und der
+        // Benutzer sieht nur eine Liste von Aktionen, ohne zu wissen, warum.
+        parts.push(
+            `\n## Sage an, was du tust – vor jeder Aktion\n` +
+            `Schreibe vor jedem Werkzeugaufruf EINEN kurzen Satz in der Ich-Form: was du ` +
+            `jetzt tust und warum. Danach die Aktion. Keine Aufzählung vorab, keine ` +
+            `Wiederholung hinterher.\n\n` +
+            `So:\n` +
+            `  Ich schaue mir zuerst den Tokenizer an, weil die Zahlen-Tests fehlschlagen.\n` +
+            `  → read_file src/tokenizer.js\n\n` +
+            `  Der Tokenizer liest nur eine Ziffer. Ich sammle die Ziffern in einer Schleife.\n` +
+            `  → patch_file src/tokenizer.js\n\n` +
+            `  Jetzt prüfe ich, ob die Tests durchlaufen.\n` +
+            `  → shell npm test\n\n` +
+            `Nicht so: "Ich werde die Dateien analysieren, dann den Plan erstellen, dann ` +
+            `die Fehler beheben und dann testen." – das sagt nichts über den aktuellen Schritt.\n` +
+            `Wenn ein Schritt fehlschlägt, sage in einem Satz, was du daraus schließt, bevor ` +
+            `du es anders versuchst.\n`
+        );
+
         // ── Regeln ───────────────────────────────────────────────────────────
         parts.push(
             `\n## Regeln\n` +
@@ -710,7 +809,8 @@ und füge ihn als letzten action:shell Block an.` : '';
             `- Halte dich an Stil, Namensgebung und Struktur des vorhandenen Codes.\n` +
             `- Keine Code-Beispiele im Text ("So könnte man…", "Hier ist ein Beispiel:"). Setze die Änderung als Aktion um.\n` +
             `- Ist die Aufgabe wirklich unklar: stelle genau EINE konkrete Frage.\n` +
-            `- Maximal 3 Sätze Erklärung, dann die Aktions-Blöcke.\n`
+            `- Höchstens 3 Aktionen pro Runde. Lieber kleine Schritte mit Ansage als ein ` +
+            `großer Block – nach jeder Runde siehst du die Ergebnisse und kannst nachsteuern.\n`
         );
 
         return parts.join('');
@@ -1016,6 +1116,14 @@ und füge ihn als letzten action:shell Block an.` : '';
                         break;
                     default:
                         this.logger.warn(`Unbekannter Aktionstyp: ${actionType}`);
+                        break;
+                }
+
+                // Jede Aktion samt Ausgabe ins Arbeitsprotokoll
+                const last = executed[executed.length - 1];
+                if (last) {
+                    if (actionType === 'shell') this.console.command(blockContent.trim());
+                    this.console.action(last.description, last.output, last.success);
                 }
             } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
@@ -1026,9 +1134,32 @@ und füge ihn als letzten action:shell Block an.` : '';
                     success: false,
                     output: errMsg
                 });
+                this.console.problem(`Aktion '${actionType}': ${errMsg}`);
             }
         }
         return executed;
+    }
+
+    /**
+     * Code säubern, bevor er in eine Datei geht.
+     *
+     * Modelle lassen manchmal Reste ihrer Tool-Call-Serialisierung im Inhalt
+     * stehen (beobachtet: eine Zeile `</arg_value>` mitten im Quellcode, die
+     * die Datei unbrauchbar machte). Das wird hier abgefangen – und geloggt,
+     * weil es auf ein Modell- oder Serverproblem hindeutet.
+     */
+    private cleanCodeForWrite(content: string, where: string): string {
+        const { code, removed } = stripToolMarkupFromCode(content);
+        if (removed.length > 0) {
+            this.logger.warn(
+                `${where}: ${removed.length} Zeile(n) Tool-Call-Markup aus dem Dateiinhalt ` +
+                `entfernt: ${removed.slice(0, 3).join(', ')}`
+            );
+            this.console.problem(
+                `Markup-Reste im Inhalt entfernt (${removed.slice(0, 2).join(', ')})`
+            );
+        }
+        return code;
     }
 
     private async handleFileAction(type: 'create_file' | 'edit_file', content: string, confirm: ConfirmFn): Promise<ExecutedAction> {
@@ -1038,7 +1169,8 @@ und füge ihn als letzten action:shell Block an.` : '';
         const pathMatch = content.slice(0, sepMatch.index).match(/^path:\s*(.+)$/m);
         if (!pathMatch) throw new Error('Kein "path:" gefunden');
         const filePath = pathMatch[1].trim();
-        const fileContent = content.slice(sepMatch.index + sepMatch[0].length);
+        const fileContent = this.cleanCodeForWrite(
+            content.slice(sepMatch.index + sepMatch[0].length), `${type}`);
 
         // Smart-Merge bei edit_file: KI liefert oft nur einen Teil der Datei.
         // Wenn die neue Version deutlich kürzer ist → Smart-Merge statt vollem Replace.
@@ -1097,7 +1229,8 @@ und füge ihn als letzten action:shell Block an.` : '';
         if (!pathMatch) throw new Error('Kein "path:" gefunden');
 
         const filePath   = pathMatch[1].trim();
-        const newContent = content.slice(sepMatch2.index + sepMatch2[0].length);
+        const newContent = this.cleanCodeForWrite(
+            content.slice(sepMatch2.index + sepMatch2[0].length), 'replace_lines');
 
         // Fallback: Datei existiert nicht → erstellen
         if (!this.fileManager.readFile(filePath)) {
@@ -1147,7 +1280,7 @@ und füge ihn als letzten action:shell Block an.` : '';
 
         while ((patchMatch = patchPattern.exec(markerBody)) !== null) {
             const search = this.stripPatchTerminator(patchMatch[1]);
-            const replace = this.stripPatchTerminator(patchMatch[2]);
+            const replace = this.cleanCodeForWrite(this.stripPatchTerminator(patchMatch[2]), 'patch_file');
             if (search) {
                 patches.push({ search, replace });
             }
@@ -1379,6 +1512,7 @@ und füge ihn als letzten action:shell Block an.` : '';
 
         this.plan = steps;
         this.onPlanUpdate?.(this.getPlan());
+        this.console.plan(steps);
 
         const done = steps.filter(s => s.status === 'done').length;
         this.logger.info(`Plan aktualisiert: ${done}/${steps.length} erledigt`);

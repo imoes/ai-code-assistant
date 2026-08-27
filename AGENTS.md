@@ -62,6 +62,43 @@ kanonisches `ToolCall {id, name, arguments}`; ein Textparser existiert dort gar 
 - Fremde Werkzeugnamen (`write_file`, `bash`, `str_replace_editor`, …) über
   `ACTION_ALIASES` abbilden, statt sie abzulehnen.
 
+## Bei Werkzeugaufrufen gibt es keine Prosa
+
+Modelle liefern bei nativen Tool-Calls `content: null` – sie stecken alles in den Aufruf
+und schreiben keinen Begleittext. Wer die Erklärung an der Prosa aufhängt, bekommt sie
+nur in der ersten Runde.
+
+Deshalb trägt **jedes** Werkzeug in `TOOL_DEFINITIONS` ein Feld `absicht`: einen Satz in
+der Ich-Form, was der Aufruf tut und warum. `toolCallsToActions()` sammelt diese Ansagen,
+`renderActionBlock()` setzt sie als Text vor den Block (nie als Kopfzeile – sonst landen
+sie im Dateiinhalt). Neue Werkzeuge brauchen dieses Feld ebenfalls.
+
+## Nie ungeprüften Modelltext in eine Datei schreiben
+
+Modelle lassen Reste ihrer eigenen Serialisierung im Argumentwert stehen – beobachtet:
+eine Zeile `</arg_value>` mitten im Quellcode, die die Datei unbrauchbar machte. Ebenso
+Abschluss-Marker wie `>>>` oder `>>>>>>> REPLACE` aus dem Patch-Format.
+
+`AIEngine.cleanCodeForWrite()` filtert das vor jedem Schreibvorgang. Gefiltert werden nur
+Zeilen, die **ausschließlich** aus solchem Markup bestehen – `if (a < b)` bleibt unberührt.
+
+## Die Agenten-Schleife muss jeden Fehlschlag zurückmelden
+
+`planNextStep` in `src/aiEngine.ts` entscheidet, ob und wie weitergearbeitet wird.
+Dabei gilt:
+
+- **Jeder Fehlschlag geht zurück ans Modell**, mit Begründung. Ein Testlauf zeigte, was
+  sonst passiert: ein Patch schlug fehl, weil die Änderung schon drin war, die Meldung
+  erreichte das Modell nie – und es schickte 18-mal denselben Patch.
+- **Nur erfolgreiche Aktionen zählen als getane Arbeit.** Zählt ein gescheiterter
+  `file_edit` als „Dateiänderung", werden alle Rückmeldungen unterdrückt.
+- **Fehlermeldungen müssen handlungsleitend sein.** „Suchtext nicht gefunden" sagt dem
+  Modell nichts. `FileManager.explainPatchMiss()` unterscheidet: Änderung bereits
+  vorhanden / nur erste Zeile passt / Datei sieht anders aus – jeweils mit dem nächsten
+  sinnvollen Schritt.
+- **Kreislauf-Erkennung** über den Fingerabdruck der Aktionen: dieselbe Runde dreimal in
+  Folge beendet die Schleife, statt das Schrittlimit zu verbrennen.
+
 ## Fallstrick: WebView-Skripte in Template-Strings
 
 `chatPanel.ts` und `settingsPanel.ts` erzeugen ihr Browser-JavaScript in einem

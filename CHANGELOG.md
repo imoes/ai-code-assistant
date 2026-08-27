@@ -2,6 +2,39 @@
 
 Alle nennenswerten Änderungen an diesem Projekt. Neueste Version oben.
 
+## 0.7.0
+
+- **Der Assistent sagt bei jedem Schritt an, was er tut** – nicht nur beim ersten.
+  Jedes Werkzeug hat dafür ein Feld `absicht`, das das Modell mit dem Aufruf füllt.
+  Vorher hing die Ansage an der Prosa des Modells, und die bleibt bei
+  Werkzeugaufrufen meist leer (`content: null`) – man sah nur eine Liste von Aktionen.
+- **Die Denk-Leiste sagt, was gerade passiert:** „Eingabe wird ausgewertet… 45 %"
+  während der Prompt-Auswertung, danach „Antwort wird erzeugt… 240 Tok".
+  Bei großen Kontexten dauert allein die Eingabe Minuten – vorher stand da nur „KI denkt…".
+- **Serialisierungs-Reste landen nicht mehr im Quellcode.** Ein Modell hatte eine Zeile
+  `</arg_value>` mitten in eine Datei geschrieben und sie damit unbrauchbar gemacht.
+  Solche Zeilen werden vor dem Schreiben entfernt und im Protokoll gemeldet.
+
+## 0.6.1
+
+- **Arbeitsprotokoll im Terminal** „AI Assistant": jeder Schritt mit Begründung, jeder
+  Befehl mit `$`-Prompt, jede Ausgabe, jede Änderung mit Zeilenbilanz – farbig und
+  mitlaufend. Vorher war nicht nachvollziehbar, was der Assistent zwischen den Schritten tut.
+  (Es wird dort nichts ausgeführt, nur angezeigt.)
+- **Der Assistent sagt an, was er tut**, bevor er es tut – ein Satz in der Ich-Form vor
+  jedem Werkzeugaufruf, und höchstens drei Aktionen pro Runde.
+- **Keine Endlosschleifen mehr.** Scheiterte eine Änderung, erfuhr der Assistent das nicht
+  und wiederholte sie – in einem Testlauf 18-mal denselben Patch. Jetzt gilt:
+  fehlgeschlagene Änderungen werden mit Begründung zurückgemeldet, nur erfolgreiche
+  zählen als getane Arbeit, und dieselbe Runde dreimal in Folge beendet die Schleife.
+- **Verständliche Patch-Fehler:** der Assistent erfährt jetzt, ob die Änderung schon
+  vorhanden ist, ob nur die erste Zeile passt (mit Zeilennummern) oder ob die Datei
+  anders aussieht als angenommen – statt nur „Suchtext nicht gefunden".
+- Die Token-Statistik bleibt während der ganzen Aufgabe stehen (saß vorher in der
+  Denk-Leiste und verschwand bei jedem Schritt).
+- Der Reasoning-Block startet zugeklappt und bleibt so, wie man ihn stellt – vorher
+  klappte er beim Fertigwerden automatisch wieder zu.
+
 ## 0.5.0
 
 - **Drei Arbeitsmodi** als Listbox in der Chat-Toolbar: **Ask** (jede Änderung wird

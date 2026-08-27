@@ -159,12 +159,26 @@ Die Listbox in der Chat-Toolbar schaltet zwischen drei Modi um (auch per
 
 ## Was während der Arbeit sichtbar ist
 
+- **Der Assistent sagt vor jedem Schritt an, was er tut** – ein Satz in der Ich-Form
+  („Der Tokenizer liest nur eine Ziffer. Ich sammle die Ziffern in einer Schleife.").
 - **Plan** als Checkliste mit Fortschrittsbalken, live aktualisiert.
 - **Jede Aktion** mit eigener Karte: gelesene Dateien, Suchtreffer, Shell-Ausgabe.
 - **Jede Änderung** als farbige Diff-Karte mit Pfad und `−x / +y`-Bilanz.
-- **Kennzahlen** in der Denk-Leiste: Fortschritt der Eingabe-Auswertung in Prozent,
-  dazu Tokens und Tokens/Sekunde für Ein- und Ausgabe (`↓ 3.1k Tok @ 82/s · ↑ 240 Tok @ 30.4/s`).
-  Kommt vom llama.cpp-Server; andere Anbieter liefern das nicht.
+- **Reasoning** als aufklappbarer Block mit Zeilenzahl – startet zugeklappt und bleibt
+  so, wie du ihn stellst.
+- **Kennzahlen** unter der Eingabe, durchgehend: `↓ 3.1k Tok @ 82/s · ↑ 240 Tok @ 30.4/s`.
+  Die Denk-Leiste nennt die Phase: „Eingabe wird ausgewertet… 45 %", dann
+  „Antwort wird erzeugt… 240 Tok". Kommt vom llama.cpp-Server; Cloud-Anbieter liefern das nicht.
+
+### Arbeitsprotokoll im Terminal
+
+Zusätzlich schreibt der Assistent alles in ein Terminal namens **AI Assistant**:
+Aufgabe, jeder Schritt mit Begründung, jeder Befehl mit `$`-Prompt, jede Ausgabe, jede
+Änderung mit Zeilenbilanz – farbig und mitlaufend. Damit lässt sich ein langer
+Agenten-Lauf hinterher nachlesen.
+
+Dort wird **nichts ausgeführt**, nur angezeigt (ein Pseudo-Terminal). Abschaltbar über
+`aiAssistant.showConsole`.
 
 ### Langer Verlauf
 

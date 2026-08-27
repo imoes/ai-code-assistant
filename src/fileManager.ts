@@ -6,6 +6,7 @@ import { ActionHistory } from './actionHistory';
 import { Logger } from './logger';
 import { ConfirmFn, DiffMeta, DiffReporter, AppliedChange } from './confirm';
 import { computeDiff, formatDiff, diffStats, computeMergeSequence } from './diff';
+import { AgentConsole } from './agentConsole';
 
 export class FileManager {
     private static instance: FileManager;
@@ -51,6 +52,21 @@ export class FileManager {
         return p;
     }
 
+    /**
+     * Workspace-relativer Pfad mit Schrägstrichen – für Anzeige und für die KI.
+     *
+     * `path.relative` liefert unter Windows Backslashes. Die tauchten dann in
+     * Fehlermeldungen auf (`src\tokenizer.js`), während alle anderen Pfade
+     * Schrägstriche haben. Das Modell muss Pfade wiedererkennen können.
+     */
+    private relDisplay(absPath: string): string {
+        try {
+            return path.relative(this.getWorkspaceRoot(), absPath).replace(/\\/g, '/');
+        } catch {
+            return absPath;
+        }
+    }
+
     readFile(filePath: string): string | undefined {
         const abs = this.resolvePath(filePath);
         if (!fs.existsSync(abs)) return undefined;
@@ -68,7 +84,7 @@ export class FileManager {
     ): Promise<boolean> {
         const abs = this.resolvePath(filePath);
         const exists = fs.existsSync(abs);
-        const rel = path.relative(this.getWorkspaceRoot(), abs);
+        const rel = this.relDisplay(abs);
 
         if (exists && !options.overwrite && options.confirmFn) {
             const existing = fs.readFileSync(abs, 'utf-8');
@@ -113,7 +129,7 @@ export class FileManager {
         confirmFn?: ConfirmFn
     ): Promise<boolean> {
         const abs = this.resolvePath(filePath);
-        const rel = path.relative(this.getWorkspaceRoot(), abs);
+        const rel = this.relDisplay(abs);
 
         if (!fs.existsSync(abs)) {
             throw new Error(`Datei nicht gefunden: ${rel}`);
@@ -154,7 +170,7 @@ export class FileManager {
         confirmFn?: ConfirmFn
     ): Promise<boolean> {
         const abs = this.resolvePath(filePath);
-        const rel = path.relative(this.getWorkspaceRoot(), abs);
+        const rel = this.relDisplay(abs);
 
         if (!fs.existsSync(abs)) {
             this.logger.warn(`Datei zum Löschen nicht gefunden: ${abs}`);
@@ -189,8 +205,8 @@ export class FileManager {
     ): Promise<boolean> {
         const absOld = this.resolvePath(oldPath);
         const absNew = this.resolvePath(newPath);
-        const relOld = path.relative(this.getWorkspaceRoot(), absOld);
-        const relNew = path.relative(this.getWorkspaceRoot(), absNew);
+        const relOld = this.relDisplay(absOld);
+        const relNew = this.relDisplay(absNew);
 
         if (!fs.existsSync(absOld)) {
             throw new Error(`Quelldatei nicht gefunden: ${relOld}`);
@@ -298,7 +314,7 @@ export class FileManager {
         confirmFn?: ConfirmFn
     ): Promise<boolean> {
         const abs = this.resolvePath(filePath);
-        const rel = path.relative(this.getWorkspaceRoot(), abs);
+        const rel = this.relDisplay(abs);
         if (!fs.existsSync(abs)) throw new Error(`Datei nicht gefunden: ${rel}`);
 
         const originalContent = fs.readFileSync(abs, 'utf-8');
@@ -358,7 +374,7 @@ export class FileManager {
         confirmFn?: ConfirmFn
     ): Promise<boolean> {
         const abs = this.resolvePath(filePath);
-        const rel = path.relative(this.getWorkspaceRoot(), abs);
+        const rel = this.relDisplay(abs);
         if (!fs.existsSync(abs)) throw new Error(`Datei nicht gefunden: ${rel}`);
 
         const originalContent = fs.readFileSync(abs, 'utf-8');
@@ -428,7 +444,7 @@ export class FileManager {
         confirmFn?: ConfirmFn
     ): Promise<{ success: boolean; error?: string }> {
         const abs = this.resolvePath(filePath);
-        const rel = path.relative(this.getWorkspaceRoot(), abs);
+        const rel = this.relDisplay(abs);
 
         if (!fs.existsSync(abs)) {
             return { success: false, error: `Datei nicht gefunden: ${rel}` };
@@ -449,7 +465,7 @@ export class FileManager {
             } else {
                 return {
                     success: false,
-                    error: `Suchtext nicht gefunden in ${rel}:\n${searchText.slice(0, 200)}`
+                    error: this.explainPatchMiss(rel, originalContent, searchText, replaceText)
                 };
             }
         }
@@ -476,6 +492,57 @@ export class FileManager {
         this.reportChange(abs, originalContent, newContent);
         this.logger.action('FILE_PATCH', abs);
         return { success: true };
+    }
+
+    /**
+     * Erklärt, WARUM ein Patch nicht griff – und was stattdessen zu tun ist.
+     *
+     * Ohne diese Diagnose versucht das Modell denselben Patch immer wieder:
+     * die alte Meldung sagte nur "Suchtext nicht gefunden", nicht dass die
+     * Änderung längst drin ist. Genau so lief der Assistent in eine Schleife
+     * aus fehlgeschlagenen Patches.
+     */
+    private explainPatchMiss(
+        rel: string,
+        content: string,
+        searchText: string,
+        replaceText: string
+    ): string {
+        const squish = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+        // 1. Ist die Änderung schon angewendet? Dann ist nichts zu tun.
+        if (replaceText.trim() && squish(content).includes(squish(replaceText))) {
+            return `Die Änderung ist in ${rel} BEREITS VORHANDEN – der neue Code steht `
+                + `schon in der Datei. Wiederhole diesen Patch nicht. Prüfe mit read_file, `
+                + `was noch offen ist, und arbeite am nächsten Punkt weiter.`;
+        }
+
+        // 2. Erste Zeile des Suchtextes finden – dann liegt es an den Folgezeilen
+        const firstLine = searchText.split('\n').map(l => l.trim()).find(Boolean);
+        if (firstLine) {
+            const lines = content.split('\n');
+            const hits = lines
+                .map((l, i) => ({ line: l, no: i + 1 }))
+                .filter(x => x.line.trim() === firstLine)
+                .slice(0, 3);
+
+            if (hits.length > 0) {
+                const near = hits
+                    .map(h => `  Zeile ${h.no}: ${h.line.trim().slice(0, 120)}`)
+                    .join('\n');
+                return `Suchtext nicht gefunden in ${rel}. Die ERSTE Zeile passt, die `
+                    + `folgenden nicht – der Text muss ZEICHENGENAU stimmen, inklusive `
+                    + `Einrückung und Kommentaren.\n`
+                    + `Gefunden hier:\n${near}\n`
+                    + `Lies den Bereich mit read_file und kopiere ihn wörtlich, oder nutze `
+                    + `replace_lines mit den Zeilennummern.`;
+            }
+        }
+
+        return `Suchtext nicht gefunden in ${rel} – die Datei sieht anders aus als `
+            + `angenommen (vielleicht durch eine frühere Änderung).\n`
+            + `Gesuchter Text war:\n${searchText.slice(0, 300)}\n`
+            + `Lies die Datei mit read_file neu und patche gegen den tatsächlichen Inhalt.`;
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -514,11 +581,7 @@ export class FileManager {
      * @param newContent  Inhalt nachher (undefined = Datei gelöscht)
      */
     private reportChange(absPath: string, oldContent?: string, newContent?: string): void {
-        if (!this.diffReporter) return;
-
-        let rel = absPath;
-        try { rel = path.relative(this.getWorkspaceRoot(), absPath).replace(/\\/g, '/'); }
-        catch { /* kein Workspace – dann eben der absolute Pfad */ }
+        const rel = this.relDisplay(absPath);
 
         const kind: AppliedChange['kind'] = newContent === undefined
             ? 'gelöscht'
@@ -528,19 +591,19 @@ export class FileManager {
         // Zeilenzahl. Bei Änderungen zeigen wir den echten farbigen Diff.
         if (kind === 'geändert') {
             const hunks = computeDiff(oldContent!, newContent!);
-            this.diffReporter({
+            const stats = diffStats(hunks);
+            AgentConsole.getInstance().change(rel, kind, stats[0], stats[1]);
+            this.diffReporter?.({
                 path: rel, kind,
                 diffText: formatDiff(hunks),
-                stats: diffStats(hunks)
+                stats
             });
             return;
         }
 
         const lines = (newContent ?? oldContent ?? '').split('\n').length;
-        this.diffReporter({
-            path: rel, kind,
-            diffText: '',
-            stats: kind === 'erstellt' ? [0, lines] : [lines, 0]
-        });
+        const stats: [number, number] = kind === 'erstellt' ? [0, lines] : [lines, 0];
+        AgentConsole.getInstance().change(rel, kind, stats[0], stats[1]);
+        this.diffReporter?.({ path: rel, kind, diffText: '', stats });
     }
 }
