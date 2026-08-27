@@ -14,6 +14,7 @@ export interface HistoryMessage {
     content: string;
     timestamp: string;
     actions?: HistoryAction[];
+    reasoning?: string;  // AI-Prompt-formatierte Zusammenfassung des Reasoning
 }
 
 export interface HistorySession {
@@ -56,6 +57,24 @@ export class HistoryManager {
     // Public API
     // ──────────────────────────────────────────────────────────────────────────
 
+    /**
+     * Gesamten Verlauf löschen – Datei und Speicher.
+     *
+     * Die Datei wird nicht gelöscht, sondern geleert: der Pfad steht in
+     * Log-Meldungen und ist im Explorer sichtbar, eine plötzlich fehlende
+     * Datei wirkt wie ein Fehler.
+     *
+     * @returns Anzahl der entfernten Sessions
+     */
+    clearAll(): number {
+        const removed = this.data.sessions.length;
+        this.data = { version: 1, lastUpdated: new Date().toISOString(), sessions: [] };
+        this.currentSessionId = this.generateSessionId();
+        this.startSession();
+        this.logger.info(`Verlauf gelöscht: ${removed} Session(s) entfernt.`);
+        return removed;
+    }
+
     /** Neue Session beginnen */
     startSession(): void {
         const session: HistorySession = {
@@ -79,13 +98,14 @@ export class HistoryManager {
         this.addMessage({ role: 'user', content, timestamp: new Date().toISOString() });
     }
 
-    /** KI-Antwort speichern (inkl. ausgeführter Aktionen) */
-    addAssistantMessage(content: string, actions?: HistoryAction[]): void {
+    /** KI-Antwort speichern (inkl. ausgeführter Aktionen und Reasoning-Zusammenfassung) */
+    addAssistantMessage(content: string, actions?: HistoryAction[], reasoning?: string): void {
         this.addMessage({
             role: 'assistant',
             content,
             timestamp: new Date().toISOString(),
-            actions
+            actions,
+            reasoning
         });
     }
 
@@ -102,6 +122,33 @@ export class HistoryManager {
     /** Nachrichten der aktuellen Session */
     getCurrentSessionMessages(): HistoryMessage[] {
         return this.currentSession()?.messages ?? [];
+    }
+
+    /**
+     * Nachrichten der letzten abgeschlossenen Session (nicht die aktuelle).
+     * Wird beim Start geladen um den Konversationsverlauf wiederherzustellen.
+     * Gibt max. `limit` Nachrichten zurück (neueste zuerst, dann umgekehrt).
+     */
+    getLastSessionMessages(limit = 20): HistoryMessage[] {
+        const previous = this.data.sessions
+            .filter(s => s.id !== this.currentSessionId);
+        if (previous.length === 0) return [];
+        const lastSession = previous[previous.length - 1];
+        const msgs = lastSession.messages;
+        const relevant = msgs.filter(m => m.role === 'user' || m.role === 'assistant');
+        const sliced = relevant.slice(-limit);
+
+        // Reasoning als Prefix in den assistant-Content einbetten,
+        // damit es im nächsten Konversations-Kontext sichtbar ist.
+        return sliced.map(m => {
+            if (m.role === 'assistant' && m.reasoning) {
+                return {
+                    ...m,
+                    content: `[Vorheriges Reasoning]\n${m.reasoning}\n\n[Antwort]\n${m.content}`
+                };
+            }
+            return m;
+        });
     }
 
     /** Verlaufs-Datei-Pfad */

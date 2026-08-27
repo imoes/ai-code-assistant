@@ -1,0 +1,51 @@
+# CI für die VS-Code-Extension "AI Code Assistant".
+#
+# Die gebaute .vsix wird NICHT ins Repo committet, sondern als Job-Artefakt
+# bereitgestellt: GitLab → Pipeline → Job "package" → "Download artifacts".
+# Der Dateiname enthält die Version aus package.json, die laut AGENTS.md vor
+# jeder Paketierung hochgezählt wird.
+
+stages:
+  - build
+  - package
+
+default:
+  image: node:22
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - node_modules/
+
+variables:
+  # Reproduzierbare Installation aus package-lock.json
+  NPM_CONFIG_FUND: "false"
+  NPM_CONFIG_AUDIT: "false"
+
+compile:
+  stage: build
+  script:
+    - npm ci
+    - npm run compile
+    - npm run lint
+  artifacts:
+    # Kompilat an den package-Job weiterreichen, damit er nicht neu baut
+    paths:
+      - out/
+    expire_in: 1 day
+
+package:
+  stage: package
+  needs: [compile]
+  script:
+    - npm ci
+    # npm run package setzt die --baseContentUrl/--baseImagesUrl für die
+    # Selfhosted-GitLab-Instanz, die vsce nicht selbst erkennt.
+    - npm run package
+    - ls -la *.vsix
+  artifacts:
+    name: "ai-code-assistant-$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - "*.vsix"
+    expire_in: 30 days

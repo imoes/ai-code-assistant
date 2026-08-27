@@ -33,3 +33,23 @@ export type ConfirmFn = (
 
 /** Keine Bestätigung – erste Option sofort wählen (autoApply) */
 export const autoConfirmFn: ConfirmFn = async (_msg, choices) => choices[0];
+
+/** Eine bereits angewandte Dateiänderung, für die Anzeige im Chat. */
+export interface AppliedChange {
+    /** Pfad relativ zum Workspace */
+    path: string;
+    /** Was passiert ist */
+    kind: 'erstellt' | 'geändert' | 'gelöscht';
+    /** Unified-Diff für die farbige Anzeige (leer bei neuen/gelöschten Dateien) */
+    diffText: string;
+    /** [entfernte Zeilen, hinzugefügte Zeilen] */
+    stats: [number, number];
+}
+
+/**
+ * Meldet eine angewandte Änderung an die Oberfläche.
+ *
+ * Nötig, weil im Auto-Modus keine Bestätigungskarte erscheint – ohne diesen
+ * Weg würde der Benutzer nie sehen, was der Assistent geändert hat.
+ */
+export type DiffReporter = (change: AppliedChange) => void;

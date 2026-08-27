@@ -4,13 +4,16 @@ import * as os from 'os';
 import * as path from 'path';
 import { ActionHistory } from './actionHistory';
 import { Logger } from './logger';
-import { ConfirmFn, DiffMeta } from './confirm';
+import { ConfirmFn, DiffMeta, DiffReporter, AppliedChange } from './confirm';
 import { computeDiff, formatDiff, diffStats, computeMergeSequence } from './diff';
 
 export class FileManager {
     private static instance: FileManager;
     private history = ActionHistory.getInstance();
     private logger = Logger.getInstance();
+
+    /** Empfänger für angewandte Änderungen (Chat-Panel), siehe setDiffReporter */
+    private diffReporter?: DiffReporter;
 
     private constructor() {}
 
@@ -90,6 +93,7 @@ export class FileManager {
         fs.mkdirSync(path.dirname(abs), { recursive: true });
         fs.writeFileSync(abs, content, 'utf-8');
         this.logger.action('FILE_WRITE', abs);
+        this.reportChange(abs, previousContent, content);
 
         // Datei im Editor im Hintergrund öffnen
         vscode.workspace.openTextDocument(vscode.Uri.file(abs)).then(doc =>
@@ -137,6 +141,7 @@ export class FileManager {
 
         fs.writeFileSync(abs, newContent, 'utf-8');
         this.logger.action('FILE_EDIT', abs);
+        this.reportChange(abs, previousContent, newContent);
         return true;
     }
 
@@ -169,6 +174,7 @@ export class FileManager {
 
         fs.unlinkSync(abs);
         this.logger.action('FILE_DELETE', abs);
+        this.reportChange(abs, previousContent, undefined);
         return true;
     }
 
@@ -328,6 +334,7 @@ export class FileManager {
             previousContent: originalContent
         });
         fs.writeFileSync(abs, newFileContent, 'utf-8');
+        this.reportChange(abs, originalContent, newFileContent);
         this.logger.action('FILE_REPLACE_LINES', `${rel} L${startLine}-${endLine}`);
         return true;
     }
@@ -376,6 +383,7 @@ export class FileManager {
             if (additionsOnlyContent === originalContent) return true;
             this.history.record({ type: 'file_edit', description: 'Smart-Merge (nur Additions)', filePath: abs, previousContent: originalContent });
             fs.writeFileSync(abs, additionsOnlyContent, 'utf-8');
+            this.reportChange(abs, originalContent, additionsOnlyContent);
             this.logger.action('FILE_SMART_MERGE', rel);
             return true;
         }
@@ -399,6 +407,7 @@ export class FileManager {
 
         this.history.record({ type: 'file_edit', description: `Smart-Merge (${choice})`, filePath: abs, previousContent: originalContent });
         fs.writeFileSync(abs, finalContent, 'utf-8');
+        this.reportChange(abs, originalContent, finalContent);
         this.logger.action('FILE_SMART_MERGE', `${rel} (${choice})`);
         return true;
     }
@@ -464,6 +473,7 @@ export class FileManager {
         });
 
         fs.writeFileSync(abs, newContent, 'utf-8');
+        this.reportChange(abs, originalContent, newContent);
         this.logger.action('FILE_PATCH', abs);
         return { success: true };
     }
@@ -480,5 +490,57 @@ export class FileManager {
             newContent,
             stats: diffStats(hunks)
         };
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Angewandte Änderungen melden
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Empfänger für angewandte Änderungen setzen (Chat-Panel).
+     *
+     * Im Auto-Modus gibt es keine Bestätigungskarte – ohne diese Meldung würde
+     * der Benutzer nie erfahren, was der Assistent geändert hat.
+     */
+    setDiffReporter(reporter: DiffReporter | undefined): void {
+        this.diffReporter = reporter;
+    }
+
+    /**
+     * Eine erfolgte Änderung melden.
+     *
+     * @param absPath     Absoluter Pfad der Datei
+     * @param oldContent  Inhalt vorher (undefined = Datei war neu)
+     * @param newContent  Inhalt nachher (undefined = Datei gelöscht)
+     */
+    private reportChange(absPath: string, oldContent?: string, newContent?: string): void {
+        if (!this.diffReporter) return;
+
+        let rel = absPath;
+        try { rel = path.relative(this.getWorkspaceRoot(), absPath).replace(/\\/g, '/'); }
+        catch { /* kein Workspace – dann eben der absolute Pfad */ }
+
+        const kind: AppliedChange['kind'] = newContent === undefined
+            ? 'gelöscht'
+            : oldContent === undefined ? 'erstellt' : 'geändert';
+
+        // Bei neuen Dateien gibt es keinen sinnvollen Diff – dort zählt nur die
+        // Zeilenzahl. Bei Änderungen zeigen wir den echten farbigen Diff.
+        if (kind === 'geändert') {
+            const hunks = computeDiff(oldContent!, newContent!);
+            this.diffReporter({
+                path: rel, kind,
+                diffText: formatDiff(hunks),
+                stats: diffStats(hunks)
+            });
+            return;
+        }
+
+        const lines = (newContent ?? oldContent ?? '').split('\n').length;
+        this.diffReporter({
+            path: rel, kind,
+            diffText: '',
+            stats: kind === 'erstellt' ? [0, lines] : [lines, 0]
+        });
     }
 }

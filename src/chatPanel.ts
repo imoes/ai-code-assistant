@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
-import { AIEngine, ExecutedAction } from './aiEngine';
+import { AIEngine, ExecutedAction, PlanStep, AssistantMode, getAssistantMode } from './aiEngine';
+import { SettingsPanel } from './settingsPanel';
 import { ActionHistory } from './actionHistory';
-import { MCPClient } from './mcpClient';
+import { MCPClient, GenerationStats } from './mcpClient';
 import { FileManager } from './fileManager';
 import { Logger } from './logger';
-import { ConfirmFn, DiffMeta } from './confirm';
+import { ConfirmFn, DiffMeta, AppliedChange } from './confirm';
 
 interface WebviewMessage {
     type:
@@ -17,10 +18,15 @@ interface WebviewMessage {
         | 'openSettings'
         | 'openLog'
         | 'testConnection'
-        | 'cancelGeneration';
+        | 'cancelGeneration'
+        | 'actionProgress'
+        | 'inputEnabled'
+        | 'setMode'
+        | 'clearHistory';
     text?: string;
     requestId?: string;
     choice?: string;
+    mode?: AssistantMode;
 }
 
 /**
@@ -37,13 +43,14 @@ export class ChatPanel {
     private static nextId = 1;
 
     /** Modus-Änderung an alle offenen Tabs senden */
-    static broadcastModeChange(isAuto: boolean): void {
+    static broadcastModeChange(mode: AssistantMode): void {
         for (const p of ChatPanel.panels.values()) {
-            p.post({ type: 'modeChanged', isAuto });
+            p.post({ type: 'modeChanged', mode });
         }
     }
 
     private readonly panel: vscode.WebviewPanel;
+    private readonly extensionUri: vscode.Uri;
     private readonly sessionId: string;
     private readonly aiEngine: AIEngine;
     private readonly actionHistory = ActionHistory.getInstance();
@@ -59,6 +66,7 @@ export class ChatPanel {
         sessionId: string,
         column: vscode.ViewColumn
     ) {
+        this.extensionUri = extensionUri;
         this.sessionId = sessionId;
         this.aiEngine = AIEngine.getInstance();
 
@@ -101,6 +109,18 @@ export class ChatPanel {
 
         // Log-Kanal sofort einblenden (preserveFocus=true → Fokus bleibt im Editor)
         this.logger.show();
+
+        // Tastaturfokus in das Panel holen.
+        // Wird der Chat über die Befehlspalette geöffnet, gibt VS Code den Fokus
+        // danach an die zuvor aktive Ansicht zurück (Explorer, andere Seitenleiste) –
+        // man tippt dann ins Leere. reveal(preserveFocus=false) korrigiert das,
+        // das Eingabefeld selbst fokussiert sich im WebView-Skript.
+        // Verzögert, weil logger.show() das Panel-Layout noch umbaut.
+        setTimeout(() => {
+            if (ChatPanel.panels.has(this.sessionId)) {
+                this.panel.reveal(column, false);
+            }
+        }, 150);
     }
 
     /**
@@ -181,9 +201,35 @@ export class ChatPanel {
                 this.postSystem('Konversation zurückgesetzt.');
                 break;
 
-            case 'openSettings':
-                vscode.commands.executeCommand('workbench.action.openSettings', 'aiAssistant');
+            case 'clearHistory': {
+                // Löscht die persistierte Historie – irreversibel, daher fragen.
+                const answer = await vscode.window.showWarningMessage(
+                    'Gesamten Chat-Verlauf löschen?\n'
+                    + 'Alle gespeicherten Sessions in ai-code-assistant.json werden entfernt. '
+                    + 'Bereits angewandte Codeänderungen bleiben bestehen.',
+                    { modal: true },
+                    'Verlauf löschen',
+                    'Abbrechen'
+                );
+                if (answer !== 'Verlauf löschen') break;
+
+                const removed = this.aiEngine.clearHistory();
+                this.pendingConfirmations.clear();
+                this.pendingDiffs.clear();
+                this.post({ type: 'clearChat' });
+                this.postSystem(`🗑 Verlauf gelöscht (${removed} Session(s)). Neue Session gestartet.`);
                 break;
+            }
+
+            case 'openSettings':
+                SettingsPanel.open(this.extensionUri);
+                break;
+
+            case 'setMode': {
+                const mode = msg.mode === 'auto' || msg.mode === 'plan' ? msg.mode : 'ask';
+                await vscode.commands.executeCommand('aiAssistant.setMode', mode);
+                break;
+            }
 
             case 'openLog':
                 this.logger.show();
@@ -208,6 +254,26 @@ export class ChatPanel {
 
         const confirmFn = this.buildConfirmFn();
 
+        // Planänderungen der KI live als Checkliste im Chat anzeigen
+        this.aiEngine.setPlanCallback((steps: PlanStep[]) => {
+            this.post({ type: 'plan', steps });
+        });
+
+        // Jede angewandte Dateiänderung mit farbigem Diff zeigen.
+        // Im Auto-Modus ist das der EINZIGE Weg, Änderungen zu sehen – dort
+        // erscheint keine Bestätigungskarte.
+        this.fileManager.setDiffReporter((change: AppliedChange) => {
+            this.post({ type: 'fileDiff', change });
+        });
+
+        // Laufende Kennzahlen: Fortschritt der Prompt-Auswertung und Tokens/Sekunde.
+        // Bei großen Kontexten dauert allein die Eingabe-Auswertung Minuten –
+        // ohne diese Anzeige sieht der Benutzer nur "KI denkt…" und weiß nicht,
+        // ob überhaupt etwas passiert.
+        this.aiEngine.setStatsCallback((stats: GenerationStats) => {
+            this.post({ type: 'stats', stats });
+        });
+
         try {
             let streamStarted = false;
 
@@ -227,15 +293,20 @@ export class ChatPanel {
                 },
                 confirmFn,
                 (iteration: number, reason: string) => {
-                    // Show repair iteration status in chat
                     this.post({ type: 'thinking', value: false });
                     this.post({ type: 'iterationMessage', iteration, reason });
+                    this.post({ type: 'thinking', value: true });
+                },
+                0,
+                (description: string, output: string) => {
+                    // Shell/Suche: Live-Output im Chat anzeigen
+                    this.post({ type: 'thinking', value: false });
+                    this.post({ type: 'actionProgress', description, output });
                     this.post({ type: 'thinking', value: true });
                 }
             );
 
             if (!streamStarted) {
-                this.post({ type: 'thinking', value: false });
                 if (result.text) {
                     this.post({ type: 'assistantMessage', text: result.text });
                 }
@@ -243,21 +314,49 @@ export class ChatPanel {
 
             if (result.actions.length > 0) {
                 const title = result.iterations > 1
-                    ? `Ausgeführte Aktionen (${result.iterations} Iterationen)`
+                    ? `Ausgeführte Aktionen (${result.iterations} Schritte)`
                     : 'Ausgeführte Aktionen';
-                this.post({ type: 'actions', actions: result.actions, title });
+                this.post({ type: 'actions', actions: this.summarizeActions(result.actions), title });
             }
 
             if (result.contextWarning) {
                 this.post({ type: 'contextWarning', text: result.contextWarning });
             }
 
+            // Immer am Ende sicherstellen dass Thinking aus und Input aktiv ist
+            this.post({ type: 'thinking', value: false });
+            this.post({ type: 'inputEnabled', value: true });
+
         } catch (err) {
             this.post({ type: 'thinking', value: false });
+            this.post({ type: 'inputEnabled', value: true });
             const msg = err instanceof Error ? err.message : String(err);
             this.post({ type: 'errorMessage', text: msg });
             this.logger.error('Fehler bei KI-Verarbeitung', err);
         }
+    }
+
+    /**
+     * Aktions-Ausgaben für die Übersichtskarte kürzen.
+     *
+     * Analyse-Aktionen liefern ganze Dateien bzw. hunderte grep-Treffer – die
+     * wurden während des Laufs schon als Fortschritt angezeigt. In der Bilanz
+     * am Ende zählt nur, WAS gemacht wurde, nicht der komplette Inhalt.
+     */
+    private summarizeActions(actions: ExecutedAction[]): ExecutedAction[] {
+        const LIMIT = 600;
+        return actions.map(a => {
+            if (a.type === 'analysis') {
+                return { ...a, output: undefined };
+            }
+            if (a.output && a.output.length > LIMIT) {
+                return {
+                    ...a,
+                    output: `${a.output.slice(0, LIMIT)}\n… [${a.output.length - LIMIT} Zeichen gekürzt – vollständig im Log]`
+                };
+            }
+            return a;
+        });
     }
 
     private async runConnectionTest(): Promise<void> {
@@ -388,15 +487,29 @@ export class ChatPanel {
     .tb-btn:hover           { color: var(--fg);  border-color: var(--accent); }
     .tb-btn.danger:hover    { color: #f77;        border-color: #f77; }
     .tb-spacer { flex: 1; }
-    .mode-badge {
+    /* ── Modus-Listbox ── */
+    #mode-label {
       font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 10px;
-      font-weight: 600;
-      letter-spacing: .03em;
+      color: var(--fg-muted);
+      margin-right: 2px;
     }
-    .mode-badge.auto   { background: rgba(255,180,0,.2);  color: #fc0; border: 1px solid rgba(255,180,0,.4); }
-    .mode-badge.manual { background: rgba(100,180,255,.15); color: #8bf; border: 1px solid rgba(100,180,255,.3); }
+    #mode-select {
+      font-family: var(--font);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      background: var(--vscode-dropdown-background, #3c3c3c);
+      color: var(--vscode-dropdown-foreground, #ccc);
+      border: 1px solid var(--vscode-dropdown-border, var(--border));
+      max-width: 230px;
+    }
+    #mode-select:focus { outline: 1px solid var(--accent); }
+    /* Der aktive Modus soll auf einen Blick erkennbar sein */
+    #mode-select.mode-auto { color: #fc0; border-color: rgba(255,180,0,.55); }
+    #mode-select.mode-ask  { color: #8bf; border-color: rgba(100,180,255,.45); }
+    #mode-select.mode-plan { color: #b39dff; border-color: rgba(150,120,255,.55); }
     #session-label {
       font-size: 11px;
       color: var(--fg-muted);
@@ -473,6 +586,27 @@ export class ChatPanel {
       color: #fc0;
       font-size: 12px;
     }
+    .msg-progress {
+      background: rgba(80,180,80,.08);
+      border: 1px solid rgba(80,180,80,.25);
+      border-radius: var(--radius);
+      padding: 8px 14px;
+      font-size: 12px;
+      color: var(--fg);
+    }
+    .msg-progress-title {
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #6dbf6d;
+    }
+    .msg-progress-output {
+      font-family: var(--font-mono, monospace);
+      white-space: pre-wrap;
+      font-size: 11px;
+      color: var(--fg-muted);
+      max-height: 200px;
+      overflow-y: auto;
+    }
     .msg-iteration {
       background: rgba(100,150,255,.08);
       border: 1px solid rgba(100,150,255,.25);
@@ -482,6 +616,99 @@ export class ChatPanel {
       font-size: 12px;
       font-style: italic;
     }
+
+    /* ── Kennzahlen in der Denk-Leiste ── */
+    #stats-bar {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      margin-left: 10px;
+      font-size: 11px;
+      color: var(--fg-muted);
+      font-family: var(--font-mono);
+      white-space: nowrap;
+    }
+    #stats-bar.visible { display: inline-flex; }
+    #stats-progress {
+      display: none;
+      width: 90px;
+      height: 4px;
+      background: rgba(255,255,255,.12);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    #stats-progress.visible { display: inline-block; }
+    #stats-progress-fill {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: width .2s linear;
+    }
+
+    /* ── Angewandte Änderung mit Diff ── */
+    .diff-card {
+      background: var(--bg-msg);
+      border: 1px solid var(--border);
+      border-left: 3px solid #6dbf6d;
+      border-radius: var(--radius);
+      padding: 8px 12px;
+      font-size: 12px;
+    }
+    .diff-card.diffgelscht { border-left-color: #f77; }
+    .diff-card.differstellt { border-left-color: #8bf; }
+    .diff-card-head {
+      font-weight: 600;
+      font-family: var(--font-mono);
+      color: var(--fg);
+      margin-bottom: 6px;
+    }
+    .diff-card summary {
+      cursor: pointer;
+      color: var(--fg-muted);
+      font-size: 11px;
+      margin-bottom: 4px;
+      user-select: none;
+    }
+    .diff-card summary:hover { color: var(--fg); }
+
+    /* ── Arbeitsplan ── */
+    .plan-panel {
+      background: rgba(150,120,255,.08);
+      border: 1px solid rgba(150,120,255,.30);
+      border-radius: var(--radius);
+      padding: 10px 14px 12px;
+      font-size: 12px;
+    }
+    .plan-head {
+      font-weight: 600;
+      color: #b39dff;
+      margin-bottom: 8px;
+      letter-spacing: .02em;
+    }
+    .plan-bar {
+      height: 4px;
+      background: rgba(255,255,255,.10);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .plan-bar-fill {
+      height: 100%;
+      background: #8b7ae0;
+      transition: width .3s ease;
+    }
+    .plan-step {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      padding: 2px 0;
+      line-height: 1.5;
+    }
+    .plan-icon { flex-shrink: 0; }
+    .plan-done  { color: var(--fg-muted); text-decoration: line-through; }
+    .plan-doing { color: #fc0; font-weight: 600; }
+    .plan-todo  { color: var(--fg); }
     .msg-assistant code {
       font-family: var(--font-mono);
       font-size: 12px;
@@ -737,8 +964,14 @@ export class ChatPanel {
 <div id="toolbar">
   <button id="btn-test"     class="tb-btn">🔌 Verbindung</button>
   <button id="btn-reset"    class="tb-btn">🔄 Neu</button>
+  <button id="btn-clear"    class="tb-btn danger">🗑 Verlauf löschen</button>
   <span class="tb-spacer"></span>
-  <span id="mode-badge" class="mode-badge"></span>
+  <label id="mode-label" for="mode-select">Modus</label>
+  <select id="mode-select" title="Arbeitsmodus des Assistenten">
+    <option value="ask">🔒 Ask – jede Änderung bestätigen</option>
+    <option value="auto">⚡ Auto – ohne Rückfragen</option>
+    <option value="plan">📋 Plan – nur lesen und planen</option>
+  </select>
   <button id="btn-undo"     class="tb-btn">↩ Undo</button>
   <button id="btn-undo-all" class="tb-btn danger">↩↩ Undo All</button>
   <button id="btn-log"      class="tb-btn">📋 Log</button>
@@ -751,7 +984,11 @@ export class ChatPanel {
 
 <div id="thinking">
   <div class="dot"></div><div class="dot"></div><div class="dot"></div>
-  <span>KI denkt...</span>
+  <span id="thinking-label">KI denkt...</span>
+  <span id="stats-bar">
+    <span id="stats-progress"><span id="stats-progress-fill"></span></span>
+    <span id="stats-text"></span>
+  </span>
   <button id="btn-abort">⏹ Abbrechen</button>
 </div>
 
@@ -772,22 +1009,24 @@ const promptInput   = document.getElementById('prompt-input');
 const sendBtn       = document.getElementById('send-btn');
 const thinking      = document.getElementById('thinking');
 const pendingBanner = document.getElementById('pending-banner');
-const modeBadge     = document.getElementById('mode-badge');
+const modeSelect    = document.getElementById('mode-select');
 
-function setModeBadge(isAuto) {
-  if (!modeBadge) return;
-  if (isAuto) {
-    modeBadge.className = 'mode-badge auto';
-    modeBadge.textContent = '⚡ Auto';
-    modeBadge.title = 'Automatischer Modus – KI führt Aktionen ohne Bestätigung aus';
-  } else {
-    modeBadge.className = 'mode-badge manual';
-    modeBadge.textContent = '🔒 Manuell';
-    modeBadge.title = 'Manueller Modus – jede Aktion wird bestätigt';
-  }
+const MODE_HINTS = {
+  ask:  'Jede Dateiänderung und jeder Shell-Befehl wird im Chat bestätigt.',
+  auto: 'Der Assistent arbeitet ohne Rückfragen durch. Alles bleibt per Undo rücknehmbar.',
+  plan: 'Nur lesen und planen – Änderungen und Shell-Befehle sind gesperrt.'
+};
+
+function setMode(mode) {
+  if (!modeSelect) return;
+  const value = MODE_HINTS[mode] ? mode : 'ask';
+  modeSelect.value = value;
+  modeSelect.className = 'mode-' + value;
+  modeSelect.title = MODE_HINTS[value];
 }
-// Initialen Modus aus dem data-Attribut lesen das beim Render eingebettet wurde
-setModeBadge(${vscode.workspace.getConfiguration('aiAssistant').get<boolean>('autoApply', false)});
+
+// Aktueller Modus, beim Rendern eingesetzt
+setMode('${getAssistantMode()}');
 
 let isBusy = false;
 let currentAssistantEl = null;
@@ -796,17 +1035,22 @@ let pendingCount = 0;
 // ── Toolbar (addEventListener – onclick-Attribute werden von CSP blockiert) ──
 document.getElementById('btn-test')    .addEventListener('click', () => vscode.postMessage({type:'testConnection'}));
 document.getElementById('btn-reset')   .addEventListener('click', () => vscode.postMessage({type:'resetConversation'}));
+document.getElementById('btn-clear')   .addEventListener('click', () => vscode.postMessage({type:'clearHistory'}));
 document.getElementById('btn-undo')    .addEventListener('click', () => vscode.postMessage({type:'undoLast'}));
 document.getElementById('btn-undo-all').addEventListener('click', () => vscode.postMessage({type:'undoAll'}));
 document.getElementById('btn-log')     .addEventListener('click', () => vscode.postMessage({type:'openLog'}));
 document.getElementById('btn-settings').addEventListener('click', () => vscode.postMessage({type:'openSettings'}));
 document.getElementById('btn-abort')   .addEventListener('click', () => vscode.postMessage({type:'cancelGeneration'}));
+modeSelect.addEventListener('change', () =>
+  vscode.postMessage({type:'setMode', mode: modeSelect.value}));
 
 // ── Nachrichten vom Extension-Host ──────────────────────────────────────────
 window.addEventListener('message', (ev) => {
   const msg = ev.data;
   switch (msg.type) {
-    case 'userMessage':       append(makeUserMsg(msg.text)); break;
+    case 'userMessage':       resetPlan(); resetStats(); append(makeUserMsg(msg.text)); break;
+    case 'plan':             renderPlan(msg.steps); break;
+    case 'clearChat':        chat.innerHTML = ''; resetPlan(); resetStats(); break;
     case 'assistantMessage':
       append(makeAssistantMsg(msg.text));
       setThinking(false); setInputEnabled(true); break;
@@ -817,11 +1061,11 @@ window.addEventListener('message', (ev) => {
     case 'assistantToken':
       if (currentAssistantEl) {
         currentAssistantEl.dataset.raw += msg.text;
-        currentAssistantEl.innerHTML = renderMd(currentAssistantEl.dataset.raw);
+        updateAssistantEl(currentAssistantEl);
         scrollBottom();
       } break;
     case 'assistantMessageEnd':
-      currentAssistantEl = null; setThinking(false); setInputEnabled(true); break;
+      currentAssistantEl = null; setThinking(false); setInputEnabled(true); finalizeProgress(); break;
     case 'thinking':
       setThinking(msg.value);
       if (msg.value) setInputEnabled(false); break;
@@ -832,9 +1076,14 @@ window.addEventListener('message', (ev) => {
     case 'actions':        append(makeActionsPanel(msg.actions, msg.title)); break;
     case 'iterationMessage':
       append(makeIterationMsg(msg.iteration, msg.reason)); break;
+    case 'actionProgress':
+      appendOrUpdateProgress(msg.description, msg.output); break;
     case 'contextWarning':
       append(makeWarningMsg(msg.text)); break;
-    case 'modeChanged':    setModeBadge(msg.isAuto); break;
+    case 'modeChanged':    setMode(msg.mode); break;
+    case 'fileDiff':       renderFileDiff(msg.change); break;
+    case 'stats':          renderStats(msg.stats); break;
+    case 'inputEnabled':   setThinking(false); setInputEnabled(msg.value); finalizeProgress(); resetStats(); break;
     case 'confirmRequest':
       append(makeConfirmCard(
         msg.requestId, msg.message, msg.choices,
@@ -982,6 +1231,11 @@ promptInput.addEventListener('keydown', (e) => {
 });
 promptInput.addEventListener('input', autoResize);
 
+// Eingabefeld beim Öffnen fokussieren – man will sofort tippen können.
+// Auch nach einem Tab-Wechsel zurück, weil der Fokus dabei verloren geht.
+promptInput.focus();
+window.addEventListener('focus', () => { if (!isBusy) promptInput.focus(); });
+
 function autoResize() {
   promptInput.style.height = 'auto';
   promptInput.style.height = Math.min(promptInput.scrollHeight, 200) + 'px';
@@ -1010,12 +1264,198 @@ function makeIterationMsg(iteration, reason) {
   d.textContent = '🔧 ' + reason + ' (Iteration ' + iteration + ')';
   return d;
 }
+
+// ── Kennzahlen: Prompt-Fortschritt und Tokens/Sekunde ───────────────────────
+// Bei großen Kontexten dauert allein die Auswertung der Eingabe Minuten. Ohne
+// diese Anzeige steht nur "KI denkt…" da und man weiß nicht, ob es haengt.
+const statsBar      = document.getElementById('stats-bar');
+const statsProgress = document.getElementById('stats-progress');
+const statsFill     = document.getElementById('stats-progress-fill');
+const statsText     = document.getElementById('stats-text');
+
+function fmtNum(n) {
+  return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n));
+}
+
+function renderStats(s) {
+  if (!s || !statsBar) return;
+  statsBar.classList.add('visible');
+
+  const parts = [];
+
+  // Waehrend der Prompt-Auswertung: Balken + Prozent
+  const p = s.promptProgress;
+  if (p && p.fraction < 1) {
+    statsProgress.classList.add('visible');
+    statsFill.style.width = Math.round(p.fraction * 100) + '%';
+    parts.push('Eingabe ' + Math.round(p.fraction * 100) + '% ('
+      + fmtNum(p.processed) + '/' + fmtNum(p.total) + ')');
+  } else {
+    statsProgress.classList.remove('visible');
+  }
+
+  if (s.promptTokens > 0) {
+    let inPart = '↓ ' + fmtNum(s.promptTokens) + ' Tok';
+    if (s.promptPerSecond > 0) inPart += ' @ ' + Math.round(s.promptPerSecond) + '/s';
+    if (s.cachedTokens > 0) inPart += ' (' + fmtNum(s.cachedTokens) + ' aus Cache)';
+    parts.push(inPart);
+  }
+
+  if (s.predictedTokens > 0) {
+    let outPart = '↑ ' + fmtNum(s.predictedTokens) + ' Tok';
+    if (s.predictedPerSecond > 0) outPart += ' @ ' + s.predictedPerSecond.toFixed(1) + '/s';
+    parts.push(outPart);
+  }
+
+  statsText.textContent = parts.join('   ·   ');
+}
+
+function resetStats() {
+  if (!statsBar) return;
+  statsBar.classList.remove('visible');
+  statsProgress.classList.remove('visible');
+  statsText.textContent = '';
+  statsFill.style.width = '0%';
+}
+
+let lastProgressEl = null;
+
+/**
+ * Identität einer Fortschrittsmeldung: die Beschreibung ohne Status-Symbol.
+ * "⚙ Shell: npm test" und "✅ Shell: npm test" sind derselbe Vorgang und
+ * sollen dieselbe Karte aktualisieren – zwei verschiedene Vorgänge dagegen
+ * bekommen zwei Karten. Ohne diesen Schlüssel überschrieb jede Meldung die
+ * vorherige und man sah am Ende nur eine einzige Zeile.
+ */
+function progressKey(description) {
+  return String(description).replace(/^[^A-Za-z0-9\\x60]+/, '').trim();
+}
+
+function appendOrUpdateProgress(description, output) {
+  const key = progressKey(description);
+
+  // Nur dieselbe Aktion aktualisiert ihre Karte
+  if (lastProgressEl && lastProgressEl.dataset.active === '1'
+      && lastProgressEl.dataset.key === key) {
+    lastProgressEl.querySelector('.msg-progress-title').innerHTML = renderMdBasic(description);
+    if (output) {
+      let out = lastProgressEl.querySelector('.msg-progress-output');
+      if (!out) {
+        out = document.createElement('div');
+        out.className = 'msg-progress-output';
+        lastProgressEl.appendChild(out);
+      }
+      out.textContent = output;
+    }
+    scrollBottom();
+    return;
+  }
+
+  // Neue Aktion → vorherige Karte abschließen, damit sie stehen bleibt
+  if (lastProgressEl) lastProgressEl.dataset.active = '0';
+
+  const d = document.createElement('div');
+  d.className = 'msg-progress';
+  d.dataset.active = '1';
+  d.dataset.key = key;
+  const title = document.createElement('div');
+  title.className = 'msg-progress-title';
+  title.innerHTML = renderMdBasic(description);
+  d.appendChild(title);
+  if (output) {
+    const out = document.createElement('div');
+    out.className = 'msg-progress-output';
+    out.textContent = output;
+    d.appendChild(out);
+  }
+  lastProgressEl = d;
+  append(d);
+}
+
+// ── Angewandte Dateiänderung mit farbigem Diff ──────────────────────────────
+// Im Auto-Modus gibt es keine Bestätigungskarte – ohne diese Anzeige würde man
+// nie sehen, was der Assistent geändert hat.
+function renderFileDiff(change) {
+  if (!change) return;
+
+  const card = document.createElement('div');
+  card.className = 'diff-card diff-' + change.kind.replace(/[^a-z]/gi, '');
+
+  const head = document.createElement('div');
+  head.className = 'diff-card-head';
+  const [removed, added] = change.stats || [0, 0];
+  const icon = change.kind === 'erstellt' ? '📄'
+    : change.kind === 'gelöscht' ? '🗑' : '✏';
+  head.textContent = icon + ' ' + change.path + '  ' + change.kind
+    + '   −' + removed + ' / +' + added;
+  card.appendChild(head);
+
+  if (change.diffText) {
+    const details = document.createElement('details');
+    details.open = true;
+    const summary = document.createElement('summary');
+    summary.textContent = 'Diff anzeigen';
+    details.appendChild(summary);
+    details.appendChild(buildDiffView(change.diffText));
+    card.appendChild(details);
+  }
+
+  append(card);
+}
+
+// Aktive Progress-Karten am Ende deaktivieren
+function finalizeProgress() {
+  if (lastProgressEl) { lastProgressEl.dataset.active = '0'; lastProgressEl = null; }
+}
 function makeWarningMsg(text) {
   const d = document.createElement('div');
   d.className = 'msg-warning';
   d.textContent = '⚠ ' + text;
   return d;
 }
+
+// ── Arbeitsplan (Todo-Liste der KI) ─────────────────────────────────────────
+// Es gibt immer nur EINE Plan-Karte pro Aufgabe: sie wird an ihrer Stelle
+// aktualisiert, damit man den Fortschritt verfolgt statt zehn Kopien zu sehen.
+let planEl = null;
+
+function renderPlan(steps) {
+  if (!steps || steps.length === 0) return;
+
+  if (!planEl) {
+    planEl = document.createElement('div');
+    planEl.className = 'plan-panel';
+    append(planEl);
+  }
+  planEl.innerHTML = '';
+
+  const done = steps.filter(s => s.status === 'done').length;
+
+  const head = document.createElement('div');
+  head.className = 'plan-head';
+  head.textContent = '📋 Plan – ' + done + '/' + steps.length + ' erledigt';
+  planEl.appendChild(head);
+
+  const bar = document.createElement('div');
+  bar.className = 'plan-bar';
+  const fill = document.createElement('div');
+  fill.className = 'plan-bar-fill';
+  fill.style.width = Math.round((done / steps.length) * 100) + '%';
+  bar.appendChild(fill);
+  planEl.appendChild(bar);
+
+  for (const s of steps) {
+    const row = document.createElement('div');
+    row.className = 'plan-step plan-' + s.status;
+    const icon = s.status === 'done' ? '✅' : s.status === 'doing' ? '⏳' : '☐';
+    row.innerHTML = '<span class="plan-icon">' + icon + '</span><span>' + esc(s.text) + '</span>';
+    planEl.appendChild(row);
+  }
+  scrollBottom();
+}
+
+/** Plan-Karte freigeben, damit die nächste Aufgabe eine neue erhält. */
+function resetPlan() { planEl = null; }
 function makeActionsPanel(actions, title) {
   const p = document.createElement('div');
   p.className = 'actions-panel';
@@ -1055,43 +1495,105 @@ function renderMdBasic(text) {
 }
 
 /**
- * Hauptfunktion: rendert Markdown und klappt <think>…</think>-Blöcke ein.
- * Während des Streamings (kein </think> sichtbar) bleibt der Block offen
- * und zeigt "Reasoning…". Sobald </think> erscheint, klappt er zu.
+ * Aktualisiert ein Assistenten-Element inkrementell während des Streamings.
+ * Das <details>-Element wird nur einmal erstellt und danach nie mehr ersetzt,
+ * damit der Benutzer es ein-/ausklappen kann ohne dass es zurückgesetzt wird.
  */
+function updateAssistantEl(el) {
+  const raw = el.dataset.raw || '';
+  const thinkStart = raw.indexOf('<think>');
+
+  if (thinkStart === -1) {
+    // Kein Reasoning-Block → einfaches Rendering
+    el.innerHTML = renderMdBasic(raw);
+    return;
+  }
+
+  const beforeThink = raw.slice(0, thinkStart);
+  const afterOpen   = raw.slice(thinkStart + 7);
+  const thinkEnd    = afterOpen.indexOf('</think>');
+  const isStreaming = thinkEnd === -1;
+  const thinkText   = isStreaming ? afterOpen : afterOpen.slice(0, thinkEnd);
+  const afterThink  = isStreaming ? '' : afterOpen.slice(thinkEnd + 8);
+
+  // <details> Element wiederverwenden falls vorhanden
+  let details = el.querySelector('.think-block');
+
+  if (!details) {
+    // Erstmalig aufbauen
+    el.innerHTML = (beforeThink ? renderMdBasic(beforeThink) : '') +
+      '<details class="think-block" open>' +
+        '<summary><span class="think-toggle">▶</span>' +
+        '<span class="think-label">🧠 Reasoning\u2026</span></summary>' +
+        '<div class="think-content"></div>' +
+      '</details>' +
+      '<div class="think-after"></div>';
+
+    details = el.querySelector('.think-block');
+
+    // Scroll wenn Benutzer manuell aufklappt
+    details.addEventListener('toggle', () => {
+      if (details.open) requestAnimationFrame(() => {
+        details.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+    });
+  }
+
+  // Nur Inhalt aktualisieren – open-Status bleibt erhalten
+  const contentEl = el.querySelector('.think-content');
+  if (contentEl) contentEl.innerHTML = renderMdBasic(thinkText);
+
+  // Wenn Streaming fertig: einklappen (außer Benutzer hat manuell geöffnet)
+  if (!isStreaming) {
+    const label = el.querySelector('.think-label');
+    if (label) label.textContent = '🧠 Reasoning';
+
+    // Nur einklappen wenn noch im automatisch geöffneten Zustand
+    if (!details.dataset.userOpened) {
+      details.removeAttribute('open');
+    }
+
+    // Text nach </think> rendern
+    const afterEl = el.querySelector('.think-after');
+    if (afterEl) afterEl.innerHTML = renderMdBasic(afterThink);
+  }
+
+  // Benutzer-Intent merken
+  if (details && !details._toggleListenerAdded) {
+    details._toggleListenerAdded = true;
+    details.addEventListener('toggle', () => {
+      details.dataset.userOpened = details.open ? '1' : '';
+    });
+  }
+}
+
+/** Für nicht-gestreamte Nachrichten: statisches Rendering */
 function renderMd(text) {
   if (!text) return '';
   const thinkStart = text.indexOf('<think>');
   if (thinkStart === -1) return renderMdBasic(text);
 
-  const parts = [];
-  const before = text.slice(0, thinkStart);
-  if (before) parts.push(renderMdBasic(before));
-
-  const afterOpen = text.slice(thinkStart + 7);   // nach <think>
+  const before   = text.slice(0, thinkStart);
+  const afterOpen = text.slice(thinkStart + 7);
   const thinkEnd  = afterOpen.indexOf('</think>');
 
   if (thinkEnd !== -1) {
-    // Vollständiger Block → eingeklappt
     const thinkContent = afterOpen.slice(0, thinkEnd);
-    const after        = afterOpen.slice(thinkEnd + 8); // nach </think>
-    parts.push(
+    const after        = afterOpen.slice(thinkEnd + 8);
+    return (before ? renderMdBasic(before) : '') +
       '<details class="think-block">' +
-        '<summary><span class="think-toggle">▶</span>🧠 Reasoning</summary>' +
+        '<summary><span class="think-toggle">▶</span><span class="think-label">🧠 Reasoning</span></summary>' +
         '<div class="think-content">' + renderMdBasic(thinkContent) + '</div>' +
-      '</details>'
-    );
-    if (after) parts.push(renderMd(after));  // weitere Blöcke möglich
-  } else {
-    // Noch kein </think> – Stream läuft noch → offen anzeigen
-    parts.push(
-      '<details class="think-block" open>' +
-        '<summary><span class="think-toggle">▶</span>🧠 Reasoning\u2026</summary>' +
-        '<div class="think-content">' + renderMdBasic(afterOpen) + '</div>' +
-      '</details>'
-    );
+      '</details>' +
+      (after ? renderMd(after) : '');
   }
-  return parts.join('');
+
+  // Unvollständiger Block (sollte nach Stream nicht mehr vorkommen)
+  return (before ? renderMdBasic(before) : '') +
+    '<details class="think-block" open>' +
+      '<summary><span class="think-toggle">▶</span><span class="think-label">🧠 Reasoning\u2026</span></summary>' +
+      '<div class="think-content">' + renderMdBasic(afterOpen) + '</div>' +
+    '</details>';
 }
 
 function esc(s) {

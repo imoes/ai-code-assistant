@@ -2,7 +2,11 @@
   "name": "ai-code-assistant",
   "displayName": "AI Code Assistant (llama.cpp MCP)",
   "description": "Autonomer AI Code Assistant basierend auf llama.cpp MCP – erstellt, bearbeitet und testet Code direkt im Workspace.",
-  "version": "0.1.0",
+  "version": "0.5.0",
+  "repository": {
+    "type": "git",
+    "url": "https://gitlab.ippen.media/mutkluge/ai-code-assistant"
+  },
   "engines": {
     "vscode": "^1.105.0"
   },
@@ -51,8 +55,12 @@
         "title": "AI Assistant: llama.cpp Verbindung testen"
       },
       {
+        "command": "aiAssistant.setMode",
+        "title": "AI Assistant: Arbeitsmodus wählen (Ask / Auto / Plan)"
+      },
+      {
         "command": "aiAssistant.toggleMode",
-        "title": "AI Assistant: Modus umschalten (Auto ↔ Manuell)"
+        "title": "AI Assistant: Modus weiterschalten (Ask → Auto → Plan)"
       },
       {
         "command": "aiAssistant.toggleAutoTest",
@@ -120,10 +128,15 @@
           "default": true,
           "description": "MCP-Protokoll statt direkter HTTP-API verwenden"
         },
+        "aiAssistant.apiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "**Optionaler** API-Key für den Endpunkt. Wird als `Authorization: Bearer <key>` gesendet.\n\n- Lokaler llama.cpp-Server: **leer lassen**\n- OpenRouter: `sk-or-v1-…` (Server-URL: `https://openrouter.ai/api`)\n- OpenAI / Groq / Together: entsprechender Key"
+        },
         "aiAssistant.model": {
           "type": "string",
           "default": "",
-          "description": "Modellname (leer = Serverstandard)"
+          "description": "Modellname (leer = Serverstandard). Bei OpenRouter z.B. anthropic/claude-sonnet-4.5"
         },
         "aiAssistant.maxTokens": {
           "type": "number",
@@ -137,10 +150,21 @@
           "maximum": 2,
           "description": "Kreativitäts-Faktor (0 = deterministisch, 2 = sehr kreativ)"
         },
+        "aiAssistant.mode": {
+          "type": "string",
+          "default": "ask",
+          "enum": ["ask", "auto", "plan"],
+          "enumDescriptions": [
+            "Fragen – jede Dateiänderung und jeder Shell-Befehl wird im Chat bestätigt (mit Diff).",
+            "Automatisch – der Assistent arbeitet ohne Rückfragen durch. Alles bleibt per Undo rücknehmbar.",
+            "Planen – der Assistent darf nur lesen und planen. Keine Dateiänderungen, keine Shell-Befehle."
+          ],
+          "description": "Arbeitsmodus des Assistenten. Umschaltbar über die Listbox in der Chat-Toolbar."
+        },
         "aiAssistant.autoApply": {
           "type": "boolean",
           "default": false,
-          "description": "KI-Änderungen automatisch anwenden (ohne Bestätigung)"
+          "markdownDescription": "**Veraltet** – nutze `aiAssistant.mode`. Wird nur noch gelesen, wenn `mode` nicht gesetzt ist (`true` entspricht dann dem Modus *auto*)."
         },
         "aiAssistant.allowShellCommands": {
           "type": "boolean",
@@ -179,6 +203,51 @@
           "default": 6000,
           "minimum": 1000,
           "description": "Schwellenwert (in Token) ab dem eine Kontext-Warnung angezeigt wird."
+        },
+        "aiAssistant.autoCompact": {
+          "type": "boolean",
+          "default": true,
+          "description": "Verlauf automatisch zusammenfassen, wenn er den Kontext des Modells zu füllen droht. Ohne das bricht die Anfrage bei langen Sitzungen ab."
+        },
+        "aiAssistant.compactThresholdPercent": {
+          "type": "number",
+          "default": 89,
+          "minimum": 50,
+          "maximum": 99,
+          "description": "Ab welchem Füllstand des Modell-Kontexts (in Prozent) der Verlauf zusammengefasst wird."
+        },
+        "aiAssistant.nativeToolCalls": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Werkzeuge im OpenAI-Schema an den Server senden (`tools` / `tool_calls`).\n\nDamit übernimmt der Server das modellspezifische Format – so funktioniert der Assistent mit Qwen, Gemma, Kimi, laguna, DeepSeek und Mistral gleichermaßen. Setzt bei llama.cpp `--jinja` voraus.\n\nAusschalten nur, wenn der Server keine Werkzeuge unterstützt: dann werden die Aufrufe aus dem Antworttext geparst."
+        },
+        "aiAssistant.agentLoop": {
+          "type": "boolean",
+          "default": true,
+          "description": "Agenten-Schleife: Der Assistent arbeitet selbständig weiter (analysieren → planen → ändern → testen → korrigieren), bis die Aufgabe erledigt ist."
+        },
+        "aiAssistant.maxAgentSteps": {
+          "type": "number",
+          "default": 12,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Maximale Anzahl Schritte, die der Assistent in einer Agenten-Schleife selbständig ausführt."
+        },
+        "aiAssistant.planningEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Planungsfunktion: Bei mehrschrittigen Aufgaben erstellt der Assistent zuerst einen Plan (Todo-Liste) und arbeitet ihn Schritt für Schritt ab."
+        },
+        "aiAssistant.instructionFiles": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["AGENTS.md", "CLAUDE.md", "command.md", ".github/copilot-instructions.md"],
+          "description": "Projekt-Anweisungsdateien, die bei jeder Anfrage als permanente Regeln geladen werden (in dieser Reihenfolge)."
+        },
+        "aiAssistant.autoAnalyze": {
+          "type": "boolean",
+          "default": true,
+          "description": "Vor Codeänderungen zuerst den bestehenden Code analysieren (read_file / grep / glob), statt sofort zu schreiben."
         }
       }
     }
@@ -187,7 +256,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package",
+    "package": "vsce package --baseContentUrl https://gitlab.ippen.media/mutkluge/ai-code-assistant/-/raw/main --baseImagesUrl https://gitlab.ippen.media/mutkluge/ai-code-assistant/-/raw/main",
     "lint": "eslint src --ext ts"
   },
   "overrides": {

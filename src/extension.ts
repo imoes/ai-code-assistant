@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { ChatPanel } from './chatPanel';
+import { SettingsPanel } from './settingsPanel';
+import { AssistantMode, getAssistantMode } from './aiEngine';
 import { SidebarProvider } from './sidebarProvider';
 import { ActionHistory } from './actionHistory';
 import { MCPClient } from './mcpClient';
@@ -45,18 +47,59 @@ export function activate(context: vscode.ExtensionContext): void {
         })
     );
 
-    // ── Modus umschalten (Auto ↔ Manuell) ────────────────────────────────────
+    // ── Arbeitsmodus setzen (ask / auto / plan) ──────────────────────────────
+    const MODE_LABELS: Record<AssistantMode, string> = {
+        ask: 'Ask 🔒 – jede Änderung wird bestätigt',
+        auto: 'Auto ⚡ – ohne Rückfragen',
+        plan: 'Plan 📋 – nur lesen und planen'
+    };
+
+    const applyMode = async (mode: AssistantMode, notify = true) => {
+        const config = vscode.workspace.getConfiguration('aiAssistant');
+        // Workspace-Bereich, wenn ein Ordner offen ist: der Modus gehört zum
+        // Projekt, nicht zur Installation.
+        const target = vscode.workspace.workspaceFolders?.length
+            ? vscode.ConfigurationTarget.Workspace
+            : vscode.ConfigurationTarget.Global;
+        await config.update('mode', mode, target);
+        // autoApply mitführen, damit ältere Abfragen konsistent bleiben
+        await config.update('autoApply', mode === 'auto', target);
+
+        logger.info(`Arbeitsmodus gesetzt: ${mode}`);
+        if (notify) {
+            vscode.window.showInformationMessage(`AI Assistant Modus: ${MODE_LABELS[mode]}`);
+        }
+        sidebar.refresh();
+        ChatPanel.broadcastModeChange(mode);
+    };
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('aiAssistant.setMode', async (mode?: string) => {
+            let target = mode as AssistantMode | undefined;
+
+            if (target !== 'ask' && target !== 'auto' && target !== 'plan') {
+                const picked = await vscode.window.showQuickPick(
+                    (['ask', 'auto', 'plan'] as AssistantMode[]).map(m => ({
+                        label: MODE_LABELS[m],
+                        mode: m,
+                        picked: m === getAssistantMode()
+                    })),
+                    { title: 'AI Assistant – Arbeitsmodus', placeHolder: 'Modus wählen' }
+                );
+                if (!picked) return;
+                target = picked.mode;
+            }
+
+            await applyMode(target);
+        })
+    );
+
+    // Alter Befehl: rotiert jetzt durch alle drei Modi
     context.subscriptions.push(
         vscode.commands.registerCommand('aiAssistant.toggleMode', async () => {
-            const config = vscode.workspace.getConfiguration('aiAssistant');
-            const current = config.get<boolean>('autoApply', false);
-            const newVal = !current;
-            await config.update('autoApply', newVal, vscode.ConfigurationTarget.Global);
-            const label = newVal ? 'Automatisch ⚡' : 'Manuell 🔒';
-            vscode.window.showInformationMessage(`AI Assistant Modus: ${label}`);
-            sidebar.refresh();
-            // Alle offenen Tabs über Modusänderung informieren
-            ChatPanel.broadcastModeChange(newVal);
+            const order: AssistantMode[] = ['ask', 'auto', 'plan'];
+            const next = order[(order.indexOf(getAssistantMode()) + 1) % order.length];
+            await applyMode(next);
         })
     );
 
@@ -77,7 +120,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // ── Einstellungen öffnen ──────────────────────────────────────────────────
     context.subscriptions.push(
         vscode.commands.registerCommand('aiAssistant.openSettings', () =>
-            vscode.commands.executeCommand('workbench.action.openSettings', 'aiAssistant')
+            SettingsPanel.open(context.extensionUri)
         )
     );
 
@@ -122,7 +165,7 @@ export function activate(context: vscode.ExtensionContext): void {
                     } else {
                         vscode.window.showErrorMessage(`❌ Nicht erreichbar: ${info}`, 'Einstellungen').then(sel => {
                             if (sel === 'Einstellungen') {
-                                vscode.commands.executeCommand('workbench.action.openSettings', 'aiAssistant.serverUrl');
+                                SettingsPanel.open(context.extensionUri);
                             }
                         });
                     }
@@ -148,11 +191,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // Status Bar zeigt aktuellen Modus
     const updateStatusBar = () => {
-        const isAuto = vscode.workspace.getConfiguration('aiAssistant').get<boolean>('autoApply', false);
-        statusBar.text = isAuto ? '$(zap) AI Auto' : '$(robot) AI Chat';
-        statusBar.tooltip = isAuto
-            ? 'AI Assistant – Automatischer Modus (klicken für neuen Chat)'
-            : 'AI Assistant – Manueller Modus (klicken für neuen Chat)';
+        const mode = getAssistantMode();
+        const icons: Record<AssistantMode, string> = {
+            auto: '$(zap) AI Auto',
+            plan: '$(checklist) AI Plan',
+            ask: '$(robot) AI Ask'
+        };
+        statusBar.text = icons[mode];
+        statusBar.tooltip = `AI Assistant – Modus ${mode}: ${MODE_LABELS[mode]}\n(klicken für neuen Chat)`;
     };
     updateStatusBar();
     statusBar.show();
@@ -160,7 +206,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('aiAssistant.autoApply')) {
+            if (e.affectsConfiguration('aiAssistant.mode') || e.affectsConfiguration('aiAssistant.autoApply')) {
                 updateStatusBar();
             }
         })

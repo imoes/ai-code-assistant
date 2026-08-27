@@ -1,6 +1,38 @@
 # AI Code Assistant – VSCodium Extension
 
-Ein autonomer AI Code Assistant für VSCodium 1.105+, der **llama.cpp** als lokale KI-Engine nutzt (über MCP oder OpenAI-kompatible API).
+Ein autonomer AI Code Assistant für VSCodium 1.105+. Als KI-Engine dient entweder ein
+lokaler **llama.cpp**-Server oder ein OpenAI-kompatibler Cloud-Anbieter (OpenRouter,
+OpenAI, Groq, Together – API-Key optional).
+
+Der Assistent arbeitet wie ein Entwickler an deiner Seite: er **liest und durchsucht**
+den bestehenden Code, **plant** mehrschrittige Aufgaben, **ändert** Dateien, **führt
+Tests aus** und **korrigiert** sich anhand der Fehlerausgabe – bis die Aufgabe erledigt ist.
+
+📋 Änderungen siehe [CHANGELOG.md](CHANGELOG.md) · 📖 Projektregeln siehe [AGENTS.md](AGENTS.md)
+
+---
+
+## Was der Assistent kann
+
+**Analysieren, bevor er schreibt.** Vier Nur-Lese-Werkzeuge laufen ohne Rückfrage direkt
+in der Extension (kein WSL, keine Shell):
+
+| Werkzeug | Zweck |
+|---|---|
+| `read_file` | Datei mit Zeilennummern lesen, abschnittsweise per `offset`/`limit` |
+| `grep` | Regex-Suche über das ganze Projekt (wie ripgrep), optional Glob-gefiltert |
+| `glob` | Dateien nach Muster finden, z.B. `**/*.test.ts` |
+| `list_dir` | Verzeichnis auflisten |
+
+**Planen.** Bei Aufgaben mit mehr als zwei Schritten legt der Assistent eine Todo-Liste an
+und arbeitet sie ab. Der Fortschritt erscheint im Chat als Checkliste mit Fortschrittsbalken.
+
+**Selbständig arbeiten (Agenten-Schleife).** Pro Runde: Werkzeuge aufrufen → Ergebnisse
+auswerten → nächster Schritt. Die Schleife endet, wenn der Assistent die Aufgabe als
+erledigt meldet oder das Schrittlimit erreicht ist.
+
+**Projektregeln beachten.** `AGENTS.md`, `CLAUDE.md`, `command.md` und
+`.github/copilot-instructions.md` werden bei jeder Anfrage als permanente Regeln geladen.
 
 ---
 
@@ -57,19 +89,92 @@ npm run compile      # via WSL: wsl npm run compile
 
 ## Konfiguration
 
-Öffne Einstellungen (`Strg+,`) und suche nach `aiAssistant`:
+Am einfachsten über das **Einstellungs-Panel**: ⚙-Button in der Chat-Toolbar oder
+`Strg+Shift+P` → *AI Assistant: Einstellungen öffnen*. Änderungen werden dort gesammelt
+und erst per **💾 Speichern** (oder `Strg+S`) übernommen – so lässt sich ein API-Key
+vollständig eintippen, ohne dass Zwischenstände gespeichert werden. Der Button
+**🔌 Verbindung testen** speichert vorher und prüft dann den Endpunkt.
+
+Alternativ klassisch über `Strg+,` → `aiAssistant`:
+
+### Verbindung
 
 | Einstellung | Standard | Beschreibung |
 |---|---|---|
-| `aiAssistant.serverUrl` | `http://localhost:8080` | llama.cpp Server-URL |
-| `aiAssistant.mcpEnabled` | `true` | MCP-Protokoll nutzen (Fallback auf OpenAI-API) |
+| `aiAssistant.serverUrl` | `http://localhost:8080` | Endpunkt-URL. OpenRouter: `https://openrouter.ai/api` |
+| `aiAssistant.apiKey` | `` | **Optional.** Nur für Cloud-Anbieter, wird als `Authorization: Bearer …` gesendet |
 | `aiAssistant.model` | `` | Modellname (leer = Serverstandard) |
-| `aiAssistant.maxTokens` | `2048` | Max. Token pro Antwort |
-| `aiAssistant.temperature` | `0.2` | Kreativität (0=deterministisch) |
-| `aiAssistant.autoApply` | `false` | KI-Änderungen ohne Bestätigung anwenden |
+| `aiAssistant.mcpEnabled` | `true` | llama.cpp MCP-Protokoll nutzen (bei Cloud-Anbietern automatisch übersprungen) |
+
+### Agent
+
+| Einstellung | Standard | Beschreibung |
+|---|---|---|
+| `aiAssistant.agentLoop` | `true` | Agenten-Schleife: selbständig weiterarbeiten bis fertig |
+| `aiAssistant.maxAgentSteps` | `12` | Maximale Schritte pro Aufgabe |
+| `aiAssistant.planningEnabled` | `true` | Planungsfunktion (Todo-Liste) |
+| `aiAssistant.autoAnalyze` | `true` | Erst lesen, dann schreiben |
+| `aiAssistant.autoApply` | `false` | **Auto-Modus:** Änderungen ohne Rückfrage anwenden |
+| `aiAssistant.instructionFiles` | `AGENTS.md`, `CLAUDE.md`, … | Projekt-Anweisungsdateien |
+
+### Tests, Sicherheit, Modell
+
+| Einstellung | Standard | Beschreibung |
+|---|---|---|
+| `aiAssistant.autoTest` | `false` | Nach Änderungen automatisch Tests ausführen |
+| `aiAssistant.autoFixOnError` | `true` | Fehlerausgaben analysieren und korrigieren |
+| `aiAssistant.autoFixIterations` | `3` | Max. Korrektur-Durchläufe |
 | `aiAssistant.allowShellCommands` | `true` | Shell-Befehle erlauben (via WSL) |
 | `aiAssistant.confirmDangerousOps` | `true` | Vor gefährlichen Aktionen warnen |
+| `aiAssistant.maxTokens` | `2048` | Max. Token pro Antwort |
+| `aiAssistant.temperature` | `0.2` | Kreativität (0 = deterministisch) |
+| `aiAssistant.contextWarningThreshold` | `6000` | Kontext-Warnung ab (Token) |
 | `aiAssistant.systemPrompt` | (Deutsch) | System-Prompt anpassen |
+
+### Cloud-Anbieter statt lokalem Server
+
+Beispiel OpenRouter:
+
+```
+aiAssistant.serverUrl = https://openrouter.ai/api
+aiAssistant.apiKey    = sk-or-v1-…
+aiAssistant.model     = anthropic/claude-sonnet-4.5
+```
+
+Bei gesetztem API-Key und nicht-lokaler URL wird das MCP-Protokoll übersprungen und
+direkt die OpenAI-kompatible API genutzt.
+
+### Arbeitsmodi
+
+Die Listbox in der Chat-Toolbar schaltet zwischen drei Modi um (auch per
+`Strg+Shift+P` → *AI Assistant: Arbeitsmodus wählen*):
+
+| Modus | Verhalten |
+|---|---|
+| 🔒 **Ask** (Standard) | Jede Dateiänderung und jeder Shell-Befehl wird im Chat bestätigt – mit farbigem Diff und „In Editor öffnen". |
+| ⚡ **Auto** | Der Assistent arbeitet ohne Rückfragen durch. Jede Änderung erscheint trotzdem als Diff-Karte im Chat, alles bleibt per `↩ Undo` rücknehmbar. |
+| 📋 **Plan** | Der Assistent darf nur lesen und planen. Dateiänderungen und Shell-Befehle sind gesperrt – auch wenn das Modell sie versucht. Gut, um erst den Plan zu sehen und dann zu entscheiden. |
+
+---
+
+## Was während der Arbeit sichtbar ist
+
+- **Plan** als Checkliste mit Fortschrittsbalken, live aktualisiert.
+- **Jede Aktion** mit eigener Karte: gelesene Dateien, Suchtreffer, Shell-Ausgabe.
+- **Jede Änderung** als farbige Diff-Karte mit Pfad und `−x / +y`-Bilanz.
+- **Kennzahlen** in der Denk-Leiste: Fortschritt der Eingabe-Auswertung in Prozent,
+  dazu Tokens und Tokens/Sekunde für Ein- und Ausgabe (`↓ 3.1k Tok @ 82/s · ↑ 240 Tok @ 30.4/s`).
+  Kommt vom llama.cpp-Server; andere Anbieter liefern das nicht.
+
+### Langer Verlauf
+
+Erreicht der Verlauf **89 %** des Modell-Kontexts, fasst der Assistent die älteren
+Nachrichten automatisch zusammen und arbeitet weiter – die letzten vier bleiben wörtlich
+erhalten. Die Kontextgröße wird beim Server erfragt (`/v1/models` → `meta.n_ctx`).
+Schwelle: `aiAssistant.compactThresholdPercent`, abschaltbar über `aiAssistant.autoCompact`.
+
+Der Button **🗑 Verlauf löschen** entfernt alle gespeicherten Sessions aus
+`ai-code-assistant.json`. Bereits angewandte Codeänderungen bleiben bestehen.
 
 ---
 
