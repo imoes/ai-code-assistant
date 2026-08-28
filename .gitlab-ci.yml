@@ -10,6 +10,11 @@ stages:
   - package
 
 default:
+  # Der Runner wird über seinen Tag gewählt. Ohne Tag nimmt GitLab nur Runner,
+  # die "run untagged jobs" erlauben – gibt es keinen solchen, bleibt der Job
+  # hängen und die Pipeline schlägt fehl, ohne je ein Skript auszuführen.
+  tags:
+    - test-deploy
   image: node:22
   cache:
     key:
@@ -23,8 +28,17 @@ variables:
   NPM_CONFIG_FUND: "false"
   NPM_CONFIG_AUDIT: "false"
 
+# Ist "test-deploy" ein Shell-Runner, wird `image:` ignoriert und node muss auf
+# dem Host liegen. Ohne diese Ausgabe endet der Job dann mit einem nackten
+# "npm: command not found" irgendwo mitten im Protokoll.
+.node_check: &node_check
+  - echo "Runner $CI_RUNNER_DESCRIPTION (Tags $CI_RUNNER_TAGS)"
+  - node --version || { echo "FEHLER node fehlt auf diesem Runner"; exit 1; }
+  - npm --version
+
 compile:
   stage: build
+  before_script: *node_check
   script:
     - npm ci
     - npm run compile
@@ -41,6 +55,7 @@ compile:
 package:
   stage: package
   needs: [compile]
+  before_script: *node_check
   script:
     - npm ci
     # npm run package setzt die --baseContentUrl/--baseImagesUrl für die
