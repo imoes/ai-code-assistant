@@ -135,21 +135,46 @@ Alternativ klassisch über `Strg+,` → `aiAssistant`:
 
 ### Web-Suche
 
-Schlüsselfreie Suche ist unzuverlässig: DuckDuckGo antwortet unter Last mit leeren
-Ergebnissen, öffentliche SearXNG-Instanzen mit `403` oder `429`. Für verlässliche Suche
-einen Anbieter eintragen:
+**Es gibt keine kostenlose, unbegrenzte allgemeine Websuche.** Jeder Weg ist entweder ein
+Anbieter mit Kontingent oder er kratzt eine HTML-Seite ab und wird ab einem gewissen
+Volumen gesperrt. Konkret:
+
+- Die **Bing-Such-API ist seit dem 11.08.2025 abgeschaltet.** Microsoft verweist auf
+  *Grounding with Bing Search* in Azure AI Foundry – das ist keine Such-API, sondern ein
+  Agenten-Dienst, und teurer als das Alte.
+- **Brave** hat im Februar 2026 den kostenlosen Tarif gestrichen (ab 5 $/Monat).
+- Ein **eigener SearXNG** hebt die Grenzen nicht auf: SearXNG befragt Google, Bing und
+  DuckDuckGo für dich, deren Sperren gelten weiter. Er verlagert das Abkratzen nur.
+- **DuckDuckGo** ohne Schlüssel geht – bis die IP gesperrt wird. Beobachtet: nach etwa
+  fünf Abfragen in Folge kommt nichts mehr zurück.
+
+Deshalb ist die Voreinstellung kein einzelner Dienst, sondern ein **Bündel unabhängiger
+Quellen**, die gleichzeitig gefragt und deren Treffer zusammengeführt werden. Fällt eine
+aus, tragen die anderen:
+
+| Quelle | Grenze | Wofür |
+|---|---|---|
+| **DuckDuckGo** (HTML, sonst Lite) | IP-Sperre nach wenigen Abfragen | allgemeine Suche |
+| **Stack Overflow** (offizielle API) | 300 Abfragen/Tag pro IP, ohne Schlüssel | Programmierfragen – meist die beste Quelle |
+| **Wikipedia** (MediaWiki-API) | praktisch keine | Begriffe und Verfahren; nur als letzter Ausweg, weil sie bei Code-Fragen rauscht |
+
+DuckDuckGo Lite wird nur gefragt, wenn `/html/` nichts liefert – zwei Abfragen an
+denselben Dienst beschleunigen die Sperre.
+
+Mit Schlüssel bleibt es verlässlicher. `aiAssistant.searchProvider` wählt gezielt:
 
 | Anbieter | Was nötig ist |
 |---|---|
 | **Tavily** (empfohlen) | `aiAssistant.searchApiKey` – liefert Textauszüge statt nur Links, kostenloses Kontingent |
-| **Brave Search** | `aiAssistant.searchApiKey` |
-| **Google Programmable Search** | `searchApiKey` + Such-ID (`cx`) in `aiAssistant.searchEndpoint` |
-| **SearXNG** (eigene Instanz) | Adresse in `aiAssistant.searchEndpoint`, kein Schlüssel |
-| **DuckDuckGo** | nichts – aber oft ohne Treffer |
+| **Brave Search** | `aiAssistant.searchApiKey` (kostenpflichtig) |
+| **Google Programmable Search** | `searchApiKey` + Such-ID (`cx`) in `aiAssistant.searchEndpoint`, 100 Abfragen/Tag frei |
+| **SearXNG** (eigene Instanz) | Adresse in `aiAssistant.searchEndpoint`; in `settings.yml` muss `search.formats` auch `json` enthalten, sonst antwortet die Instanz mit HTML statt JSON |
 
-**`web_fetch` funktioniert immer** und braucht keinen Schlüssel: eine bekannte Adresse
-direkt abrufen und lesen. Findet die Suche nichts, sagt der Assistent das und greift
-darauf zurück, statt dieselbe Suche zu wiederholen.
+**Unbegrenzt ist nur `web_fetch`**: eine bekannte Adresse direkt abrufen und lesen. Für
+Dokumentation ist das der verlässliche Weg – und meist der kürzere, weil eine
+Trefferliste aus Titeln und Links eine Frage ohnehin nicht beantwortet. Findet die Suche
+nichts, nennt der Assistent jede Ursache einzeln und greift darauf zurück, statt dieselbe
+Suche zu wiederholen.
 
 ### Cloud-Anbieter statt lokalem Server
 

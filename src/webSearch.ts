@@ -66,7 +66,7 @@ export class WebSearcher {
             : [
                 ...(apiKey ? ['tavily', 'brave', 'google'] : []),
                 ...(endpoint ? ['searxng'] : []),
-                'duckduckgo'
+                'keyless'
             ];
 
         const problems: string[] = [];
@@ -78,7 +78,11 @@ export class WebSearcher {
                     this.logger.info(`Web-Suche (${name}): ${result.results.length} Ergebnis(se)`);
                     return result;
                 }
-                problems.push(`${name}: keine Treffer`);
+                // Die Begründungen der Unterquellen durchreichen. Sonst steht
+                // außen nur „keyless: keine Treffer", und weder Benutzer noch
+                // Modell erfahren, ob gesperrt, gedrosselt oder wirklich leer.
+                if (result?.problems?.length) problems.push(...result.problems);
+                else problems.push(`${name}: keine Treffer`);
                 this.logger.warn(`Web-Suche (${name}): keine Treffer`);
             } catch (err) {
                 const msg = (err as Error).message;
@@ -121,6 +125,14 @@ export class WebSearcher {
                 } catch { /* weiter zum HTML-Weg */ }
                 return this.searchHtml(query, maxResults);
             }
+            case 'ddglite':
+                return this.searchDuckDuckGoLite(query, maxResults);
+            case 'stackexchange':
+                return this.searchStackExchange(query, maxResults);
+            case 'wikipedia':
+                return this.searchWikipedia(query, maxResults);
+            case 'keyless':
+                return this.searchKeyless(query, maxResults);
             default:
                 throw new Error(`unbekannter Anbieter "${name}"`);
         }
@@ -194,9 +206,254 @@ export class WebSearcher {
         };
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // Schlüsselfreie Suche: mehrere unabhängige Quellen gleichzeitig
+    // ──────────────────────────────────────────────────────────────────────
+
     /**
-     * SearXNG – die schlüsselfreie Option, aber nur mit eigener Instanz
-     * brauchbar: öffentliche Instanzen antworten mit 403 oder 429.
+     * Suche ohne Schlüssel – über mehrere Quellen parallel.
+     *
+     * Es gibt keine kostenlose, unbegrenzte, allgemeine Websuche. Jeder Weg ist
+     * entweder ein Anbieter mit Kontingent, oder er kratzt eine HTML-Seite ab
+     * und wird ab einem gewissen Volumen gesperrt. Ein eigener SearXNG hilft
+     * dabei nicht: er verlagert das Abkratzen nur, die Sperren der befragten
+     * Suchmaschinen gelten weiter. Und die Bing-Such-API ist seit dem
+     * 11. August 2025 abgeschaltet.
+     *
+     * Was hilft, ist Unabhängigkeit der Quellen. Gefragt werden gleichzeitig:
+     *
+     * - DuckDuckGo HTML und DuckDuckGo Lite – zwei getrennte Oberflächen
+     * - Stack Exchange – offizielle API, ohne Schlüssel 300 Anfragen/Tag pro IP
+     * - Wikipedia (MediaWiki) – offizielle API, ohne Schlüssel, hohe Grenzen
+     *
+     * Fällt eine Quelle aus, tragen die anderen. Die Treffer werden über die
+     * Adresse zusammengeführt, damit dieselbe Seite nicht doppelt erscheint.
+     * Für eine bekannte Adresse bleibt `web_fetch` der verlässliche Weg – der
+     * hat gar kein Kontingent.
+     */
+    private async searchKeyless(query: string, maxResults: number): Promise<SearchResponse> {
+        type Attempt = { name: string; response: SearchResponse | null; error: string };
+
+        const attempt = async (name: string, run: () => Promise<SearchResponse>): Promise<Attempt> => {
+            try {
+                const r = await run();
+                this.logger.info(`Web-Suche (${name}): ${r.results.length} Treffer`);
+                return { name, response: r, error: '' };
+            } catch (err) {
+                const msg = (err as Error).message;
+                this.logger.warn(`Web-Suche (${name}) fehlgeschlagen: ${msg}`);
+                return { name, response: null, error: msg };
+            }
+        };
+
+        // DuckDuckGo zählt als EINE Quelle: erst /html/, nur bei Fehlschlag die
+        // Lite-Seite. Beide gleichzeitig zu fragen verdoppelt die Last auf
+        // demselben Dienst und führt schneller zur Sperre – im Probelauf war
+        // DuckDuckGo nach der fünften Anfrage in Folge stumm.
+        const duckduckgo = async (): Promise<Attempt> => {
+            const html = await attempt('duckduckgo', () => this.searchHtml(query, maxResults));
+            if (html.response && html.response.results.length > 0) return html;
+            const lite = await attempt('ddglite', () => this.searchDuckDuckGoLite(query, maxResults));
+            if (lite.response && lite.response.results.length > 0) return lite;
+            return html.response ? lite : html;
+        };
+
+        const first = await Promise.all([
+            duckduckgo(),
+            attempt('stackexchange', () => this.searchStackExchange(query, maxResults))
+        ]);
+
+        const merge = (attempts: Attempt[]) => {
+            const seen = new Set<string>();
+            const out: SearchResult[] = [];
+            const problems: string[] = [];
+            let answer: string | undefined;
+            for (const a of attempts) {
+                if (!a.response) { problems.push(`${a.name}: ${a.error}`); continue; }
+                if (a.response.results.length === 0) problems.push(`${a.name}: keine Treffer`);
+                if (!answer && a.response.answer) answer = a.response.answer;
+                for (const r of a.response.results) {
+                    const key = r.url.replace(/[#?].*$/, '').replace(/\/+$/, '');
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    out.push(r);
+                }
+            }
+            return { results: out, problems, answer };
+        };
+
+        let { results, problems, answer } = merge(first);
+
+        // Wikipedia erst, wenn sonst nichts kam. Für „typescript satisfies
+        // operator" lieferte sie im Probelauf den Artikel „Modulo" – als
+        // Ergänzung ist das Rauschen, als letzter Ausweg besser als nichts.
+        if (results.length === 0) {
+            const fallback = await attempt('wikipedia', () => this.searchWikipedia(query, maxResults));
+            const second = merge([fallback]);
+            results = second.results;
+            problems = [...problems, ...second.problems];
+            answer = answer ?? second.answer;
+        }
+
+        return {
+            query,
+            answer,
+            results: results.slice(0, maxResults),
+            problems: results.length === 0 ? problems : undefined
+        };
+    }
+
+    /**
+     * DuckDuckGo Lite – dieselbe Suche, andere Oberfläche.
+     *
+     * Eine zweite, unabhängige Adresse mit eigener Auszeichnung: sperrt oder
+     * leert die eine Oberfläche, liefert die andere oft noch. Die Lite-Seite
+     * ist eine Tabelle mit `result-link` und `result-snippet`, jeweils in
+     * einfachen Anführungszeichen – nicht dieselbe Auszeichnung wie /html/.
+     */
+    private async searchDuckDuckGoLite(query: string, maxResults: number): Promise<SearchResponse> {
+        const raw = await this.httpPost(
+            'https://lite.duckduckgo.com/lite/',
+            `q=${encodeURIComponent(query)}&kl=wt-wt`
+        );
+        return { query, results: this.parseDuckDuckGoLiteHtml(raw, maxResults) };
+    }
+
+    /** Treffer aus der Lite-Seite lesen – getrennt vom Netzaufruf, damit prüfbar. */
+    private parseDuckDuckGoLiteHtml(raw: string, maxResults: number): SearchResult[] {
+        type Hit = { pos: number; url: string; title: string };
+        const titles: Hit[] = [];
+        const snippets: { pos: number; text: string }[] = [];
+
+        const titlePattern = /<a[^>]*href="([^"]+)"[^>]*class=['"]result-link['"][^>]*>([\s\S]*?)<\/a>/g;
+        let m: RegExpExecArray | null;
+        while ((m = titlePattern.exec(raw)) !== null) {
+            titles.push({ pos: m.index, url: this.decodeRedirectUrl(m[1]), title: this.stripHtml(m[2]) });
+        }
+
+        const snippetPattern = /<td[^>]*class=['"]result-snippet['"][^>]*>([\s\S]*?)<\/td>/g;
+        while ((m = snippetPattern.exec(raw)) !== null) {
+            snippets.push({ pos: m.index, text: this.stripHtml(m[1]) });
+        }
+
+        // Auf der Lite-Seite steht der Auszug VOR dem nächsten Titel, aber nach
+        // dem eigenen – gepaart wird über die Position, wie bei /html/.
+        const results: SearchResult[] = [];
+        for (let i = 0; i < titles.length && results.length < maxResults; i++) {
+            const t = titles[i];
+            const next = titles[i + 1]?.pos ?? Infinity;
+            const own = snippets.find(s => s.pos > t.pos && s.pos < next)
+                ?? snippets.find(s => s.pos < t.pos && (i === 0 || s.pos > titles[i - 1].pos));
+            if (!t.url || !t.title) continue;
+            results.push({ title: t.title, url: t.url, snippet: own?.text ?? '' });
+        }
+
+        return results;
+    }
+
+    /**
+     * Stack Exchange – offizielle API, ohne Schlüssel nutzbar.
+     *
+     * Ohne Schlüssel gelten 300 Anfragen pro Tag und IP; das ist für einen
+     * Assistenten mit einer Handvoll Suchen pro Aufgabe reichlich. Und es ist
+     * eine echte API: keine HTML-Auszeichnung, die sich morgen ändert.
+     *
+     * Für Programmierfragen ist das oft die bessere Quelle als eine allgemeine
+     * Suchmaschine – Titel und Punktestand sagen mehr als ein Textauszug.
+     */
+    private async searchStackExchange(query: string, maxResults: number): Promise<SearchResponse> {
+        const url = 'https://api.stackexchange.com/2.3/search/advanced'
+            + `?order=desc&sort=relevance&site=stackoverflow&pagesize=${Math.max(1, maxResults)}`
+            + `&q=${encodeURIComponent(query)}`;
+        const raw = await this.httpGet(url, 5, { 'Accept': 'application/json' });
+        return { query, results: this.mapStackExchange(JSON.parse(raw), maxResults) };
+    }
+
+    /** Antwort der Stack-Exchange-API in Treffer übersetzen. */
+    private mapStackExchange(data: {
+        error_message?: string;
+        items?: {
+            title?: string; link?: string; score?: number;
+            answer_count?: number; is_answered?: boolean; tags?: string[];
+        }[];
+    }, maxResults: number): SearchResult[] {
+        if (data.error_message) throw new Error(String(data.error_message));
+
+        return (data.items ?? []).slice(0, maxResults).map((it: {
+            title?: string; link?: string; score?: number;
+            answer_count?: number; is_answered?: boolean; tags?: string[];
+        }) => ({
+            title: this.stripHtml(it.title ?? ''),
+            url: it.link ?? '',
+            // Der Textauszug wird gebaut: die API liefert ohne Filter keinen
+            // Fragetext, aber Punktestand und Antwortzahl sagen genug darüber,
+            // ob sich das Öffnen lohnt.
+            snippet: `Stack Overflow · ${it.score ?? 0} Punkte · `
+                + `${it.answer_count ?? 0} Antwort(en)`
+                + `${it.is_answered ? ', akzeptiert' : ''}`
+                + `${it.tags?.length ? ' · ' + it.tags.slice(0, 5).join(', ') : ''}`
+        })).filter((r: SearchResult) => r.url);
+    }
+
+    /**
+     * Wikipedia über die MediaWiki-API – schlüssellos und offiziell.
+     *
+     * Für Begriffe und Verfahren („Was ist ein Recursive-Descent-Parser") die
+     * verlässlichste schlüsselfreie Quelle überhaupt. Für Programmierdetails
+     * taugt sie nicht, deshalb steht sie in der Zusammenführung hinten.
+     */
+    /**
+     * Wikipedia-Sprachausgabe zur Suchanfrage wählen.
+     *
+     * Umlaute und deutsche Funktionswörter entscheiden. Ein Großbuchstabe taugt
+     * nicht als Merkmal: „Typescript satisfies operator" landete damit auf
+     * de.wikipedia.org.
+     */
+    private wikipediaLanguage(query: string): 'de' | 'en' {
+        if (/[äöüßÄÖÜ]/.test(query)) return 'de';
+        if (/\b(?:der|die|das|den|dem|und|oder|wie|was|wer|ist|sind|nicht|kein|eine|einen|einem|mit|von|für|auf|man|werden|wird)\b/i
+            .test(query)) return 'de';
+        return 'en';
+    }
+
+    private async searchWikipedia(query: string, maxResults: number): Promise<SearchResponse> {
+        const lang = this.wikipediaLanguage(query);
+
+        // Frageformeln entfernen: „wie funktioniert ein recursive descent
+        // parser" findet in der Volltextsuche nichts, „recursive descent
+        // parser" schon.
+        const terms = query
+            .replace(/^\s*(?:wie|was|wer|wo|warum|wieso|weshalb|welche[srn]?)\b/i, '')
+            .replace(/\b(?:funktioniert|funktionieren|bedeutet|macht|ist|sind|man|ein|eine|einen|der|die|das|und|von|mit|für|how|does|do|is|are|the|a|an|what)\b/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim() || query;
+
+        const url = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search`
+            + `&srsearch=${encodeURIComponent(terms)}&srlimit=${Math.max(1, maxResults)}`
+            + '&format=json&origin=*';
+        const raw = await this.httpGet(url, 5, { 'Accept': 'application/json' });
+        const data = JSON.parse(raw);
+
+        const results: SearchResult[] = (data.query?.search ?? []).slice(0, maxResults).map((s: {
+            title?: string; snippet?: string;
+        }) => ({
+            title: `${s.title ?? ''} (Wikipedia)`,
+            url: `https://${lang}.wikipedia.org/wiki/`
+                + encodeURIComponent(String(s.title ?? '').replace(/ /g, '_')),
+            snippet: this.stripHtml(s.snippet ?? '')
+        })).filter((r: SearchResult) => r.title.length > 12);
+
+        return { query, results };
+    }
+
+    /**
+     * SearXNG – nur mit eigener Instanz brauchbar: öffentliche Instanzen
+     * antworten mit 403 oder 429.
+     *
+     * Wichtig: eine frische Instanz gibt kein JSON heraus. In `settings.yml`
+     * muss `search.formats` auch `json` enthalten, sonst antwortet sie mit 403.
+     * Und Unbegrenztheit bringt die eigene Instanz nicht: SearXNG befragt
+     * Google, Bing und DuckDuckGo für dich – deren Sperren gelten weiter.
      */
     private async searchSearxng(
         query: string, maxResults: number, base: string
@@ -204,7 +461,22 @@ export class WebSearcher {
         const root = base.replace(/\/+$/, '');
         const url = `${root}/search?q=${encodeURIComponent(query)}&format=json`;
         const raw = await this.httpGet(url, 5, { 'Accept': 'application/json' });
-        const data = JSON.parse(raw);
+
+        // Eine frische Instanz gibt kein JSON heraus und antwortet mit der
+        // HTML-Seite. Die Meldung muss sagen, was zu tun ist – sonst sucht man
+        // den Fehler im Client statt in settings.yml.
+        let data: {
+            answers?: string[];
+            results?: { title?: string; url?: string; content?: string }[];
+        };
+        try {
+            data = JSON.parse(raw);
+        } catch {
+            throw new Error(
+                'Instanz liefert kein JSON. In settings.yml unter search.formats '
+                + 'auch "json" eintragen (Standard ist nur "html") und neu starten.'
+            );
+        }
         return {
             query,
             answer: (data.answers ?? [])[0] || undefined,

@@ -75,6 +75,12 @@ const server = http.createServer((req, res) => {
         // Anbieter, der drosselt
         if (req.url.startsWith('/limited')) return send(429, 'text/plain', 'Too Many Requests');
 
+        // SearXNG-Instanz mit Standardeinstellung: JSON ist NICHT freigegeben,
+        // die Instanz antwortet mit ihrer HTML-Seite und Status 200.
+        if (req.url.startsWith('/htmlonly')) {
+            return send(200, 'text/html', '<!doctype html><html><body>SearXNG</body></html>');
+        }
+
         // Seite mit Weiterleitung
         if (req.url === '/redirect') {
             res.writeHead(302, { Location: '/page' });
@@ -225,6 +231,185 @@ function listen() {
 
         const limited = ws.parseDuckDuckGoHtml(html, 2);
         check('maxResults wird beachtet', limited.length === 2, String(limited.length));
+    }
+
+    // ── Schluessellose Quellen ───────────────────────────────────────────────
+    // Es gibt keine kostenlose, unbegrenzte allgemeine Websuche. Statt EINER
+    // schluessellosen Quelle werden mehrere unabhaengige gleichzeitig gefragt:
+    // faellt eine aus, tragen die anderen.
+
+    section('DuckDuckGo Lite: eigene Auszeichnung');
+    {
+        // Die Lite-Seite nutzt einfache Anfuehrungszeichen und eine
+        // Tabellenstruktur - nicht dieselbe Auszeichnung wie /html/.
+        const lite = `
+<tr><td><a rel="nofollow" href="https://nodejs.org/api/test.html" class='result-link'>Test runner | Node.js</a></td></tr>
+<tr><td>&nbsp;</td><td class='result-snippet'>Starting <b>Node</b>.js with --<b>test</b>-name-pattern.</td></tr>
+<tr><td><a rel="nofollow" href="https://example.org/zwei" class='result-link'>Zweiter Treffer</a></td></tr>
+<tr><td>&nbsp;</td><td class='result-snippet'>Auszug zwei</td></tr>`;
+
+        const hits = ws.parseDuckDuckGoLiteHtml(lite, 10);
+        check('beide Treffer gelesen', hits.length === 2, JSON.stringify(hits.map(h => h.title)));
+        check('Titel entkommen', hits[0].title === 'Test runner | Node.js', hits[0].title);
+        check('Adresse gelesen', hits[0].url === 'https://nodejs.org/api/test.html', hits[0].url);
+        check('Auszug ohne Tags',
+            hits[0].snippet === 'Starting Node.js with --test-name-pattern.', hits[0].snippet);
+        check('zweiter Auszug richtig zugeordnet', hits[1].snippet === 'Auszug zwei', hits[1].snippet);
+        check('maxResults wird beachtet', ws.parseDuckDuckGoLiteHtml(lite, 1).length === 1);
+    }
+
+    section('Stack Exchange: offizielle API ohne Schluessel');
+    {
+        const data = {
+            items: [
+                {
+                    title: 'How to mark a test as &quot;todo&quot;?',
+                    link: 'https://stackoverflow.com/questions/1',
+                    score: 42, answer_count: 3, is_answered: true,
+                    tags: ['node.js', 'testing']
+                },
+                { title: 'Ohne Link', score: 1 }
+            ]
+        };
+        const hits = ws.mapStackExchange(data, 5);
+        check('nur Treffer mit Adresse', hits.length === 1, JSON.stringify(hits));
+        check('Entities im Titel aufgeloest',
+            hits[0].title.includes('"todo"'), hits[0].title);
+        check('Punktestand im Auszug', /42 Punkte/.test(hits[0].snippet), hits[0].snippet);
+        check('Antwortzahl im Auszug', /3 Antwort/.test(hits[0].snippet), hits[0].snippet);
+        check('akzeptierte Antwort vermerkt', /akzeptiert/.test(hits[0].snippet), hits[0].snippet);
+        check('Schlagworte im Auszug', /node\.js, testing/.test(hits[0].snippet), hits[0].snippet);
+
+        // Drosselung meldet sich als Fehler, nicht als leeres Ergebnis
+        let err = null;
+        try { ws.mapStackExchange({ error_message: 'throttle violation' }, 5); }
+        catch (e) { err = e; }
+        check('Drosselung wird zum Fehler',
+            err !== null && /throttle/.test(err.message), err && err.message);
+    }
+
+    section('Keyless: mehrere Quellen zusammenfuehren');
+    {
+        // Die Netzaufrufe werden ersetzt: geprueft wird das Zusammenfuehren.
+        const orig = {
+            html: ws.searchHtml, lite: ws.searchDuckDuckGoLite,
+            se: ws.searchStackExchange, wiki: ws.searchWikipedia
+        };
+
+        let calls = [];
+        ws.searchHtml = async (q) => {
+            calls.push('html');
+            return { query: q, results: [
+                { title: 'DDG eins', url: 'https://a.example/1', snippet: 'a1' },
+                { title: 'Gemeinsam', url: 'https://gleich.example/x?utm=1', snippet: 'von DDG' }
+            ] };
+        };
+        ws.searchDuckDuckGoLite = async (q) => {
+            calls.push('lite');
+            return { query: q, results: [
+                { title: 'Lite eins', url: 'https://b.example/2', snippet: 'b2' }
+            ] };
+        };
+        ws.searchStackExchange = async (q) => {
+            calls.push('se');
+            // Dieselbe Seite, andere Adresse (Anker/Parameter) - nicht doppelt
+            return { query: q, results: [
+                { title: 'Gemeinsam', url: 'https://gleich.example/x#abschnitt', snippet: 'von SO' },
+                { title: 'SO eins', url: 'https://c.example/3', snippet: 'c3' }
+            ] };
+        };
+        ws.searchWikipedia = async (q) => {
+            calls.push('wiki');
+            return { query: q, results: [
+                { title: 'Modulo (Wikipedia)', url: 'https://en.wikipedia.org/wiki/Modulo', snippet: 'w1' }
+            ] };
+        };
+
+        const r = await ws.searchKeyless('parser', 10);
+        const urls = r.results.map(x => x.url);
+        check('Treffer aus beiden erreichbaren Quellen',
+            urls.length === 3, JSON.stringify(urls));
+        check('gemeinsame Seite nur einmal',
+            urls.filter(u => u.includes('gleich.example')).length === 1, JSON.stringify(urls));
+        check('erste Quelle gewinnt beim Duplikat',
+            r.results.find(x => x.url.includes('gleich.example')).snippet === 'von DDG',
+            JSON.stringify(r.results));
+        check('bei Treffern keine Problemliste', r.problems === undefined, JSON.stringify(r.problems));
+
+        // Lite wird NICHT gefragt, wenn /html/ liefert: sonst doppelte Last auf
+        // demselben Dienst und die Sperre kommt schneller.
+        check('Lite bleibt ungefragt wenn HTML liefert',
+            !calls.includes('lite'), JSON.stringify(calls));
+        // Und Wikipedia rauscht nicht dazwischen, solange es Treffer gibt
+        check('Wikipedia nur als letzter Ausweg',
+            !calls.includes('wiki'), JSON.stringify(calls));
+
+        // maxResults gilt fuer das Gesamtergebnis
+        const kurz = await ws.searchKeyless('parser', 2);
+        check('maxResults gilt nach dem Zusammenfuehren',
+            kurz.results.length === 2, String(kurz.results.length));
+
+        // /html/ gesperrt -> Lite uebernimmt
+        calls = [];
+        ws.searchHtml = async () => { throw new Error('403 gesperrt'); };
+        const viaLite = await ws.searchKeyless('parser', 5);
+        check('Lite uebernimmt wenn HTML sperrt',
+            calls.includes('lite') && viaLite.results.some(x => x.url === 'https://b.example/2'),
+            JSON.stringify(calls) + ' ' + JSON.stringify(viaLite.results.map(x => x.url)));
+
+        // Suchmaschinen tot, Stack Overflow tot -> Wikipedia als Ausweg
+        calls = [];
+        ws.searchDuckDuckGoLite = async () => { throw new Error('leer'); };
+        ws.searchStackExchange = async () => { throw new Error('429 gedrosselt'); };
+        const viaWiki = await ws.searchKeyless('parser', 5);
+        check('Wikipedia greift, wenn sonst nichts kommt',
+            viaWiki.results.length === 1 && /wikipedia/.test(viaWiki.results[0].url),
+            JSON.stringify(viaWiki.results));
+
+        // Alles tot -> jede Ursache muss benannt sein
+        ws.searchWikipedia = async () => { throw new Error('timeout'); };
+        const leer = await ws.searchKeyless('parser', 5);
+        check('ohne Treffer: Ursachen aller Quellen',
+            Array.isArray(leer.problems) && leer.problems.length >= 3,
+            JSON.stringify(leer.problems));
+        check('Ursachen nennen die Quelle',
+            /ddglite|duckduckgo/.test(String(leer.problems))
+            && /stackexchange/.test(String(leer.problems))
+            && /wikipedia/.test(String(leer.problems)),
+            String(leer.problems));
+
+        Object.assign(ws, {
+            searchHtml: orig.html, searchDuckDuckGoLite: orig.lite,
+            searchStackExchange: orig.se, searchWikipedia: orig.wiki
+        });
+    }
+
+    section('Wikipedia: Sprache am Text erkennen');
+    {
+        // Ein Grossbuchstabe taugt nicht als Merkmal - "Typescript satisfies"
+        // waere sonst deutsch und landete auf de.wikipedia.org.
+        const lang = (q) => ws.wikipediaLanguage(q);
+        check('englische Code-Frage -> en', lang('typescript satisfies operator') === 'en');
+        check('Umlaut -> de', lang('Wie prüft man Gleichheit?') === 'de');
+        check('deutsche Funktionswoerter -> de', lang('Was ist ein Parser und wie baut man das') === 'de');
+        check('grossgeschriebenes Englisch bleibt en',
+            lang('Node Test Runner') === 'en', lang('Node Test Runner'));
+    }
+
+    section('SearXNG: HTML statt JSON wird erklaert');
+    {
+        // Eine frische Instanz gibt kein JSON heraus. Die Meldung muss sagen,
+        // was in settings.yml zu aendern ist - sonst sucht man im Client.
+        vscode.__settings.searchProvider = 'searxng';
+        vscode.__settings.searchEndpoint = base + '/htmlonly';
+        const r = await ws.search('test', 5);
+        check('kein Treffer', r.results.length === 0);
+        check('Meldung nennt settings.yml',
+            /settings\.yml/.test(String(r.problems)), String(r.problems));
+        check('Meldung nennt search.formats',
+            /search\.formats/.test(String(r.problems)), String(r.problems));
+        check('Meldung nennt json',
+            /"json"/.test(String(r.problems)), String(r.problems));
     }
 
     server.close();

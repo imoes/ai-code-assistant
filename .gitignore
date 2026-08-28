@@ -5,3 +5,7 @@ out/
 
 # Lokale Claude-Code-Berechtigungen (maschinenspezifisch)
 .claude/settings.local.json
+
+# Test-Sandbox: wird von test/suite.js bei jedem Lauf geloescht und neu
+# angelegt. Im Repo verursacht sie nur Rauschen in jedem Commit.
+test/sandbox/

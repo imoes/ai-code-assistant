@@ -649,13 +649,22 @@ und füge ihn als letzten action:shell Block an.` : '';
             );
             return null;
         }
-        // Erfolgreiche Ausgaben nur weiterleiten wenn KEINE Dateiänderung stattfand
-        // (= die KI hat nur Infos gesammelt, aber noch nichts umgesetzt)
-        const successfulWithOutput = !hasFileActions
-            ? actions.filter(a =>
-                (a.type === 'shell' || a.type === 'web_search') && a.success && a.output?.trim()
-                && !a.description.startsWith('Datei gelesen:'))
-            : [];
+        // Die Ausgabe eines Shell-Befehls geht IMMER zurück – auch wenn in
+        // derselben Runde eine Datei geändert wurde. Vorher wurde sie dann
+        // unterdrückt, und genau das ist der übliche Fall: das Modell ändert
+        // und testet in einem Zug. Ein Testlauf, der mit Exit-Code 0 endet, aber
+        // rote Tests meldet, erreichte das Modell so nie, und bei einer Aufgabe
+        // mit mehreren Punkten endete die Schleife nach dem ersten Punkt.
+        //
+        // Die Endlosschleife, die diese Unterdrückung verhindern sollte, fängt
+        // heute die Kreislauf-Erkennung ab – die gab es damals noch nicht.
+        //
+        // Suchergebnisse dagegen nur, solange nichts geändert wurde: sonst
+        // bekommt das Modell nach jeder Änderung dieselbe Seite erneut vorgelegt.
+        const successfulWithOutput = actions.filter(a =>
+            a.success && a.output?.trim()
+            && !a.description.startsWith('Datei gelesen:')
+            && (a.type === 'shell' || (a.type === 'web_search' && !hasFileActions)));
 
         // ── 1. Fehlgeschlagene Shell-Befehle: Fehler beheben ──────────────────
         if (failedShells.length > 0 && autoFix) {
@@ -741,6 +750,30 @@ und füge ihn als letzten action:shell Block an.` : '';
             };
         }
 
+        // ── 5. Geändert, aber nicht geprüft: prüfen lassen ────────────────────
+        // Bis hierher war eine erfolgreiche Dateiänderung das Ende der Schleife.
+        // Im Fenster-Lauf hieß das: Auftrag mit fünf Punkten, der Assistent
+        // patcht den Tokenizer – und hört auf. Die Auto-Test-Instruktion im
+        // System-Prompt BITTET das Modell, den Testbefehl anzuhängen; tut es das
+        // nicht, prüfte niemand etwas. Also wird hier gefragt.
+        const changedOk = actions.some(a => isFileAction(a.type) && a.success);
+        const ranShell = actions.some(a => a.type === 'shell');
+        if (agentLoop && autoFix && changedOk && !ranShell
+            && config.get<boolean>('autoTest', false)) {
+            return {
+                reason: 'Änderung noch ungeprüft – Tests anstoßen…',
+                prompt:
+                    `${task}DU HAST GEÄNDERT, ABER NICHTS GEPRÜFT:\n` +
+                    `${actions.filter(a => isFileAction(a.type) && a.success)
+                        .map(a => `- ${a.description}`).join('\n')}\n\n` +
+                    `Führe jetzt die Tests des Projekts aus (action:shell, den Befehl anhand ` +
+                    `der Projektdateien wählen: package.json → npm test, Cargo.toml → cargo test, ` +
+                    `pytest.ini → pytest, go.mod → go test ./...).\n` +
+                    `Sind noch Punkte des Auftrags offen, arbeite sie vorher ab.\n` +
+                    `Erst wenn die Tests grün sind UND der Auftrag vollständig erfüllt ist: action:done.`
+            };
+        }
+
         return null;
     }
 
@@ -751,8 +784,36 @@ und füge ihn als letzten action:shell Block an.` : '';
                 return `**${a.output}**`;
             }
             const status = a.success ? '✅' : '❌';
-            return `${status} ${a.description}\n\`\`\`\n${a.output}\n\`\`\``;
+            return `${status} ${a.description}\n\`\`\`\n${this.capOutput(a.output ?? '')}\n\`\`\``;
         }).join('\n\n');
+    }
+
+    /** Obergrenze für eine einzelne Aktionsausgabe im Folge-Prompt. */
+    private static readonly MAX_OUTPUT_CHARS = 6000;
+
+    /**
+     * Lange Ausgabe für den Folge-Prompt kürzen – Anfang und Ende behalten.
+     *
+     * Ungekürzt geht eine abgerufene Seite mit 20 000 Zeichen wortwörtlich in
+     * den Prompt der nächsten Runde und von dort in den Gesprächsverlauf. Bei
+     * einem Modell mit 256k Kontext fällt das nicht auf; bei 16k ist nach einem
+     * einzigen `web_fetch` Schluss, und die Komprimierung wirft dann genau die
+     * Arbeit weg, um die es ging.
+     *
+     * Anfang UND Ende, weil beide zählen: die Kopfzeilen sagen, was das für eine
+     * Ausgabe ist, die Fehlermeldungen eines Testlaufs stehen am Schluss.
+     */
+    private capOutput(text: string): string {
+        const max = AIEngine.MAX_OUTPUT_CHARS;
+        if (text.length <= max) return text;
+
+        const head = Math.floor(max * 0.6);
+        const tail = max - head;
+        const dropped = text.length - max;
+        return text.slice(0, head)
+            + `\n\n[… ${dropped} Zeichen ausgelassen. Brauchst du die Mitte: `
+            + `read_file mit offset/limit, oder grep mit einem Suchmuster. …]\n\n`
+            + text.slice(-tail);
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1201,21 +1262,88 @@ und füge ihn als letzten action:shell Block an.` : '';
         return text;
     }
 
-    private async parseAndExecuteActions(response: string, confirm: ConfirmFn, onActionProgress?: ActionProgressCallback): Promise<ExecutedAction[]> {
-        const executed: ExecutedAction[] = [];
-
-        // Normalisierung: <action:shell>...</action:shell> → ```action:shell\n...\n```
-        // Manche Modelle (Gemma, Qwen) schreiben XML-Tags statt Backtick-Blöcke
-        const normalized = this.normalizePatchFences(
-            this.normalizeBareActionHeaders(
-                normalizeToolCalls(
-                    response
-                        .replace(/<action:(\w+)>([\s\S]*?)<\/action:\1>/g, '```action:$1\n$2\n```')
-                        .replace(/\[action:(\w+)\]([\s\S]*?)\[\/action:\1\]/g, '```action:$1\n$2\n```'),
-                    this.logger
+    /**
+     * Alle Schreibweisen des Modells auf `\`\`\`action:name … \`\`\`` bringen.
+     *
+     * **Diese Methode ist die einzige Normalisierung – Parser UND Anzeige
+     * benutzen sie.** Vorher hatte der Parser eine Stufe mehr als die Anzeige,
+     * und das Ergebnis stand im Fenster: ein `patch_file`-Block mit verrutschten
+     * Zäunen wurde ausgeführt (der Parser konnte ihn geradeziehen), blieb aber
+     * als Text im Chat stehen – der Benutzer las `>>>REPLACE` und den
+     * Quellcode statt einer Antwort. Wer hier eine Stufe ergänzt, ergänzt sie
+     * damit automatisch für beide Wege.
+     *
+     * Umgewandelt werden: XML-Tags (Gemma, Qwen), Klammer-Tags, die nativen
+     * Tool-Call-Formate aller Modellfamilien, zaunlose Kopfzeilen und
+     * überzählige oder fehlende Zäune in Patch-Blöcken.
+     */
+    private normalizeActionMarkup(text: string): string {
+        return this.closeUnterminatedActionFences(
+            this.normalizePatchFences(
+                this.normalizeBareActionHeaders(
+                    normalizeToolCalls(
+                        text
+                            .replace(/<action:(\w+)>([\s\S]*?)<\/action:\1>/g, '```action:$1\n$2\n```')
+                            .replace(/\[action:(\w+)\]([\s\S]*?)\[\/action:\1\]/g, '```action:$1\n$2\n```'),
+                        this.logger
+                    )
                 )
             )
         );
+    }
+
+    /**
+     * Fehlende Schluss-Zäune ergänzen.
+     *
+     * Beobachtet im Fenster: das Modell schrieb zwei Blöcke hintereinander und
+     * ließ den Zaun dazwischen weg.
+     *
+     *     ```action:list_dir
+     *     path: src
+     *     ```action:list_dir
+     *     path: test
+     *     ```
+     *
+     * Das Blockmuster endet dann am Zaun der ZWEITEN Kopfzeile: der erste Block
+     * wird ausgeführt, der Rest bleibt als Text übrig – und stand so im Chat.
+     * Ein neuer Kopf innerhalb eines Blocks bedeutet: der vorige ist zu Ende.
+     *
+     * Läuft nach `normalizePatchFences`, denn in einem Patch-Rumpf sind Zäune
+     * erlaubt; die räumt jene Stufe vorher auf.
+     */
+    private closeUnterminatedActionFences(text: string): string {
+        const lines = text.split('\n');
+        const out: string[] = [];
+        let open = false;
+        let changed = false;
+
+        for (const line of lines) {
+            const isHeader = /^\s*```action:\w+/.test(line);
+            const isFence = /^\s*```\s*$/.test(line);
+
+            if (isHeader) {
+                if (open) { out.push('```'); changed = true; }
+                open = true;
+                out.push(line);
+                continue;
+            }
+            if (isFence && open) { open = false; out.push(line); continue; }
+            out.push(line);
+        }
+
+        if (open) { out.push('```'); changed = true; }
+
+        if (changed) {
+            this.logger.info('Aktions-Parser: fehlenden Schluss-Zaun ergänzt.');
+            return out.join('\n');
+        }
+        return text;
+    }
+
+    private async parseAndExecuteActions(response: string, confirm: ConfirmFn, onActionProgress?: ActionProgressCallback): Promise<ExecutedAction[]> {
+        const executed: ExecutedAction[] = [];
+
+        const normalized = this.normalizeActionMarkup(response);
 
         // [^\n]* erlaubt trailing spaces/tabs nach dem Aktionstyp
         const blockPattern = /```action:(\w+)[^\n]*\n([\s\S]*?)```/g;
@@ -1897,13 +2025,20 @@ und füge ihn als letzten action:shell Block an.` : '';
     }
 
     private stripActionBlocks(text: string): string {
-        // Dieselbe Einzäunung wie im Parser: was ausgeführt wird, muss auch aus
-        // der Anzeige verschwinden. Sonst liest der Benutzer „action:done".
-        return this.normalizeBareActionHeaders(text)
+        // Genau dieselbe Normalisierung wie im Parser: was ausgeführt wird, muss
+        // auch aus der Anzeige verschwinden. Sonst liest der Benutzer
+        // „action:done" oder „>>>REPLACE" samt Quellcode statt einer Antwort.
+        return this.normalizeActionMarkup(text)
             .replace(/<think>[\s\S]*?<\/think>/gi, '')              // Reasoning-Blöcke
             .replace(/```action:\w+[^\n]*\n[\s\S]*?```\n?/g, '')    // Backtick-Blöcke
             .replace(/<action:\w+>[\s\S]*?<\/action:\w+>\n?/g, '')  // XML-Tags
             .replace(/\[action:\w+\][\s\S]*?\[\/action:\w+\]\n?/g, '') // Bracket-Tags
+            // Ein Block, dessen Schluss-Zaun das Modell ganz vergessen hat:
+            // ab der Kopfzeile bis zum Textende wegwerfen. Ein abgeschnittener
+            // Aktionsblock ist im Chat nie eine Antwort.
+            .replace(/```action:\w+[^\n]*\n[\s\S]*$/g, '')
+            // Uebrige Patch-Marker: der Block war weg, die Marker standen noch da
+            .replace(/^\s*(?:<<<SEARCH|>>>REPLACE|>>>>>>>\s*REPLACE|<<<<<<<\s*SEARCH)\s*$/gm, '')
             .trim();
     }
 

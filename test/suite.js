@@ -1125,11 +1125,14 @@ function runLoopTests() {
     check('Benutzer-Anweisung erkannt', s3 && s3.prompt.includes('Benutzer hat folgende Anweisung'),
         s3 && s3.reason);
 
-    // Nur Dateiaenderung, kein offener Plan -> Stopp
+    // Nur Dateiaenderung, kein offener Plan, Auto-Test AUS -> Stopp
     engine.plan = [];
+    const autoTestVorher = vscode.__settings.autoTest;
+    vscode.__settings.autoTest = false;
     const s4 = engine.planNextStep(
         [{ type: 'file_edit', description: 'Bearbeitet: a.ts', success: true }], 1, cfg);
-    check('reine Dateiaenderung stoppt', s4 === null, JSON.stringify(s4));
+    check('reine Dateiaenderung stoppt (ohne Auto-Test)', s4 === null, JSON.stringify(s4));
+    vscode.__settings.autoTest = autoTestVorher;
 
     // Offener Plan -> weiterarbeiten
     engine.handlePlanAction('- [x] Analysiert\n- [ ] Bugfix einbauen\n- [ ] Test');
@@ -1214,7 +1217,112 @@ function runLoopTests() {
     vscode.__settings.agentLoop = true;
 
     runTaskAnchorTests(cfg);
+    runOutputCapTests(cfg);
     return runBareActionTests();
+}
+
+// ── Lange Ausgaben duerfen den Kontext nicht fluten ─────────────────────────
+// Eine abgerufene Seite hat leicht 20 000 Zeichen. Ungekuerzt geht sie in den
+// Folge-Prompt UND in den Gespraechsverlauf: bei einem 16k-Modell ist der
+// Kontext danach voll und die Komprimierung wirft die eigentliche Arbeit weg.
+function runOutputCapTests(cfg) {
+    section('Folge-Prompt: lange Ausgaben werden gedeckelt');
+
+    engine.lastActionSignature = '';
+    engine.repeatCount = 0;
+    engine.plan = [];
+    engine.taskComplete = false;
+    engine.currentTask = 'Lies die Doku.';
+
+    const kopf = 'ANFANG-DER-AUSGABE';
+    const fuss = 'not ok 7 - genau hier steht der Fehler';
+    const lang = kopf + '\n' + 'x'.repeat(30000) + '\n' + fuss;
+
+    const step = engine.planNextStep(
+        [{ type: 'shell', description: 'Shell: npm test', success: true, output: lang }], 1, cfg);
+
+    check('Runde laeuft weiter', step !== null);
+    check('Prompt ist deutlich kuerzer als die Ausgabe',
+        step && step.prompt.length < 12000, step && String(step.prompt.length));
+    check('Anfang bleibt erhalten', step && step.prompt.includes(kopf));
+    check('Ende bleibt erhalten – dort steht der Fehler',
+        step && step.prompt.includes(fuss), step && step.prompt.slice(-200));
+    check('Kuerzung ist benannt',
+        step && /Zeichen ausgelassen/.test(step.prompt));
+    check('Kuerzung sagt, wie man den Rest bekommt',
+        step && /read_file mit offset|grep/.test(step.prompt));
+
+    // Kurze Ausgaben bleiben unangetastet
+    engine.lastActionSignature = '';
+    engine.repeatCount = 0;
+    const kurz = engine.planNextStep(
+        [{ type: 'shell', description: 'Shell: npm test', success: true, output: '11 gruen' }], 1, cfg);
+    check('kurze Ausgabe unverandert',
+        kurz && kurz.prompt.includes('11 gruen') && !/ausgelassen/.test(kurz.prompt));
+
+    runVerifyAfterChangeTests(cfg);
+}
+
+// ── Geaendert, aber nicht geprueft ──────────────────────────────────────────
+// Im Fenster-Lauf hatte der Auftrag fuenf Punkte. Der Assistent patchte den
+// Tokenizer - und die Schleife endete, weil eine erfolgreiche Dateiaenderung
+// als Endpunkt galt. Getestet wurde nie, die restlichen vier Punkte blieben
+// liegen. Die Auto-Test-Instruktion im System-Prompt BITTET das Modell nur.
+function runVerifyAfterChangeTests(cfg) {
+    section('Agenten-Schleife: Aenderung wird geprueft');
+
+    const vorher = vscode.__settings.autoTest;
+    vscode.__settings.autoTest = true;
+    engine.plan = [];
+    engine.taskComplete = false;
+    engine.currentTask = 'Unterstuetze Variablen und lege test/variablen.test.js an.';
+    engine.lastActionSignature = '';
+    engine.repeatCount = 0;
+
+    const step = engine.planNextStep(
+        [{ type: 'file_edit', description: 'Gepacht: src/tokenizer.js (1 Änderung)', success: true }],
+        1, cfg);
+
+    check('Aenderung ohne Test treibt die Schleife weiter', step !== null, JSON.stringify(step));
+    check('Prompt fordert die Tests an',
+        step && /Tests des Projekts/.test(step.prompt), step && step.prompt.slice(0, 120));
+    check('Prompt nennt die geaenderte Datei',
+        step && step.prompt.includes('src/tokenizer.js'), step && step.prompt.slice(0, 200));
+    check('Prompt erinnert an offene Punkte',
+        step && /Punkte des Auftrags offen/.test(step.prompt), step && step.prompt.slice(-200));
+    check('Auftrag steht auch hier im Prompt',
+        step && step.prompt.includes('variablen.test.js'), step && step.prompt.slice(0, 200));
+
+    // Wurde in derselben Runde schon getestet, wird nicht nachgefragt: die
+    // Shell-Ausgabe geht ueber Zweig 3 zurueck.
+    engine.lastActionSignature = '';
+    engine.repeatCount = 0;
+    const mitTest = engine.planNextStep([
+        { type: 'file_edit', description: 'Gepacht: src/tokenizer.js', success: true },
+        { type: 'shell', description: 'Shell: npm test', success: true, output: '11 gruen' }
+    ], 1, cfg);
+    check('mit Testlauf keine Nachfrage',
+        mitTest !== null && !/DU HAST GEÄNDERT/.test(mitTest.prompt),
+        mitTest && mitTest.prompt.slice(0, 80));
+
+    // Gescheiterte Aenderung zaehlt nicht als Aenderung: dafuer ist Zweig 1b da
+    engine.lastActionSignature = '';
+    engine.repeatCount = 0;
+    const gescheitert = engine.planNextStep(
+        [{ type: 'file_edit', description: 'Patch fehlgeschlagen: a.js', success: false, output: 'nope' }],
+        1, cfg);
+    check('gescheiterte Aenderung geht in die Fehlerrueckmeldung',
+        gescheitert !== null && /NICHT ANGEWENDET/.test(gescheitert.prompt),
+        gescheitert && gescheitert.prompt.slice(0, 80));
+
+    // Ist die KI fertig, wird nicht nachgefragt
+    engine.taskComplete = true;
+    check('action:done beendet trotz ungepruefter Aenderung',
+        engine.planNextStep(
+            [{ type: 'file_edit', description: 'Gepacht: a.ts', success: true }], 1, cfg) === null);
+    engine.taskComplete = false;
+
+    vscode.__settings.autoTest = vorher;
 }
 
 // ── Zaunlose Aktions-Kopfzeilen ─────────────────────────────────────────────
@@ -1267,6 +1375,85 @@ function runBareActionTests() {
             engine.stripActionBlocks(nurKopf).includes('action:done'));
 
         engine.taskComplete = false;
+        return runDisplayStripTests();
+    });
+}
+
+// ── Anzeige und Parser muessen dasselbe wegwerfen ───────────────────────────
+// Im Fenster stand ein patch_file-Block als Text im Chat: ">>>REPLACE" und
+// darunter der Quellcode. Der Parser konnte die verrutschten Zaeune geradeziehen
+// und fuehrte den Patch aus - der Anzeigepfad kannte diese Stufe nicht.
+function runDisplayStripTests() {
+    section('Anzeige: Aktionsmarkup verschwindet vollstaendig');
+
+    // 1. patch_file mit ueberzaehligem Zaun vor >>>REPLACE (laguna macht das)
+    const patchKaputt = [
+        'Ich erweitere zuerst den Tokenizer um die Erkennung von Bezeichnern.',
+        '',
+        '```action:patch_file',
+        'path: src/tokenizer.js',
+        '---',
+        '<<<SEARCH',
+        '  throw new Error(`Unerwartetes Zeichen`);',
+        '```',
+        '>>>REPLACE',
+        '  if (ch === "_") {',
+        '    tokens.push({ type: "ident" });',
+        '  }',
+        '```'
+    ].join('\n');
+
+    const sichtbar = engine.cleanForDisplay(patchKaputt);
+    check('Ansage bleibt', sichtbar.includes('Ich erweitere zuerst den Tokenizer'), sichtbar);
+    check('kein >>>REPLACE in der Anzeige', !sichtbar.includes('>>>REPLACE'), sichtbar);
+    check('kein <<<SEARCH in der Anzeige', !sichtbar.includes('<<<SEARCH'), sichtbar);
+    check('kein Quellcode in der Anzeige',
+        !sichtbar.includes('tokens.push') && !sichtbar.includes('src/tokenizer.js'), sichtbar);
+
+    // 2. Zwei Bloecke, dem ersten fehlt der Schluss-Zaun
+    const zweiBloecke = [
+        'Ich sehe mir beide Verzeichnisse an.',
+        '',
+        '```action:list_dir',
+        'path: src',
+        '```action:list_dir',
+        'path: test',
+        '```'
+    ].join('\n');
+
+    const sichtbar2 = engine.cleanForDisplay(zweiBloecke);
+    check('Ansage bleibt (zwei Bloecke)',
+        sichtbar2.includes('Ich sehe mir beide Verzeichnisse an'), sichtbar2);
+    check('kein action:list_dir in der Anzeige',
+        !sichtbar2.includes('action:list_dir'), sichtbar2);
+    check('keine Argumentzeile in der Anzeige',
+        !/^\s*path:/m.test(sichtbar2), sichtbar2);
+    check('kein nackter Zaun uebrig', !sichtbar2.includes('```'), sichtbar2);
+
+    // 3. Block ohne jeden Schluss-Zaun
+    const ohneEnde = 'Ich lege die Datei an.\n\n```action:create_file\npath: a.ts\n---\nexport const a = 1;';
+    const sichtbar3 = engine.cleanForDisplay(ohneEnde);
+    check('Ansage bleibt (kein Schluss-Zaun)',
+        sichtbar3.includes('Ich lege die Datei an'), sichtbar3);
+    check('abgeschnittener Block ist weg',
+        !sichtbar3.includes('create_file') && !sichtbar3.includes('export const a'), sichtbar3);
+
+    // 4. Ein echter Code-Block in einer Antwort bleibt selbstverstaendlich stehen
+    const echterCode = 'So geht das:\n\n```js\nconst a = 1;\n```\n\nFertig.';
+    const sichtbar4 = engine.cleanForDisplay(echterCode);
+    check('normaler Code-Block bleibt erhalten',
+        sichtbar4.includes('const a = 1;') && sichtbar4.includes('```js'), sichtbar4);
+    check('Text nach dem Code-Block bleibt', sichtbar4.includes('Fertig.'), sichtbar4);
+
+    // 5. Und beide Bloecke muessen auch AUSGEFUEHRT werden, nicht nur
+    //    verschwinden - sonst arbeitet der Assistent die Haelfte nicht ab.
+    return engine.parseAndExecuteActions(zweiBloecke, async () => 'Ausführen').then(actions => {
+        check('beide Bloecke ohne Zaun dazwischen werden ausgefuehrt',
+            actions.length === 2, JSON.stringify(actions.map(a => a.description)));
+        check('erster Block: src', actions[0] && /src/.test(actions[0].description),
+            actions[0] && actions[0].description);
+        check('zweiter Block: test', actions[1] && /test/.test(actions[1].description),
+            actions[1] && actions[1].description);
     });
 }
 

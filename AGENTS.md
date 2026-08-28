@@ -11,7 +11,7 @@ Code analysiert, plant, schreibt und testet.
 
 - Quellcode: `src/*.ts`, Einstieg `src/extension.ts`
 - Build: `npm run compile` (TypeScript → `out/`)
-- Tests: `npm test` — 425 Prüfungen, ohne Netz und ohne Modellserver. Die Suite fährt die
+- Tests: `npm test` — 487 Prüfungen, ohne Netz und ohne Modellserver. Die Suite fährt die
   echte Engine gegen einen `vscode`-Stub (`test/vscode-stub.js`) und lokale Testserver.
   Neue Funktion → Test in `test/` ergänzen und in `test/run-all.js` eintragen.
 - Paketieren: `npm run package` (erzeugt `ai-code-assistant-<version>.vsix`)
@@ -101,6 +101,28 @@ Dabei gilt:
   sinnvollen Schritt.
 - **Kreislauf-Erkennung** über den Fingerabdruck der Aktionen: dieselbe Runde dreimal in
   Folge beendet die Schleife, statt das Schrittlimit zu verbrennen.
+- **Shell-Ausgaben gehen immer zurück**, auch wenn in derselben Runde eine Datei geändert
+  wurde. Früher wurden sie dann unterdrückt – und das ist der übliche Fall: das Modell
+  ändert und testet in einem Zug. Ein Testlauf mit Exit-Code 0 aber roten Tests erreichte
+  das Modell so nie. Vor Endlosschleifen schützt heute die Kreislauf-Erkennung.
+- **Eine Änderung ohne Prüfung ist kein Endpunkt.** Bei `autoTest` fragt `planNextStep`
+  nach den Tests, wenn in der Runde geändert und nicht getestet wurde. Die Auto-Test-Zeile
+  im System-Prompt *bittet* das Modell nur; im Fenster-Lauf patchte es den Tokenizer und
+  hörte auf, obwohl der Auftrag fünf Punkte hatte.
+
+## Eine Normalisierung für Parser UND Anzeige
+
+`AIEngine.normalizeActionMarkup()` bringt alle Schreibweisen des Modells auf
+` ```action:name … ``` `. **Beide Wege benutzen sie** – `parseAndExecuteActions` und
+`stripActionBlocks`.
+
+Als der Parser eine Stufe mehr hatte als die Anzeige, stand das Ergebnis im Fenster: ein
+`patch_file`-Block mit verrutschten Zäunen wurde ausgeführt (der Parser konnte ihn
+geradeziehen), blieb aber als Text im Chat stehen – der Benutzer las `>>>REPLACE` und den
+Quellcode statt einer Antwort. Wer hier eine Stufe ergänzt, ergänzt sie für beide.
+
+Enthalten sind: XML- und Klammer-Tags, die nativen Tool-Call-Formate, zaunlose Kopfzeilen
+(`action:done` ohne Backticks) und fehlende Schluss-Zäune zwischen zwei Blöcken.
 
 ## Der Auftrag gehört in jede Runde – und nichts sonst
 

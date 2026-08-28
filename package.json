@@ -2,7 +2,7 @@
   "name": "ai-code-assistant",
   "displayName": "AI Code Assistant (llama.cpp MCP)",
   "description": "Autonomer AI Code Assistant basierend auf llama.cpp MCP – erstellt, bearbeitet und testet Code direkt im Workspace.",
-  "version": "0.8.3",
+  "version": "0.9.0",
   "repository": {
     "type": "git",
     "url": "https://gitlab.ippen.media/mutkluge/ai-code-assistant"
@@ -214,16 +214,20 @@
         "aiAssistant.searchProvider": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "tavily", "brave", "google", "searxng", "duckduckgo"],
+          "enum": ["auto", "keyless", "tavily", "brave", "google", "searxng", "duckduckgo", "ddglite", "stackexchange", "wikipedia"],
           "enumDescriptions": [
-            "Automatisch – der Reihe nach alles Verfügbare (Anbieter mit API-Key zuerst, DuckDuckGo zuletzt).",
+            "Automatisch – Anbieter mit API-Key zuerst, danach die schlüssellosen Quellen gebündelt.",
+            "Ohne Schlüssel – fragt DuckDuckGo, DuckDuckGo Lite, Stack Overflow und Wikipedia gleichzeitig und führt die Treffer zusammen. Fällt eine Quelle aus, tragen die anderen.",
             "Tavily – für KI-Nutzung gemacht, liefert Textauszüge statt nur Links. API-Key nötig, kostenloses Kontingent.",
-            "Brave Search API – API-Key nötig, kostenloses Kontingent.",
-            "Google Programmable Search – API-Key und Such-ID (cx) in searchEndpoint nötig.",
-            "SearXNG – kein Schlüssel nötig, aber nur mit eigener Instanz brauchbar (Adresse in searchEndpoint).",
-            "DuckDuckGo – ohne Schlüssel, drosselt aber stark und liefert oft nichts."
+            "Brave Search API – API-Key nötig (seit Februar 2026 kostenpflichtig, ab 5 $/Monat).",
+            "Google Programmable Search – API-Key und Such-ID (cx) in searchEndpoint nötig. 100 Abfragen/Tag frei.",
+            "SearXNG – eigene Instanz (Adresse in searchEndpoint). Braucht `json` in search.formats. Hebt die Grenzen NICHT auf: SearXNG befragt Google und Bing für dich, deren Sperren gelten weiter.",
+            "Nur DuckDuckGo (HTML) – schlüssellos, bei mehr Anfragen gesperrt.",
+            "Nur DuckDuckGo Lite – zweite, unabhängige Oberfläche derselben Suche.",
+            "Nur Stack Overflow – offizielle API, ohne Schlüssel 300 Abfragen/Tag. Für Programmierfragen oft die beste Quelle.",
+            "Nur Wikipedia – offizielle MediaWiki-API, schlüssellos, hohe Grenzen. Gut für Begriffe, nicht für Code."
           ],
-          "markdownDescription": "Suchdienst für `web_search`.\n\nOhne API-Key bleibt nur DuckDuckGo, und das liefert unter Last regelmäßig keine Treffer. Für verlässliche Suche einen Anbieter mit Schlüssel eintragen.\n\nUnabhängig davon funktioniert `web_fetch` immer: eine bekannte Adresse direkt abrufen und lesen."
+          "markdownDescription": "Suchdienst für `web_search`.\n\n**Es gibt keine kostenlose, unbegrenzte allgemeine Websuche.** Jeder Weg ist entweder ein Anbieter mit Kontingent oder kratzt eine HTML-Seite ab und wird ab einem gewissen Volumen gesperrt. Die Bing-Such-API ist seit dem 11.08.2025 abgeschaltet. Ein eigener SearXNG hilft nicht: er verlagert das Abkratzen nur.\n\nDeshalb ist `keyless` ein **Bündel unabhängiger Quellen** – DuckDuckGo, DuckDuckGo Lite, Stack Overflow und Wikipedia werden gleichzeitig gefragt und die Treffer zusammengeführt. Fällt eine aus, tragen die anderen.\n\nUnbegrenzt ist nur `web_fetch`: eine bekannte Adresse direkt abrufen und lesen. Das ist für Dokumentation der verlässlichste Weg."
         },
         "aiAssistant.searchApiKey": {
           "type": "string",
