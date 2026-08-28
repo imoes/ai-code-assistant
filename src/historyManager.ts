@@ -125,30 +125,58 @@ export class HistoryManager {
     }
 
     /**
-     * Nachrichten der letzten abgeschlossenen Session (nicht die aktuelle).
-     * Wird beim Start geladen um den Konversationsverlauf wiederherzustellen.
-     * Gibt max. `limit` Nachrichten zurück (neueste zuerst, dann umgekehrt).
+     * Kurzfassung der letzten Sitzung als Hintergrund-Notiz.
+     *
+     * Ersetzt das frühere `getLastSessionMessages()`, das die alten Runden als
+     * echte Gesprächsrunden zurückgab – mit zwei Folgen. Erstens hängte es die
+     * Reasoning-Zusammenfassung als `[Vorheriges Reasoning] … [Antwort] …` vor
+     * den Assistenten-Text; das Modell sah diese Marker in seinen eigenen Turns
+     * und ahmte sie nach, sodass sie sichtbar in der Antwort im Chat standen.
+     *
+     * Zweitens hielt das Modell die damalige Aufgabe für die laufende: beobachtet wurde
+     * ein Lauf, in dem es eine Webseite abrufen sollte und stattdessen die
+     * Testreparatur der Vorsitzung fortsetzte, `npm test` eingeschlossen –
+     * obwohl der Auftrag „ändere keine Dateien" lautete. Als einzelne, klar
+     * als abgeschlossen markierte Notiz bleibt das Wissen verfügbar, ohne die
+     * neue Aufgabe zu verdrängen.
      */
-    getLastSessionMessages(limit = 20): HistoryMessage[] {
-        const previous = this.data.sessions
-            .filter(s => s.id !== this.currentSessionId);
-        if (previous.length === 0) return [];
-        const lastSession = previous[previous.length - 1];
-        const msgs = lastSession.messages;
-        const relevant = msgs.filter(m => m.role === 'user' || m.role === 'assistant');
-        const sliced = relevant.slice(-limit);
+    getLastSessionDigest(maxChars = 1200): string | null {
+        const lastSession = this.lastFinishedSession();
+        if (!lastSession) return null;
 
-        // Reasoning als Prefix in den assistant-Content einbetten,
-        // damit es im nächsten Konversations-Kontext sichtbar ist.
-        return sliced.map(m => {
-            if (m.role === 'assistant' && m.reasoning) {
-                return {
-                    ...m,
-                    content: `[Vorheriges Reasoning]\n${m.reasoning}\n\n[Antwort]\n${m.content}`
-                };
-            }
-            return m;
-        });
+        const lines: string[] = [];
+        for (const m of lastSession.messages.slice(-12)) {
+            const text = String(m.content ?? '').replace(/\s+/g, ' ').trim();
+            if (!text) continue;
+            const who = m.role === 'user' ? 'Auftrag' : 'Ergebnis';
+            lines.push(`- ${who}: ${text.slice(0, 220)}`);
+        }
+        if (lines.length === 0) return null;
+
+        // Von hinten auffüllen: das Zuletzt-Passierte ist das Wichtigste.
+        const kept: string[] = [];
+        let used = 0;
+        for (const line of lines.reverse()) {
+            if (used + line.length > maxChars) break;
+            kept.unshift(line);
+            used += line.length + 1;
+        }
+        return kept.join('\n');
+    }
+
+    /**
+     * Die letzte Session, die nicht die laufende ist UND Nachrichten enthält.
+     *
+     * Jedes Neuladen des Fensters legt eine Session an, auch wenn danach nichts
+     * gefragt wird. Ohne die Inhaltsprüfung verdeckt so eine leere Session die
+     * letzte echte Sitzung, und der Verlauf wirkt nach zwei Reloads verloren.
+     */
+    private lastFinishedSession(): HistorySession | null {
+        for (let i = this.data.sessions.length - 1; i >= 0; i--) {
+            const s = this.data.sessions[i];
+            if (s.id !== this.currentSessionId && s.messages.length > 0) return s;
+        }
+        return null;
     }
 
     /** Verlaufs-Datei-Pfad */
@@ -209,7 +237,18 @@ export class HistoryManager {
         }
     }
 
+    /**
+     * Session-Kennung – auf die Millisekunde plus Zufallsanhang.
+     *
+     * Mit Sekundenauflösung bekamen zwei Sitzungen, die in derselben Sekunde
+     * beginnen, dieselbe Kennung. Dann findet `currentSession()` die ALTE
+     * Sitzung und schreibt in sie hinein, und `lastFinishedSession()` hält sie
+     * für die laufende – der Verlauf der Vorsitzung verschwindet also genau
+     * dann, wenn man das Fenster schnell neu lädt.
+     */
     private generateSessionId(): string {
-        return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const suffix = Math.random().toString(36).slice(2, 6);
+        return `${stamp}-${suffix}`;
     }
 }

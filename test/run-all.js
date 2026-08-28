@@ -21,7 +21,7 @@ if (!fs.existsSync(path.join(ROOT, 'out', 'aiEngine.js'))) {
     process.exit(1);
 }
 
-const FILES = ['suite.js', 'markdown.js', 'websearch.js', 'idle-timeout.js'];
+const FILES = ['suite.js', 'markdown.js', 'websearch.js', 'idle-timeout.js', 'webview-rows.js'];
 
 let totalPass = 0;
 let totalFail = 0;

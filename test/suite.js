@@ -303,7 +303,8 @@ section('AIEngine: Aktions-Parser (Blockerkennung)');
         runModeConsistencyTests();
         runWebviewSyntaxTests();
         runReasoningTests();
-        runLoopTests();
+        return runLoopTests();
+    }).then(() => {
         report();
     });
 }
@@ -1211,6 +1212,181 @@ function runLoopTests() {
         [{ type: 'shell', description: 'npm test', success: false, output: 'Fehler' }], 0, cfg);
     check('agentLoop=false: Fehlerkorrektur bleibt', s10 !== null, JSON.stringify(s10));
     vscode.__settings.agentLoop = true;
+
+    runTaskAnchorTests(cfg);
+    return runBareActionTests();
+}
+
+// ── Zaunlose Aktions-Kopfzeilen ─────────────────────────────────────────────
+// Im Fenster-Lauf beendete das Modell seine Antwort mit "action:done" ohne
+// Backticks. Der Block wurde weder ausgefuehrt noch aus der Anzeige entfernt -
+// "action:done" stand als Text mitten in der Antwort.
+function runBareActionTests() {
+    section('Aktions-Parser: Kopfzeile ohne Zaun');
+
+    const antwort = [
+        '1. Mit der `todo`-Option.',
+        '2. Mit `describe()`.',
+        '',
+        'action:done',
+        'zusammenfassung: Die drei Fragen wurden beantwortet.'
+    ].join('\n');
+
+    engine.taskComplete = false;
+    return engine.parseAndExecuteActions(antwort, async () => 'Ausführen').then(actions => {
+        check('zaunloses action:done wird ausgefuehrt',
+            actions.length === 1 && actions[0].description.includes('abgeschlossen'),
+            JSON.stringify(actions));
+        check('Abschlussflag gesetzt', engine.taskComplete === true);
+
+        const sichtbar = engine.cleanForDisplay(antwort);
+        check('action:done steht nicht mehr in der Anzeige',
+            !sichtbar.includes('action:done'), sichtbar);
+        check('Zusammenfassungszeile ebenfalls entfernt',
+            !sichtbar.includes('zusammenfassung:'), sichtbar);
+        check('die eigentliche Antwort bleibt',
+            sichtbar.includes('`todo`-Option') && sichtbar.includes('`describe()`'), sichtbar);
+
+        // Prosa nach dem Block bleibt Prosa
+        const mitProsa = 'action:done\nzusammenfassung: fertig\n\nFalls noch Fragen offen sind, sag es.';
+        const sichtbar2 = engine.cleanForDisplay(mitProsa);
+        check('Prosa nach dem Block bleibt stehen',
+            sichtbar2.includes('Falls noch Fragen offen sind'), sichtbar2);
+        check('Block selbst ist weg', !sichtbar2.includes('zusammenfassung'), sichtbar2);
+
+        // Schreibende Aktionen werden NICHT eingezaeunt: wo der Quellcode endet,
+        // verraet ohne Zaun nichts - eine Fehleinschaetzung schreibt Prosa in die Datei.
+        const gefaehrlich = 'action:create_file\npath: src/neu.ts\n---\nexport const a = 1;\n\nDas war es.';
+        const roh = engine.stripActionBlocks(gefaehrlich);
+        check('create_file ohne Zaun wird NICHT eingezaeunt',
+            roh.includes('action:create_file'), roh);
+
+        // Eine Kopfzeile ohne Argumente ist keine Aktion
+        const nurKopf = 'Ich nutze jetzt action:done\nund erklaere es dir.';
+        check('erwaehnung im Satz bleibt unberuehrt',
+            engine.stripActionBlocks(nurKopf).includes('action:done'));
+
+        engine.taskComplete = false;
+    });
+}
+
+// ── Der Auftrag muss in JEDER Runde im Prompt stehen ────────────────────────
+// Im Fenster-Lauf sollte der Assistent eine Webseite abrufen und drei Fragen
+// beantworten. Ab Runde 2 sagte der Prompt nur "im Kontext der urspruenglichen
+// Aufgabe" - das Modell suchte sich die Aufgabe aus dem Verlauf und griff die
+// Testreparatur der Vorsitzung auf, obwohl "Aendere keine Dateien" im Auftrag
+// stand. Seitdem wird der Auftrag jede Runde wortwoertlich mitgeschickt.
+function runTaskAnchorTests(cfg) {
+    section('Agenten-Schleife: Auftrag steht in jeder Runde');
+
+    engine.lastActionSignature = '';
+    engine.repeatCount = 0;
+    engine.plan = [];
+    engine.taskComplete = false;
+    engine.currentTask = 'Rufe https://nodejs.org/api/test.html ab. Aendere keine Dateien.';
+
+    const rounds = [
+        ['Analyse', [{ type: 'analysis', description: 'read_file: a.ts', success: true, output: 'Inhalt' }]],
+        ['Shell-Fehler', [{ type: 'shell', description: 'npm test', success: false, output: 'TS2304' }]],
+        ['Befehlsausgabe', [{ type: 'shell', description: 'npm test', success: true, output: '11/11 gruen' }]],
+        ['Patch gescheitert', [{ type: 'file_edit', description: 'Patch fehlgeschlagen: a.js',
+                                success: false, output: 'Suchtext nicht gefunden' }]],
+    ];
+
+    for (const [label, actions] of rounds) {
+        engine.lastActionSignature = '';
+        engine.repeatCount = 0;
+        const step = engine.planNextStep(actions, 1, cfg);
+        check(`${label}: Auftrag im Prompt`,
+            step !== null && step.prompt.includes('Aendere keine Dateien'),
+            step ? step.prompt.slice(0, 100) : 'null');
+        check(`${label}: als Auftrag ausgewiesen`,
+            step !== null && step.prompt.includes('DEIN AUFTRAG'),
+            step ? step.prompt.slice(0, 100) : 'null');
+    }
+
+    // Offener Plan
+    engine.lastActionSignature = '';
+    engine.repeatCount = 0;
+    engine.handlePlanAction('- [ ] Seite abrufen\n- [ ] Fragen beantworten');
+    const planStep = engine.planNextStep(
+        [{ type: 'file_edit', description: 'Bearbeitet: a.ts', success: true }], 1, cfg);
+    check('Plan-Runde: Auftrag im Prompt',
+        planStep !== null && planStep.prompt.includes('Aendere keine Dateien'),
+        planStep ? planStep.prompt.slice(0, 100) : 'null');
+
+    // Ohne bekannten Auftrag darf kein leerer Block entstehen
+    engine.plan = [];
+    engine.currentTask = '';
+    engine.lastActionSignature = '';
+    engine.repeatCount = 0;
+    const bare = engine.planNextStep(
+        [{ type: 'analysis', description: 'read_file: a.ts', success: true, output: 'Inhalt' }], 1, cfg);
+    check('ohne Auftrag kein leerer Kopf',
+        bare !== null && !bare.prompt.includes('DEIN AUFTRAG')
+        && bare.prompt.startsWith('ERGEBNISSE'),
+        bare ? bare.prompt.slice(0, 60) : 'null');
+
+    // ── Wiederhergestellter Verlauf ist Hintergrund, kein offener Auftrag ────
+    // Frueher kamen die Runden der Vorsitzung als echte Gespraechsrunden zurueck,
+    // die Assistenten-Turns mit vorangestelltem "[Vorheriges Reasoning]". Das
+    // Modell ahmte diese Marker nach - sie standen sichtbar in der Chat-Antwort.
+    section('Verlauf: Vorsitzung als Hintergrund-Notiz');
+
+    const { HistoryManager } = require(path.join(PROJECT, 'out', 'historyManager.js'));
+    const histDir = path.join(SANDBOX, 'histtest');
+    fs.rmSync(histDir, { recursive: true, force: true });
+    fs.mkdirSync(histDir, { recursive: true });
+
+    const first = new HistoryManager(histDir);
+    first.addUserMessage('Repariere die 6 roten Tests in test/evaluator.test.js');
+    first.addAssistantMessage('Alle 11 Tests sind gruen.',
+        [{ type: 'shell', description: 'Shell: npm test', success: true }],
+        'Aufgabe: "Repariere die Tests"\nAusgefuehrte Aktionen: OK npm test');
+
+    // Zwei Manager im selben Sekundentakt: die Kennungen muessen sich
+    // unterscheiden, sonst schreibt die neue Sitzung in die alte und der
+    // Verlauf der Vorsitzung ist weg (Sekundenauflösung war genau der Fehler).
+    const second = new HistoryManager(histDir);
+    check('zweite Sitzung hat eigene Kennung',
+        second.getSessionId() !== first.getSessionId(),
+        first.getSessionId() + ' / ' + second.getSessionId());
+
+    const digest = second.getLastSessionDigest();
+    check('Notiz vorhanden', typeof digest === 'string' && digest.length > 0, String(digest));
+    check('Notiz nennt den alten Auftrag',
+        digest.includes('evaluator.test.js'), String(digest));
+    check('Notiz nennt das Ergebnis',
+        digest.includes('11 Tests sind gruen'), String(digest));
+    check('kein Reasoning-Marker in der Notiz',
+        !digest.includes('[Vorheriges Reasoning]') && !digest.includes('[Antwort]'), String(digest));
+    check('Notiz ist einzeilig pro Eintrag',
+        digest.split('\n').every(l => l.startsWith('- ')), JSON.stringify(digest));
+
+    // Laengenbegrenzung greift von hinten: das Neueste bleibt
+    const shortDigest = second.getLastSessionDigest(60);
+    check('Kuerzung behaelt den letzten Eintrag',
+        shortDigest !== null && shortDigest.includes('11 Tests'), String(shortDigest));
+
+    // Ohne Vorsitzung gibt es keine Notiz
+    const emptyDir = path.join(SANDBOX, 'histempty');
+    fs.rmSync(emptyDir, { recursive: true, force: true });
+    fs.mkdirSync(emptyDir, { recursive: true });
+    check('ohne Vorsitzung keine Notiz',
+        new HistoryManager(emptyDir).getLastSessionDigest() === null);
+
+    // Leere Sessions duerfen die letzte echte NICHT verdecken. Jedes Neuladen
+    // des Fensters legt eine Session an - im Fenster-Lauf stand nach zwei
+    // Reloads "History: 0 Nachrichten", obwohl der Verlauf da war.
+    const third = new HistoryManager(histDir);    // legt leere Session an
+    const fourth = new HistoryManager(histDir);   // dahinter noch eine
+    const afterReloads = fourth.getLastSessionDigest();
+    check('leere Sessions verdecken die letzte echte nicht',
+        afterReloads !== null && afterReloads.includes('evaluator.test.js'),
+        String(afterReloads));
+    check('drei Reloads, Kennungen alle verschieden',
+        new Set([first.getSessionId(), second.getSessionId(),
+                 third.getSessionId(), fourth.getSessionId()]).size === 4);
 }
 
 function report() {

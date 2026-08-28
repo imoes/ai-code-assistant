@@ -1541,6 +1541,12 @@ function resetStats() {
   setThinkingPhase("KI denkt...");
 }
 
+// Zeilen der laufenden Runde, nach Schluessel. Eine Map statt "nur die letzte
+// Zeile": im Fenster-Lauf holte der Assistent zwei Seiten, und die erste Zeile
+// blieb auf "laeuft..." stehen, waehrend die fertige Ausgabe eine zweite Zeile
+// mit derselben Adresse bekam. Wer nur die letzte Zeile vergleicht, verliert
+// jede Meldung, die nicht unmittelbar auf ihre Vorgaengerin folgt.
+let progressRows = new Map();
 let lastProgressEl = null;
 
 /**
@@ -1658,25 +1664,24 @@ function styleToolRow(row, meta) {
 function appendOrUpdateProgress(description, output, meta) {
   const key = progressKey((meta && meta.tool ? meta.tool + ' ' : '') + description);
 
-  // Nur derselbe Vorgang aktualisiert seine Zeile. Vorher ueberschrieb jede
-  // Meldung die vorherige, sodass am Ende nur eine einzige Zeile dastand.
-  if (lastProgressEl && lastProgressEl.dataset.active === '1'
-      && lastProgressEl.dataset.key === key) {
-    styleToolRow(lastProgressEl, meta);
-    fillOutput(lastProgressEl.querySelector('.tool-output'), output);
+  // Derselbe Vorgang aktualisiert seine Zeile, auch wenn zwischendurch eine
+  // andere Aktion gemeldet wurde. Zwei verschiedene Vorgaenge bekommen zwei
+  // Zeilen - ohne diese Unterscheidung ueberschrieb jede Meldung die vorherige
+  // und man sah am Ende nur eine einzige Zeile.
+  const known = progressRows.get(key);
+  if (known) {
+    styleToolRow(known, meta);
+    fillOutput(known.querySelector('.tool-output'), output);
     scrollBottom();
     return;
   }
 
-  // Neuer Vorgang → vorherige Zeile abschließen, damit sie stehen bleibt
-  if (lastProgressEl) lastProgressEl.dataset.active = '0';
-
   const row = buildToolRow(meta, description);
-  row.dataset.active = '1';
   row.dataset.key = key;
   styleToolRow(row, meta);
   fillOutput(row.querySelector('.tool-output'), output);
 
+  progressRows.set(key, row);
   lastProgressEl = row;
   append(row);
 }
@@ -1712,9 +1717,12 @@ function renderFileDiff(change) {
   append(card);
 }
 
-// Aktive Progress-Karten am Ende deaktivieren
+// Abschnitt beenden: die bisherigen Werkzeugzeilen bleiben stehen, aber eine
+// gleichnamige Aktion danach bekommt eine neue Zeile - ein zweites "npm test"
+// nach einer Aenderung ist ein neuer Vorgang und kein Nachtrag zum ersten.
 function finalizeProgress() {
-  if (lastProgressEl) { lastProgressEl.dataset.active = '0'; lastProgressEl = null; }
+  progressRows = new Map();
+  lastProgressEl = null;
 }
 function makeWarningMsg(text) {
   const d = document.createElement('div');
@@ -1794,7 +1802,7 @@ function setThinking(v) {
   thinking.classList.toggle("visible", v);
   if (hintEl) hintEl.textContent = v
     ? "Enter unterbricht die laufende Aufgabe und startet die neue"
-    : "Enter zum Senden 00b7 Shift+Enter fuer Zeilenumbruch";
+    : "Enter zum Senden \\u00b7 Shift+Enter f\\u00fcr Zeilenumbruch";
   if (v) scrollBottom();
 }
 function setInputEnabled(v) {

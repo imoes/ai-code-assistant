@@ -11,7 +11,7 @@ Code analysiert, plant, schreibt und testet.
 
 - Quellcode: `src/*.ts`, Einstieg `src/extension.ts`
 - Build: `npm run compile` (TypeScript → `out/`)
-- Tests: `npm test` — 381 Prüfungen, ohne Netz und ohne Modellserver. Die Suite fährt die
+- Tests: `npm test` — 425 Prüfungen, ohne Netz und ohne Modellserver. Die Suite fährt die
   echte Engine gegen einen `vscode`-Stub (`test/vscode-stub.js`) und lokale Testserver.
   Neue Funktion → Test in `test/` ergänzen und in `test/run-all.js` eintragen.
 - Paketieren: `npm run package` (erzeugt `ai-code-assistant-<version>.vsix`)
@@ -102,6 +102,26 @@ Dabei gilt:
 - **Kreislauf-Erkennung** über den Fingerabdruck der Aktionen: dieselbe Runde dreimal in
   Folge beendet die Schleife, statt das Schrittlimit zu verbrennen.
 
+## Der Auftrag gehört in jede Runde – und nichts sonst
+
+Zwei Fehler mit derselben Wurzel, beide im laufenden Fenster beobachtet: der
+Assistent sollte eine Webseite abrufen und drei Fragen beantworten, setzte dann
+aber die Testreparatur der Vorsitzung fort und ließ `npm test` laufen – obwohl
+„Ändere keine Dateien" im Auftrag stand.
+
+- **Die Fortsetzungs-Prompts nennen den Auftrag wortwörtlich.** „Arbeite an der
+  ursprünglichen Aufgabe weiter" ohne den Text daneben lässt das Modell im
+  Verlauf danach suchen – und dort liegt die Aufgabe von gestern. `planNextStep`
+  stellt jedem Prompt `DEIN AUFTRAG:` mit `this.currentTask` voran.
+- **Die letzte Sitzung kommt als eine Notiz, nicht als Gesprächsrunden.**
+  `HistoryManager.getLastSessionDigest()` liefert eine kurze Liste, klar als
+  abgeschlossen ausgewiesen. Die alten Runden 1:1 einzuspielen ließ das Modell
+  die damalige Aufgabe für die laufende halten.
+- **Nie Text in einen Assistenten-Turn schreiben, den der Assistent nicht gesagt
+  hat.** Eine frühere Fassung hängte die Reasoning-Zusammenfassung als
+  `[Vorheriges Reasoning] … [Antwort] …` davor. Das Modell ahmte die Marker nach
+  – sie standen anschließend sichtbar in der Antwort im Chat.
+
 ## Fallstrick: WebView-Skripte in Template-Strings
 
 `chatPanel.ts` und `settingsPanel.ts` erzeugen ihr Browser-JavaScript in einem
@@ -114,6 +134,13 @@ TypeScript-Template-String. Darin gilt:
 - Dasselbe gilt für Backticks und `${…}`: als `` \` `` bzw. `\${…}` schreiben.
 
 Der Testlauf prüft beide Panels mit `new Function(script)` gegen genau diesen Fehler.
+
+Parsebarkeit reicht aber nicht: `test/webview-rows.js` führt das Chat-Skript gegen ein
+nachgebautes DOM aus und prüft, was der Benutzer wirklich sieht. Zwei Fehler kamen so
+erst im laufenden Fenster heraus – eine Werkzeugzeile, die bei zwei gleichzeitigen
+Abrufen auf „läuft…" stehenblieb, und ein Hinweistext, in dem eine zerbrochene
+Escape-Sequenz als `00b7` dastand. Wer an der Anzeige etwas ändert, ergänzt dort eine
+Prüfung.
 
 ## Konventionen
 

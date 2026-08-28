@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "lastUpdated": "2026-08-28T08:22:56.028Z",
+  "sessions": [
+    {
+      "id": "2026-08-28T08-22-55-800Z-2atu",
+      "startedAt": "2026-08-28T08:22:55.804Z",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Repariere die 6 roten Tests in test/evaluator.test.js",
+          "timestamp": "2026-08-28T08:22:55.812Z"
+        },
+        {
+          "role": "assistant",
+          "content": "Alle 11 Tests sind gruen.",
+          "timestamp": "2026-08-28T08:22:55.852Z",
+          "actions": [
+            {
+              "type": "shell",
+              "description": "Shell: npm test",
+              "success": true
+            }
+          ],
+          "reasoning": "Aufgabe: \"Repariere die Tests\"\nAusgefuehrte Aktionen: OK npm test"
+        }
+      ]
+    },
+    {
+      "id": "2026-08-28T08-22-55-886Z-k9g1",
+      "startedAt": "2026-08-28T08:22:55.928Z",
+      "messages": []
+    },
+    {
+      "id": "2026-08-28T08-22-55-960Z-ic57",
+      "startedAt": "2026-08-28T08:22:55.976Z",
+      "messages": []
+    },
+    {
+      "id": "2026-08-28T08-22-55-984Z-mei5",
+      "startedAt": "2026-08-28T08:22:56.028Z",
+      "messages": []
+    }
+  ]
+}

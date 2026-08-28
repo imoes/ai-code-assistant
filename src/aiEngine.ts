@@ -143,6 +143,16 @@ export class AIEngine {
     /** Von der KI gesetztes Signal, dass die Aufgabe abgeschlossen ist */
     private taskComplete = false;
 
+    /**
+     * Der Auftrag des Benutzers aus Runde 0 – wortwörtlich.
+     *
+     * Die Fortsetzungs-Prompts der Schleife sprachen von „der ursprünglichen
+     * Aufgabe", ohne sie zu nennen. Das Modell suchte sie im Gesprächsverlauf
+     * und fand dort die Aufgabe der Vorsitzung. Wer weiterarbeiten lassen will,
+     * muss den Auftrag jede Runde mitschicken.
+     */
+    private currentTask = '';
+
     /** Vom Benutzer gesetztes Abbruch-Signal – beendet auch die Schleife */
     private cancelled = false;
 
@@ -283,6 +293,7 @@ export class AIEngine {
             this.cancelled = false;
             this.busy = true;
             this.taskComplete = false;
+            this.currentTask = userPrompt.trim();
             this.plan = [];
             this.lastActionSignature = '';
             this.repeatCount = 0;
@@ -599,6 +610,12 @@ und füge ihn als letzten action:shell Block an.` : '';
         const analyses = actions.filter(a => a.type === 'analysis' && a.output?.trim());
         const failedShells = actions.filter(a => a.type === 'shell' && !a.success && a.output?.trim());
 
+        // Der Auftrag wird in JEDER Runde mitgeschickt. Ohne ihn sucht das Modell
+        // sich „die ursprüngliche Aufgabe" selbst aus dem Verlauf zusammen.
+        const task = this.currentTask
+            ? `DEIN AUFTRAG (unverändert, daran arbeitest du):\n${this.currentTask.slice(0, 1500)}\n\n`
+            : '';
+
         // Fehlgeschlagene Änderungen (Patch griff nicht, Datei fehlt, abgelehnt).
         // Die MÜSSEN zurückgemeldet werden: sonst wiederholt das Modell denselben
         // Patch endlos, weil es nie erfährt, dass er nicht gegriffen hat.
@@ -655,7 +672,7 @@ und füge ihn als letzten action:shell Block an.` : '';
             return {
                 reason: `${failedShells.length} Fehler gefunden – analysiere…`,
                 prompt:
-                    `FEHLER-ANALYSE ERFORDERLICH:\n\n${ctx}\n\n` +
+                    `${task}FEHLER-ANALYSE ERFORDERLICH:\n\n${ctx}\n\n` +
                     `Analysiere die Fehlerausgabe genau. Was ist die Ursache? ` +
                     `Falls du dafür Code sehen musst: nutze read_file oder grep. ` +
                     `Korrigiere den Fehler dann mit den passenden Aktions-Blöcken. ` +
@@ -668,7 +685,7 @@ und füge ihn als letzten action:shell Block an.` : '';
             return {
                 reason: `${failedFileActions.length} Änderung(en) nicht angewendet – korrigiere…`,
                 prompt:
-                    `EINE ÄNDERUNG WURDE NICHT ANGEWENDET:\n\n` +
+                    `${task}EINE ÄNDERUNG WURDE NICHT ANGEWENDET:\n\n` +
                     `${this.formatOutputs(failedFileActions)}\n\n` +
                     `Lies die Begründung genau. Wiederhole NICHT denselben Aufruf.\n` +
                     `- Ist die Änderung laut Meldung schon vorhanden: gehe zum nächsten Punkt weiter.\n` +
@@ -685,8 +702,8 @@ und füge ihn als letzten action:shell Block an.` : '';
             return {
                 reason: `Analyse ausgewertet (${labels.slice(0, 90)}) – arbeite weiter…`,
                 prompt:
-                    `ERGEBNISSE DEINER CODE-ANALYSE:\n\n${ctx}\n\n` +
-                    `Du hast den Code jetzt gesehen. Arbeite an der ursprünglichen Aufgabe weiter:\n` +
+                    `${task}ERGEBNISSE DEINER CODE-ANALYSE:\n\n${ctx}\n\n` +
+                    `Du hast den Code jetzt gesehen. Arbeite an genau diesem Auftrag weiter:\n` +
                     `- Brauchst du noch mehr Kontext? → weitere read_file / grep Aktionen\n` +
                     `- Weißt du genug? → setze die Änderung jetzt um (patch_file / replace_lines / create_file)\n` +
                     `- Ist alles erledigt? → \`\`\`action:done\nzusammenfassung: …\n\`\`\`\n` +
@@ -699,11 +716,12 @@ und füge ihn als letzten action:shell Block an.` : '';
             return {
                 reason: 'Ausgaben empfangen – analysiere…',
                 prompt:
-                    `BEFEHLSAUSGABE – ANALYSE UND HANDLUNG ERFORDERLICH:\n\n` +
+                    `${task}BEFEHLSAUSGABE – ANALYSE UND HANDLUNG ERFORDERLICH:\n\n` +
                     `${this.formatOutputs(successfulWithOutput)}\n\n` +
-                    `Analysiere diese Ausgabe im Kontext der ursprünglichen Aufgabe und führe sofort ` +
+                    `Analysiere diese Ausgabe im Hinblick auf den Auftrag oben und führe sofort ` +
                     `die nächsten notwendigen Schritte aus (Aktions-Blöcke). ` +
-                    `Ist die Aufgabe damit erledigt, schließe mit action:done ab.`
+                    `Beantwortet die Ausgabe den Auftrag bereits: formuliere jetzt die Antwort und ` +
+                    `schließe mit action:done ab. Nimm KEINE Aufgabe aus einer früheren Sitzung auf.`
             };
         }
 
@@ -715,7 +733,7 @@ und füge ihn als letzten action:shell Block an.` : '';
             return {
                 reason: `Plan: ${this.plan.length - openSteps.length}/${this.plan.length} erledigt – nächster Schritt…`,
                 prompt:
-                    `PLAN FORTSETZEN. Noch offen:\n` +
+                    `${task}PLAN FORTSETZEN. Noch offen:\n` +
                     openSteps.map(s => `- [${s.status === 'doing' ? '>' : ' '}] ${s.text}`).join('\n') +
                     `\n\nArbeite jetzt den nächsten Schritt ab: "${next.text}"\n` +
                     `Aktualisiere danach den Plan mit action:plan (vollständige Liste). ` +
@@ -1116,17 +1134,86 @@ und füge ihn als letzten action:shell Block an.` : '';
         return cleaned;
     }
 
+    /**
+     * Zaunlose Aktions-Kopfzeilen einzäunen.
+     *
+     * Beobachtet im Fenster-Lauf: das Modell beendete seine Antwort mit
+     *
+     *     action:done
+     *     zusammenfassung: Die drei Fragen wurden beantwortet.
+     *
+     * ohne Backticks. Damit wurde der Block weder ausgeführt – die Schleife
+     * erfuhr also nicht, dass die Aufgabe fertig ist – noch aus der Anzeige
+     * entfernt: der Benutzer las „action:done" als Teil der Antwort.
+     *
+     * Umgewandelt werden nur Aktionen, deren Inhalt aus `schlüssel: wert`-Zeilen
+     * oder Plan-Punkten besteht. Für `create_file` und Verwandte wäre das
+     * gefährlich: dort ist der Inhalt beliebiger Quellcode, und wo er endet,
+     * verrät ohne Zaun nichts.
+     */
+    private normalizeBareActionHeaders(text: string): string {
+        const SAFE = new Set([
+            'done', 'finish', 'plan', 'todo',
+            'read_file', 'grep', 'glob', 'list_dir', 'delete_file',
+            'web_search', 'web_fetch'
+        ]);
+        const lines = text.split('\n');
+        const out: string[] = [];
+        let inFence = false;
+        let changed = false;
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (/^\s*```/.test(line)) { inFence = !inFence; out.push(line); continue; }
+
+            const bare = inFence ? null : /^\s*action:(\w+)\s*$/.exec(line);
+            if (!bare || !SAFE.has(bare[1])) { out.push(line); continue; }
+
+            // Inhalt sind die folgenden Zeilen, solange sie wie Argumente
+            // aussehen. Prosa danach bleibt Prosa.
+            const body: string[] = [];
+            let j = i + 1;
+            while (j < lines.length) {
+                const l = lines[j];
+                if (/^\s*$/.test(l) && body.length > 0) break;
+                if (/^\s*```/.test(l) || /^\s*action:\w+\s*$/.test(l)) break;
+                const looksLikeArg = /^\s*\w+:\s*/.test(l) || /^\s*-\s*\[.\]/.test(l);
+                // Fortsetzungszeile eines mehrzeiligen Werts nur zulassen,
+                // wenn schon ein Argument dasteht.
+                if (!looksLikeArg && body.length === 0) break;
+                if (!looksLikeArg && !/^\s{2,}\S/.test(l)) break;
+                body.push(l);
+                j++;
+            }
+            if (body.length === 0) { out.push(line); continue; }
+
+            out.push('```action:' + bare[1]);
+            out.push(...body);
+            out.push('```');
+            i = j - 1;
+            changed = true;
+        }
+
+        if (changed) {
+            this.logger.info('Aktions-Parser: zaunlose Aktions-Kopfzeile eingezäunt.');
+            return out.join('\n');
+        }
+        return text;
+    }
+
     private async parseAndExecuteActions(response: string, confirm: ConfirmFn, onActionProgress?: ActionProgressCallback): Promise<ExecutedAction[]> {
         const executed: ExecutedAction[] = [];
 
         // Normalisierung: <action:shell>...</action:shell> → ```action:shell\n...\n```
         // Manche Modelle (Gemma, Qwen) schreiben XML-Tags statt Backtick-Blöcke
         const normalized = this.normalizePatchFences(
-            normalizeToolCalls(
-                response
-                    .replace(/<action:(\w+)>([\s\S]*?)<\/action:\1>/g, '```action:$1\n$2\n```')
-                    .replace(/\[action:(\w+)\]([\s\S]*?)\[\/action:\1\]/g, '```action:$1\n$2\n```'),
-                this.logger
+            this.normalizeBareActionHeaders(
+                normalizeToolCalls(
+                    response
+                        .replace(/<action:(\w+)>([\s\S]*?)<\/action:\1>/g, '```action:$1\n$2\n```')
+                        .replace(/\[action:(\w+)\]([\s\S]*?)\[\/action:\1\]/g, '```action:$1\n$2\n```'),
+                    this.logger
+                )
             )
         );
 
@@ -1753,7 +1840,10 @@ und füge ihn als letzten action:shell Block an.` : '';
     private buildReasoningSummary(userPrompt: string, thinking: string | undefined, actions: ExecutedAction[]): string {
         const parts: string[] = [];
 
-        parts.push(`Aufgabe: "${userPrompt.slice(0, 200).replace(/\n/g, ' ')}"`);
+        // Ab Runde 1 ist `userPrompt` der Fortsetzungs-Prompt der Schleife, nicht
+        // der Auftrag. In der Zusammenfassung muss der Auftrag stehen.
+        const task = this.currentTask || userPrompt;
+        parts.push(`Aufgabe: "${task.slice(0, 200).replace(/\n/g, ' ')}"`);
 
         if (thinking) {
             // Thinking-Block auf max. 600 Zeichen kürzen um History-Größe zu kontrollieren
@@ -1807,7 +1897,9 @@ und füge ihn als letzten action:shell Block an.` : '';
     }
 
     private stripActionBlocks(text: string): string {
-        return text
+        // Dieselbe Einzäunung wie im Parser: was ausgeführt wird, muss auch aus
+        // der Anzeige verschwinden. Sonst liest der Benutzer „action:done".
+        return this.normalizeBareActionHeaders(text)
             .replace(/<think>[\s\S]*?<\/think>/gi, '')              // Reasoning-Blöcke
             .replace(/```action:\w+[^\n]*\n[\s\S]*?```\n?/g, '')    // Backtick-Blöcke
             .replace(/<action:\w+>[\s\S]*?<\/action:\w+>\n?/g, '')  // XML-Tags
@@ -1833,16 +1925,24 @@ und füge ihn als letzten action:shell Block an.` : '';
             this.historyManager = new HistoryManager(root);
             this.logger.info(`HistoryManager initialisiert: ${root}`);
 
-            // Letzten Verlauf aus JSON in conversationHistory laden
+            // Die letzte Sitzung kommt als EINE Hintergrund-Notiz zurück, nicht
+            // als nachgespielte Gesprächsrunden. Sonst hält das Modell die alte
+            // Aufgabe für die laufende – siehe HistoryManager.getLastSessionDigest.
             if (!this.historyLoaded) {
                 this.historyLoaded = true;
-                const previousMessages = this.historyManager.getLastSessionMessages(20);
-                if (previousMessages.length > 0) {
-                    this.conversationHistory = previousMessages.map(m => ({
-                        role: m.role as 'user' | 'assistant',
-                        content: m.content
-                    }));
-                    this.logger.info(`Verlauf wiederhergestellt: ${previousMessages.length} Nachrichten aus letzter Session geladen`);
+                const digest = this.historyManager.getLastSessionDigest();
+                if (digest) {
+                    this.conversationHistory = [{
+                        role: 'user',
+                        content:
+                            `Zur Information – das ist in der VORHERIGEN, ABGESCHLOSSENEN Sitzung ` +
+                            `passiert. Es ist reines Hintergrundwissen und KEIN offener Auftrag. ` +
+                            `Arbeite ausschließlich an der Aufgabe, die als nächstes kommt.\n\n${digest}`
+                    }, {
+                        role: 'assistant',
+                        content: 'Verstanden – das ist Hintergrund. Ich warte auf die neue Aufgabe.'
+                    }];
+                    this.logger.info(`Hintergrund-Notiz aus letzter Session geladen (${digest.length} Zeichen)`);
                 }
             }
         } catch (err) {
