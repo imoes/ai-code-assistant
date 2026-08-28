@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { ChatPanel } from './chatPanel';
+import { AssistantMode, getAssistantMode } from './aiEngine';
 
 /**
  * SidebarProvider – TreeDataProvider für die linke Activity-Bar-Leiste.
  *
  * Zeigt interaktiv:
- *  - Aktuellen Modus (Auto / Manuell) mit Umschalter
+ *  - Aktuellen Modus (Ask / Auto / Plan) mit Auswahl
  *  - Auto-Test-Toggle (Tests nach KI-Änderungen automatisch ausführen)
  *  - Button zum Öffnen einer neuen Chat-Session
  *
@@ -39,8 +40,33 @@ export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
 
     getChildren(): SidebarItem[] {
         const config = vscode.workspace.getConfiguration('aiAssistant');
-        const isAuto   = config.get<boolean>('autoApply', false);
+        const mode     = getAssistantMode();
         const autoTest = config.get<boolean>('autoTest', false);
+
+        // Beschriftung und Symbol je Modus. Muss zur Listbox im Chat passen –
+        // zwei Anzeigen desselben Zustands, die verschiedenes sagen, sind
+        // schlimmer als nur eine.
+        const MODES: Record<AssistantMode, { label: string; icon: string; tip: string }> = {
+            ask: {
+                label: 'Ask – jede Änderung bestätigen',
+                icon: 'shield',
+                tip: 'Jede Dateiänderung und jeder Shell-Befehl wird im Chat bestätigt.\n'
+                    + 'Klicken für den nächsten Modus.'
+            },
+            auto: {
+                label: 'Auto – ohne Rückfragen',
+                icon: 'zap',
+                tip: 'Der Assistent arbeitet ohne Rückfragen durch. Alles bleibt per Undo rücknehmbar.\n'
+                    + 'Klicken für den nächsten Modus.'
+            },
+            plan: {
+                label: 'Plan – nur lesen und planen',
+                icon: 'checklist',
+                tip: 'Der Assistent darf nur lesen und planen. Änderungen und Shell-Befehle sind gesperrt.\n'
+                    + 'Klicken für den nächsten Modus.'
+            }
+        };
+        const current = MODES[mode];
 
         const items: SidebarItem[] = [
 
@@ -64,15 +90,13 @@ export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
 
             // ── Modus ───────────────────────────────────────────────────────
             new SidebarItem(
-                `Modus: ${isAuto ? 'Automatisch' : 'Manuell'}`,
+                `Modus: ${current.label}`,
                 vscode.TreeItemCollapsibleState.None,
-                'aiAssistant.toggleMode',
-                new vscode.ThemeIcon(isAuto ? 'zap' : 'gear'),
-                isAuto
-                    ? 'KI führt alle Aktionen automatisch aus. Klicken zum Wechseln auf Manuell.'
-                    : 'KI fragt vor jeder Aktion nach Bestätigung. Klicken zum Wechseln auf Automatisch.',
+                'aiAssistant.setMode',
+                new vscode.ThemeIcon(current.icon),
+                current.tip,
                 false,
-                isAuto ? 'auto' : 'manual'
+                mode
             ),
 
             // ── Auto-Test ───────────────────────────────────────────────────

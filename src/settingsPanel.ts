@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { MCPClient } from './mcpClient';
 import { Logger } from './logger';
+import { getAssistantMode } from './aiEngine';
 
 /** Ein Eingabefeld im Einstellungs-Panel. */
 interface FieldDef {
@@ -273,9 +274,18 @@ export class SettingsPanel {
 
         // Modus-Listbox in allen offenen Chat-Tabs aktualisieren
         if (changed.includes('mode') || changed.includes('autoApply')) {
+            // autoApply mitführen, damit die veraltete Einstellung nicht dem
+            // neuen Modus widerspricht – sonst zeigen Panel und Chat
+            // Unterschiedliches an.
+            const mode = getAssistantMode();
+            try {
+                await config.update('autoApply', mode === 'auto', target);
+            } catch (err) {
+                this.logger.warn(`autoApply konnte nicht angeglichen werden: ${(err as Error).message}`);
+            }
+
             const { ChatPanel } = require('./chatPanel') as typeof import('./chatPanel');
-            const { getAssistantMode } = require('./aiEngine') as typeof import('./aiEngine');
-            ChatPanel.broadcastModeChange(getAssistantMode());
+            ChatPanel.broadcastModeChange(mode);
         }
     }
 
@@ -306,7 +316,14 @@ export class SettingsPanel {
         const out: Record<string, unknown> = {};
         for (const section of SettingsPanel.SECTIONS) {
             for (const field of section.fields) {
-                const value = config.get(field.key);
+                // Der Modus wird aus mode UND dem alten autoApply hergeleitet.
+                // Läse das Panel nur `mode`, zeigte es bei einer Installation
+                // ohne gesetztes `mode` "Ask", während der Chat "Auto" anzeigt –
+                // und ein Klick auf Speichern hätte den Auto-Modus stillschweigend
+                // abgeschaltet.
+                const value = field.key === 'mode'
+                    ? getAssistantMode()
+                    : config.get(field.key);
                 out[field.key] = field.kind === 'list' && Array.isArray(value)
                     ? value.join('\n')
                     : value;

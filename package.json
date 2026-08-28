@@ -2,7 +2,7 @@
   "name": "ai-code-assistant",
   "displayName": "AI Code Assistant (llama.cpp MCP)",
   "description": "Autonomer AI Code Assistant basierend auf llama.cpp MCP – erstellt, bearbeitet und testet Code direkt im Workspace.",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "repository": {
     "type": "git",
     "url": "https://gitlab.ippen.media/mutkluge/ai-code-assistant"
