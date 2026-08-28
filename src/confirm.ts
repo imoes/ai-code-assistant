@@ -1,29 +1,29 @@
 /**
- * confirm.ts – Shared-Typen für das In-Chat-Bestätigungssystem.
+ * confirm.ts – Shared types for the in-chat confirmation system.
  */
 
 /**
- * Optionale Diff-Metadaten, die an die Confirm-Karte übergeben werden.
- * Ermöglicht die farbige Diff-Anzeige und den "In Editor öffnen"-Button.
+ * Optional diff metadata passed to the Confirm card.
+ * Enables the colored diff display and the "Open in Editor" button.
  */
 export interface DiffMeta {
-    /** Unified-Diff-String für die Inline-Anzeige (formatDiff()) */
+    /** Unified diff string for inline display (formatDiff()) */
     diffText: string;
-    /** Absoluter Pfad der alten Datei – für vscode.diff() */
+    /** Absolute path of the old file – for vscode.diff() */
     oldUri: string;
-    /** Neuer Inhalt – wird als temp. Datei für vscode.diff() gespeichert */
+    /** New content – is saved as a temp. file for vscode.diff() */
     newContent: string;
-    /** Stats: [entfernte Zeilen, hinzugefügte Zeilen] */
+    /** Stats: [removed lines, added lines] */
     stats: [number, number];
 }
 
 /**
- * Bestätigungs-Funktion: zeigt eine persistente Karte im Chat.
- * Wartet bis der Benutzer einen Button klickt und gibt dessen Label zurück.
+ * Confirmation function: shows a persistent map in the chat.
+ * Waits until the user clicks a button and returns its label.
  *
  * @param message   Nachricht (Markdown, **fett** erlaubt)
- * @param choices   Buttons (erster = primäre Aktion)
- * @param diff      Optionale Diff-Metadaten für farbige Diff-Anzeige
+ * @param choices   Buttons (first = primary action)
+ * @param diff      Optional diff metadata for colored diff display
  */
 export type ConfirmFn = (
     message: string,
@@ -31,25 +31,25 @@ export type ConfirmFn = (
     diff?: DiffMeta
 ) => Promise<string>;
 
-/** Keine Bestätigung – erste Option sofort wählen (autoApply) */
+/** No confirmation – select first option immediately (autoApply) */
 export const autoConfirmFn: ConfirmFn = async (_msg, choices) => choices[0];
 
-/** Eine bereits angewandte Dateiänderung, für die Anzeige im Chat. */
+/** An already applied file change, for display in the chat. */
 export interface AppliedChange {
-    /** Pfad relativ zum Workspace */
+    /** Path relative to the Workspace */
     path: string;
-    /** Was passiert ist */
+    /** What happened is */
     kind: 'erstellt' | 'geändert' | 'gelöscht';
-    /** Unified-Diff für die farbige Anzeige (leer bei neuen/gelöschten Dateien) */
+    /** Unified diff for colored display (empty for new/deleted files) */
     diffText: string;
-    /** [entfernte Zeilen, hinzugefügte Zeilen] */
+    /** [removed lines, added lines] */
     stats: [number, number];
 }
 
 /**
- * Meldet eine angewandte Änderung an die Oberfläche.
+ * Reports an applied change to the interface.
  *
- * Nötig, weil im Auto-Modus keine Bestätigungskarte erscheint – ohne diesen
- * Weg würde der Benutzer nie sehen, was der Assistent geändert hat.
+ * Required, because in auto-mode no confirmation card appears – without this
+ * The user would never see what the assistant changed.
  */
 export type DiffReporter = (change: AppliedChange) => void;

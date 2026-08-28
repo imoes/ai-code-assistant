@@ -697,28 +697,28 @@ export class WebSearcher {
             // Modell dieselbe Suche wiederholen; es muss wissen, dass die Suche
             // selbst nicht verfügbar ist und welcher Weg stattdessen bleibt.
             const why = response.problems?.length
-                ? `\nGrund: ${response.problems.join('; ')}`
+                ? `\nReason: ${response.problems.join('; ')}`
                 : '';
-            return `Web-Suche für "${response.query}" lieferte keine Ergebnisse.${why}\n\n`
-                + `Die Suche ist gerade nicht verfügbar (schlüsselfreie Suchdienste drosseln stark). `
-                + `Wiederhole sie NICHT. Stattdessen:\n`
-                + `- Kennst du eine passende Adresse, rufe sie direkt mit action:web_fetch ab `
-                + `(z.B. die offizielle Dokumentation des Projekts).\n`
-                + `- Sonst arbeite mit dem Code weiter, den du im Workspace lesen kannst.\n`
-                + `- Für verlässliche Suche kann der Benutzer in den Einstellungen unter `
-                + `"Web-Suche" einen Anbieter mit API-Key eintragen (Tavily, Brave oder Google).`;
+            return `The web search for "${response.query}" returned no results.${why}\n\n`
+                + `Search is unavailable right now (keyless search services throttle hard). `
+                + `Do NOT repeat it. Instead:\n`
+                + `- If you know a suitable address, fetch it directly with action:web_fetch `
+                + `(e.g. the project's official documentation).\n`
+                + `- Otherwise continue with the code you can read in the workspace.\n`
+                + `- For reliable search the user can configure a provider with an API key `
+                + `under "Web-Suche" in the settings (Tavily, Brave or Google).`;
         }
 
-        const lines: string[] = [`## Web-Suche: "${response.query}"\n`];
+        const lines: string[] = [`## Web search: "${response.query}"\n`];
 
         if (response.answer) {
-            lines.push(`**Direkte Antwort:** ${response.answer}\n`);
+            lines.push(`**Direct answer:** ${response.answer}\n`);
         }
         if (response.abstract) {
-            lines.push(`**Zusammenfassung:** ${response.abstract}\n`);
+            lines.push(`**Summary:** ${response.abstract}\n`);
         }
         if (response.results.length > 0) {
-            lines.push('**Suchergebnisse:**\n');
+            lines.push('**Results:**\n');
             response.results.forEach((r, i) => {
                 lines.push(`${i + 1}. **${r.title}**`);
                 lines.push(`   URL: ${r.url}`);

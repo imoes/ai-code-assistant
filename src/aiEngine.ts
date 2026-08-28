@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { MCPClient, ChatMessage, StreamCallback, GenerationStats } from './mcpClient';
 import { FileManager } from './fileManager';
-import { ShellRunner } from './shellRunner';
+import { ShellRunner, ShellKind } from './shellRunner';
 import { HistoryManager } from './historyManager';
 import { Logger } from './logger';
 import { ConfirmFn, autoConfirmFn } from './confirm';
@@ -19,6 +19,25 @@ import {
     stripToolMarkupFromCode,
     toolCallsToActions
 } from './toolCallParser';
+
+/**
+ * Sprachregel – steht am Anfang jedes System-Prompts.
+ *
+ * Die Anweisungen an das Modell sind **englisch**: die Modelle folgen englischen
+ * Instruktionen zuverlässiger, und die Werkzeugbeschreibungen fallen kürzer aus.
+ * Die Antwort soll davon unberührt bleiben und in der Sprache des Benutzers
+ * erfolgen – sonst antwortet ein Assistent mit deutschem Bedienfeld plötzlich
+ * englisch. Deshalb wird die Regel ausdrücklich gesetzt und mehrfach wiederholt
+ * (Ansagen, Plan-Punkte, Abschlusstext), denn genau dort fällt ein Rückfall ins
+ * Englische dem Benutzer sofort auf.
+ */
+export const LANGUAGE_RULE =
+    '## Language\n' +
+    'These instructions are in English. Your ANSWER is not: always write to the user ' +
+    'in the language they used in their request. That applies to everything the user ' +
+    'reads – your prose, the sentence announcing each action, the plan items and the ' +
+    'closing summary. Identifiers, code, file paths, shell commands and the action ' +
+    'block syntax stay as they are.\n';
 
 /** Arbeitsmodus des Assistenten. */
 export type AssistantMode = 'ask' | 'auto' | 'plan';
@@ -109,6 +128,31 @@ export type StatsProgressCallback = (stats: GenerationStats) => void;
  */
 export type NarrationCallback = (text: string) => void;
 
+/** Eine Antwortmöglichkeit im Entscheidungs-Dialog. */
+export interface AskOption {
+    label: string;
+    description: string;
+}
+
+/** Eine Entscheidungsfrage an den Benutzer. */
+export interface AskRequest {
+    /** Kurzes Etikett, 2–3 Wörter – wie die Tab-Beschriftung bei Claude Code */
+    header: string;
+    question: string;
+    options: AskOption[];
+    /** Mehrfachauswahl (Kästchen) statt Einfachauswahl (Radio) */
+    multi: boolean;
+}
+
+/**
+ * Callback für den Entscheidungs-Dialog.
+ *
+ * Gibt die gewählten Beschriftungen zurück, bei Mehrfachauswahl mit `", "`
+ * verbunden – dieselbe Form, die auch Claude Code im Webview verwendet. Ein
+ * leerer String heißt: der Benutzer hat abgebrochen.
+ */
+export type AskCallback = (request: AskRequest) => Promise<string>;
+
 /**
  * AIEngine: Verarbeitet Prompts, führt Aktionen aus, schreibt History.
  *
@@ -140,8 +184,14 @@ export class AIEngine {
     /** Callback für die Ansage pro Runde (siehe NarrationCallback) */
     private onNarration?: NarrationCallback;
 
+    /** Callback für den Entscheidungs-Dialog (siehe AskCallback) */
+    private onAsk?: AskCallback;
+
     /** Von der KI gesetztes Signal, dass die Aufgabe abgeschlossen ist */
     private taskComplete = false;
+
+    /** Zusammenfassung aus `action:done` – wird als Schlussantwort angezeigt */
+    private lastDoneSummary = '';
 
     /**
      * Der Auftrag des Benutzers aus Runde 0 – wortwörtlich.
@@ -208,6 +258,11 @@ export class AIEngine {
     /** Callback registrieren, über den die Ansage jeder Runde gemeldet wird. */
     setNarrationCallback(cb: NarrationCallback | undefined): void {
         this.onNarration = cb;
+    }
+
+    /** Callback für den Entscheidungs-Dialog setzen (siehe AskCallback). */
+    setAskCallback(cb: AskCallback | undefined): void {
+        this.onAsk = cb;
     }
 
     /** Aktuellen Arbeitsplan abfragen. */
@@ -293,6 +348,7 @@ export class AIEngine {
             this.cancelled = false;
             this.busy = true;
             this.taskComplete = false;
+            this.lastDoneSummary = '';
             this.currentTask = userPrompt.trim();
             this.plan = [];
             this.lastActionSignature = '';
@@ -322,7 +378,7 @@ export class AIEngine {
             const root = this.fileManager.getWorkspaceRoot();
             const allFilesList = this.fileManager.listFiles();
             this.logger.info(`Workspace-Scan: ${allFilesList.length} Datei(en) in ${root}`);
-            workspaceContext = `\n\n## Projekt\n${this.analyzer.projectOverview()}`;
+            workspaceContext = `\n\n## Project\n${this.analyzer.projectOverview()}`;
 
             // Aktive Editor-Datei und im Prompt erwähnte Dateien vorab einbinden.
             // Bewusst auf 600 Zeilen begrenzt: den Rest holt sich der Assistent
@@ -333,7 +389,7 @@ export class AIEngine {
             if (editor) {
                 const relPath = path.relative(root, editor.document.uri.fsPath);
                 const content = editor.document.getText();
-                workspaceContext += `\n\n## Aktuell geöffnete Datei (${relPath})\n` +
+                workspaceContext += `\n\n## Currently open file (${relPath})\n` +
                     `\`\`\`\n${this.addLineNumbers(content, PRELOAD_LINES)}\n\`\`\``;
             }
 
@@ -349,22 +405,22 @@ export class AIEngine {
                 if (editor && editor.document.uri.fsPath === absPath) continue;
                 try {
                     const content = fs.readFileSync(absPath, 'utf-8');
-                    workspaceContext += `\n\n## Erwähnte Datei (${rel})\n` +
+                    workspaceContext += `\n\n## File mentioned in the request (${rel})\n` +
                         `\`\`\`\n${this.addLineNumbers(content, PRELOAD_LINES)}\n\`\`\``;
                 } catch { /* ignorieren */ }
             }
         } catch {
-            workspaceContext = '\n\n(Kein Workspace geöffnet)';
+            workspaceContext = '\n\n(No workspace open)';
         }
 
         // ── Auto-Test-Instruktion ────────────────────────────────────────────
         const autoTest = config.get<boolean>('autoTest', false);
         const testInstruction = autoTest ? `
 
-AUTO-TEST AKTIVIERT: Nach Dateiänderungen erkenne den passenden Test-Befehl anhand der
-Projektstruktur (package.json→npm test, Cargo.toml→cargo test, pytest.ini→pytest,
+AUTO-TEST ENABLED: after changing files, work out the right test command from the
+project layout (package.json→npm test, Cargo.toml→cargo test, pytest.ini→pytest,
 go.mod→go test ./..., pom.xml→mvn test, build.gradle→./gradlew test, *.csproj→dotnet test)
-und füge ihn als letzten action:shell Block an.` : '';
+and append it as the last action:shell block.` : '';
 
         // ── System-Prompt zusammenbauen ──────────────────────────────────────
         // Reihenfolge: STABIL zuerst, VERÄNDERLICH zuletzt.
@@ -375,7 +431,7 @@ und füge ihn als letzten action:shell Block an.` : '';
         // wertlos und das große Werkzeug-Handbuch wird jede Runde neu ausgewertet.
         const fullSystemPrompt = [
             systemPromptBase,
-            commandMdContent ? `\n\n## Permanente Projekt-Anweisungen\n${commandMdContent}` : '',
+            commandMdContent ? `\n\n## Permanent project instructions\n${commandMdContent}` : '',
             this.buildToolManual(),
             testInstruction,
             workspaceContext,
@@ -482,15 +538,25 @@ und füge ihn als letzten action:shell Block an.` : '';
         const cleanText = prose || toolIntents.join('\n');
         this.console.narration(cleanText);
 
-        // Ab Runde 2 wird `cleanText` nicht mehr zurückgegeben (process() liefert
-        // nur den Text der ersten Runde). Ohne diese Meldung stand im Chat ab
-        // dem zweiten Schritt nur "nächster Schritt…" ohne zu sagen, was kommt.
-        if (_depth > 0 && cleanText.trim()) {
-            this.onNarration?.(cleanText);
-        }
+        // Der bereinigte Text geht in JEDER Runde an die Anzeige – auch in der
+        // ersten. Der Chat streamt die ROHE Antwort mit; ohne diese Nachlieferung
+        // bleiben die Aktionsblöcke dort stehen, und der Benutzer liest
+        // „>>>REPLACE" samt Quellcode statt einer Antwort.
+        //
+        // Leerer Text ist eine gültige Meldung: dann bestand die Runde nur aus
+        // Werkzeugaufrufen und der gestreamte Absatz wird entfernt.
+        this.onNarration?.(cleanText);
 
         const actions = await this.parseAndExecuteActions(actionSource, confirm, onActionProgress);
         const thinkingBlock = this.extractThinkingBlock(rawResponse);
+
+        // Abschluss-Zusammenfassung als Nachricht nachschieben – sie ist die
+        // Antwort auf die Aufgabe und gehört als Markdown in den Chat, nicht in
+        // eine Werkzeugausgabe.
+        if (this.lastDoneSummary && this.lastDoneSummary !== cleanText) {
+            this.onNarration?.(this.lastDoneSummary);
+            this.lastDoneSummary = '';
+        }
 
         // ── Beispiel-Erkennung: KI hat nur Beispiel gezeigt statt zu handeln ──
         if (_depth === 0 && actions.length === 0 && config.get<boolean>('autoFixOnError', true)) {
@@ -500,9 +566,9 @@ und füge ihn als letzten action:shell Block an.` : '';
                 this.logger.info('Beispiel-Erkennung: KI hat Beispiel ohne Aktion gegeben → Korrektur-Prompt');
                 onIteration?.(1, 'Beispiel erkannt – fordere direkte Umsetzung…');
                 const correctionPrompt =
-                    `Du hast nur ein Beispiel gezeigt ohne den Code direkt zu ändern.\n` +
-                    `Setze die Aufgabe JETZT mit Aktions-Blöcken um (action:edit_file oder action:create_file).\n` +
-                    `Falls etwas unklar ist, stelle EINE konkrete Frage statt ein Beispiel zu zeigen.`;
+                    `You only showed an example instead of changing the code.\n` +
+                    `Implement the task NOW using action blocks (action:edit_file or action:create_file).\n` +
+                    `If something is unclear, ask ONE concrete question instead of showing an example.`;
                 const correctionResult = await this.process(
                     correctionPrompt, onStream, confirmFn, onIteration, 1, onActionProgress
                 );
@@ -613,7 +679,8 @@ und füge ihn als letzten action:shell Block an.` : '';
         // Der Auftrag wird in JEDER Runde mitgeschickt. Ohne ihn sucht das Modell
         // sich „die ursprüngliche Aufgabe" selbst aus dem Verlauf zusammen.
         const task = this.currentTask
-            ? `DEIN AUFTRAG (unverändert, daran arbeitest du):\n${this.currentTask.slice(0, 1500)}\n\n`
+            ? `YOUR TASK (unchanged – this is what you are working on):\n`
+                + `${this.currentTask.slice(0, 1500)}\n\n`
             : '';
 
         // Fehlgeschlagene Änderungen (Patch griff nicht, Datei fehlt, abgelehnt).
@@ -674,18 +741,18 @@ und füge ihn als letzten action:shell Block an.` : '';
             if (userInstruction) {
                 return {
                     reason: 'Benutzer-Anweisung erhalten – setze um…',
-                    prompt: `Der Benutzer hat folgende Anweisung gegeben:\n\n${ctx}\n\n` +
-                        `Setze die Anweisung sofort mit Aktions-Blöcken um.`
+                    prompt: `${task}THE USER GAVE YOU AN INSTRUCTION:\n\n${ctx}\n\n` +
+                        `Carry it out right away, using action blocks.`
                 };
             }
             return {
                 reason: `${failedShells.length} Fehler gefunden – analysiere…`,
                 prompt:
-                    `${task}FEHLER-ANALYSE ERFORDERLICH:\n\n${ctx}\n\n` +
-                    `Analysiere die Fehlerausgabe genau. Was ist die Ursache? ` +
-                    `Falls du dafür Code sehen musst: nutze read_file oder grep. ` +
-                    `Korrigiere den Fehler dann mit den passenden Aktions-Blöcken. ` +
-                    `Antworte NICHT mit "okay" oder einer Erklärung ohne Aktion.`
+                    `${task}ERROR ANALYSIS REQUIRED:\n\n${ctx}\n\n` +
+                    `Read the error output closely. What is the cause? ` +
+                    `If you need to see code for that: use read_file or grep. ` +
+                    `Then fix the error with the appropriate action blocks. ` +
+                    `Do NOT answer with "okay" or an explanation without an action.`
             };
         }
 
@@ -694,13 +761,13 @@ und füge ihn als letzten action:shell Block an.` : '';
             return {
                 reason: `${failedFileActions.length} Änderung(en) nicht angewendet – korrigiere…`,
                 prompt:
-                    `${task}EINE ÄNDERUNG WURDE NICHT ANGEWENDET:\n\n` +
+                    `${task}A CHANGE WAS NOT APPLIED:\n\n` +
                     `${this.formatOutputs(failedFileActions)}\n\n` +
-                    `Lies die Begründung genau. Wiederhole NICHT denselben Aufruf.\n` +
-                    `- Ist die Änderung laut Meldung schon vorhanden: gehe zum nächsten Punkt weiter.\n` +
-                    `- Passt der Suchtext nicht: lies die Datei mit read_file neu und patche gegen ` +
-                    `den tatsächlichen Inhalt, oder nutze replace_lines mit Zeilennummern.\n` +
-                    `- Ist alles erledigt: schließe mit action:done ab.`
+                    `Read the reason carefully. Do NOT repeat the same call.\n` +
+                    `- If the message says the change is already there: move on to the next point.\n` +
+                    `- If the search text does not match: read the file again with read_file and ` +
+                    `patch against its actual content, or use replace_lines with line numbers.\n` +
+                    `- If everything is done: finish with action:done.`
             };
         }
 
@@ -711,26 +778,26 @@ und füge ihn als letzten action:shell Block an.` : '';
             return {
                 reason: `Analyse ausgewertet (${labels.slice(0, 90)}) – arbeite weiter…`,
                 prompt:
-                    `${task}ERGEBNISSE DEINER CODE-ANALYSE:\n\n${ctx}\n\n` +
-                    `Du hast den Code jetzt gesehen. Arbeite an genau diesem Auftrag weiter:\n` +
-                    `- Brauchst du noch mehr Kontext? → weitere read_file / grep Aktionen\n` +
-                    `- Weißt du genug? → setze die Änderung jetzt um (patch_file / replace_lines / create_file)\n` +
-                    `- Ist alles erledigt? → \`\`\`action:done\nzusammenfassung: …\n\`\`\`\n` +
-                    `Wiederhole NICHT die gleiche Analyse-Aktion.`
+                    `${task}RESULTS OF YOUR CODE ANALYSIS:\n\n${ctx}\n\n` +
+                    `You have seen the code now. Continue working on exactly the task above:\n` +
+                    `- Need more context? → further read_file / grep actions\n` +
+                    `- Know enough? → implement the change now (patch_file / replace_lines / create_file)\n` +
+                    `- Everything done? → \`\`\`action:done\nsummary: …\n\`\`\`\n` +
+                    `Do NOT repeat the same analysis action.`
             };
         }
 
-        // ── 3. Befehlsausgabe ohne Codeänderung: darauf reagieren ─────────────
+        // ── 3. Befehlsausgabe: darauf reagieren ───────────────────────────────
         if (successfulWithOutput.length > 0 && autoFix) {
             return {
                 reason: 'Ausgaben empfangen – analysiere…',
                 prompt:
-                    `${task}BEFEHLSAUSGABE – ANALYSE UND HANDLUNG ERFORDERLICH:\n\n` +
+                    `${task}COMMAND OUTPUT – ANALYSIS AND ACTION REQUIRED:\n\n` +
                     `${this.formatOutputs(successfulWithOutput)}\n\n` +
-                    `Analysiere diese Ausgabe im Hinblick auf den Auftrag oben und führe sofort ` +
-                    `die nächsten notwendigen Schritte aus (Aktions-Blöcke). ` +
-                    `Beantwortet die Ausgabe den Auftrag bereits: formuliere jetzt die Antwort und ` +
-                    `schließe mit action:done ab. Nimm KEINE Aufgabe aus einer früheren Sitzung auf.`
+                    `Analyse this output with regard to the task above and carry out the next ` +
+                    `necessary steps right away (action blocks). ` +
+                    `If the output already answers the task: write the answer now and finish ` +
+                    `with action:done. Do NOT pick up a task from an earlier session.`
             };
         }
 
@@ -742,11 +809,11 @@ und füge ihn als letzten action:shell Block an.` : '';
             return {
                 reason: `Plan: ${this.plan.length - openSteps.length}/${this.plan.length} erledigt – nächster Schritt…`,
                 prompt:
-                    `${task}PLAN FORTSETZEN. Noch offen:\n` +
+                    `${task}CONTINUE THE PLAN. Still open:\n` +
                     openSteps.map(s => `- [${s.status === 'doing' ? '>' : ' '}] ${s.text}`).join('\n') +
-                    `\n\nArbeite jetzt den nächsten Schritt ab: "${next.text}"\n` +
-                    `Aktualisiere danach den Plan mit action:plan (vollständige Liste). ` +
-                    `Sind alle Schritte erledigt, schließe mit action:done ab.`
+                    `\n\nWork on the next step now: "${next.text}"\n` +
+                    `Then update the plan with action:plan (the complete list). ` +
+                    `Once every step is done, finish with action:done.`
             };
         }
 
@@ -763,14 +830,14 @@ und füge ihn als letzten action:shell Block an.` : '';
             return {
                 reason: 'Änderung noch ungeprüft – Tests anstoßen…',
                 prompt:
-                    `${task}DU HAST GEÄNDERT, ABER NICHTS GEPRÜFT:\n` +
+                    `${task}YOU CHANGED SOMETHING BUT VERIFIED NOTHING:\n` +
                     `${actions.filter(a => isFileAction(a.type) && a.success)
                         .map(a => `- ${a.description}`).join('\n')}\n\n` +
-                    `Führe jetzt die Tests des Projekts aus (action:shell, den Befehl anhand ` +
-                    `der Projektdateien wählen: package.json → npm test, Cargo.toml → cargo test, ` +
-                    `pytest.ini → pytest, go.mod → go test ./...).\n` +
-                    `Sind noch Punkte des Auftrags offen, arbeite sie vorher ab.\n` +
-                    `Erst wenn die Tests grün sind UND der Auftrag vollständig erfüllt ist: action:done.`
+                    `Run the project's tests now (action:shell; pick the command from the project ` +
+                    `files: package.json → npm test, Cargo.toml → cargo test, pytest.ini → pytest, ` +
+                    `go.mod → go test ./...).\n` +
+                    `If points of the task are still open, do those first.\n` +
+                    `Only once the tests are green AND the task is fully done: action:done.`
             };
         }
 
@@ -836,162 +903,191 @@ und füge ihn als letzten action:shell Block an.` : '';
 
         const parts: string[] = [];
 
+        // Die Sprachregel steht ZUERST – sie ist der Grund, warum das Handbuch
+        // überhaupt englisch sein darf.
+        parts.push(LANGUAGE_RULE);
+
         parts.push(
-            `\n\n## Deine Rolle\n` +
-            `Du bist ein autonomer Code-Assistent mit direktem Zugriff auf diesen Workspace. ` +
-            `Du analysierst, planst, schreibst und testest Code selbständig – wie ein erfahrener Entwickler, ` +
-            `der die Aufgabe komplett zu Ende bringt.\n`
+            `\n\n## Your role\n` +
+            `You are an autonomous coding assistant with direct access to this workspace. ` +
+            `You analyse, plan, write and test code on your own – like an experienced developer ` +
+            `who sees the task through to the end.\n`
         );
 
         // ── Plan-Modus: nur untersuchen und planen ───────────────────────────
         if (mode === 'plan') {
             parts.push(
-                `\n## PLAN-MODUS AKTIV – keine Änderungen\n` +
-                `Der Benutzer will erst einen Plan sehen, bevor etwas angefasst wird.\n` +
-                `ERLAUBT: read_file, grep, glob, list_dir, web_search, plan, done\n` +
-                `GESPERRT: create_file, edit_file, patch_file, replace_lines, delete_file, shell\n` +
-                `Untersuche die Aufgabe gründlich, lege einen konkreten Plan an (action:plan) und ` +
-                `schließe mit action:done ab. Versuche KEINE Änderung – sie würde abgelehnt.\n` +
-                `Nenne im Abschlusstext, welche Dateien betroffen wären und welche Risiken du siehst.\n\n` +
-                `## Analyse-Werkzeuge (nur lesen)\n\n` +
-                `\`\`\`action:read_file\npath: src/datei.ts\n\`\`\`\n` +
+                `\n## PLAN MODE ACTIVE – no changes\n` +
+                `The user wants to see a plan before anything is touched.\n` +
+                `ALLOWED: read_file, grep, glob, list_dir, web_search, plan, done\n` +
+                `BLOCKED: create_file, edit_file, patch_file, replace_lines, delete_file, shell\n` +
+                `Investigate the task thoroughly, write a concrete plan (action:plan) and ` +
+                `finish with action:done. Do NOT attempt any change – it would be rejected.\n` +
+                `In your closing text, name the files that would be affected and the risks you see.\n\n` +
+                `## Analysis tools (read only)\n\n` +
+                `\`\`\`action:read_file\npath: src/file.ts\n\`\`\`\n` +
                 `\`\`\`action:grep\npattern: class\\s+\\w+\nglob: **/*.ts\n\`\`\`\n` +
                 `\`\`\`action:glob\npattern: **/*.test.ts\n\`\`\`\n` +
                 `\`\`\`action:list_dir\npath: src\n\`\`\`\n\n` +
                 `## Plan\n\n` +
-                `\`\`\`action:plan\n- [ ] Erster Schritt\n- [ ] Zweiter Schritt\n\`\`\`\n\n` +
-                `## Abschluss\n\n` +
-                `\`\`\`action:done\nzusammenfassung: <Plan in zwei Sätzen>\n\`\`\`\n`
+                `\`\`\`action:plan\n- [ ] First step\n- [ ] Second step\n\`\`\`\n\n` +
+                `## Finishing\n\n` +
+                `\`\`\`action:done\nsummary: <the plan in two sentences>\n\`\`\`\n`
             );
             return parts.join('');
         }
 
         if (mode === 'ask') {
             parts.push(
-                `\nHinweis: Jede Änderung und jeder Shell-Befehl wird dem Benutzer zur Bestätigung ` +
-                `vorgelegt. Halte deine Änderungen klein und nachvollziehbar.\n`
+                `\nNote: every change and every shell command is shown to the user for ` +
+                `confirmation. Keep your changes small and easy to follow.\n`
             );
         }
 
         // ── Arbeitsweise / Agenten-Schleife ──────────────────────────────────
         if (agentLoop) {
             parts.push(
-                `\n## Arbeitsweise (Agenten-Schleife, max. ${maxSteps} Schritte)\n` +
-                `Du arbeitest in Runden. Pro Runde: Aktions-Blöcke ausgeben → System führt sie aus → ` +
-                `du bekommst die Ergebnisse → nächste Runde. Die Schleife läuft weiter, solange du Aktionen ausgibst.\n` +
-                `1. **VERSTEHEN** – bestehenden Code lesen (read_file, grep, glob, list_dir)\n` +
-                (planning ? `2. **PLANEN** – bei mehrschrittigen Aufgaben einen Plan (action:plan) anlegen\n` : '') +
-                `${planning ? '3' : '2'}. **UMSETZEN** – Dateien ändern (patch_file, edit_file, create_file)\n` +
-                `${planning ? '4' : '3'}. **PRÜFEN** – Build/Tests per action:shell ausführen\n` +
-                `${planning ? '5' : '4'}. **KORRIGIEREN** – Fehlerausgaben analysieren und beheben\n` +
-                `${planning ? '6' : '5'}. **ABSCHLIESSEN** – wenn alles erledigt ist: \`\`\`action:done\nzusammenfassung: <was erledigt wurde>\n\`\`\`\n` +
-                `Gib \`action:done\` NUR aus, wenn wirklich nichts mehr zu tun ist. Solange etwas offen ist: weiterarbeiten.\n`
+                `\n## How you work (agent loop, max. ${maxSteps} steps)\n` +
+                `You work in rounds. Per round: emit action blocks → the system runs them → ` +
+                `you get the results → next round. The loop continues as long as you emit actions.\n` +
+                `1. **UNDERSTAND** – read the existing code (read_file, grep, glob, list_dir)\n` +
+                (planning ? `2. **PLAN** – for multi-step tasks, write a plan (action:plan)\n` : '') +
+                `${planning ? '3' : '2'}. **IMPLEMENT** – change files (patch_file, edit_file, create_file)\n` +
+                `${planning ? '4' : '3'}. **VERIFY** – run the build/tests via action:shell\n` +
+                `${planning ? '5' : '4'}. **FIX** – analyse the error output and correct it\n` +
+                `${planning ? '6' : '5'}. **FINISH** – when everything is done: \`\`\`action:done\nsummary: <what was done>\n\`\`\`\n` +
+                `Emit \`action:done\` ONLY when there is genuinely nothing left to do. While anything is open: keep working.\n`
             );
         }
 
         // ── Analyse-Werkzeuge ────────────────────────────────────────────────
         parts.push(
-            `\n## Analyse-Werkzeuge (nur lesen, keine Bestätigung nötig – nutze sie großzügig)\n\n` +
-            `Datei mit Zeilennummern lesen:\n` +
-            `\`\`\`action:read_file\npath: src/datei.ts\n\`\`\`\n` +
-            `Nur einen Abschnitt lesen (bei großen Dateien):\n` +
-            `\`\`\`action:read_file\npath: src/datei.ts\noffset: 200\nlimit: 150\n\`\`\`\n\n` +
-            `Im gesamten Projekt suchen (Regex, wie ripgrep):\n` +
+            `\n## Analysis tools (read only, no confirmation needed – use them freely)\n\n` +
+            `Read a file with line numbers:\n` +
+            `\`\`\`action:read_file\npath: src/file.ts\n\`\`\`\n` +
+            `Read only a section (for large files):\n` +
+            `\`\`\`action:read_file\npath: src/file.ts\noffset: 200\nlimit: 150\n\`\`\`\n\n` +
+            `Search the whole project (regex, like ripgrep):\n` +
             `\`\`\`action:grep\npattern: class\\s+\\w+Service\nglob: **/*.ts\n\`\`\`\n` +
-            `Optional: \`path: src\` (Unterordner), \`ignore_case: true\`\n\n` +
-            `Dateien nach Muster finden:\n` +
+            `Optional: \`path: src\` (subfolder), \`ignore_case: true\`\n\n` +
+            `Find files by pattern:\n` +
             `\`\`\`action:glob\npattern: **/*.test.ts\n\`\`\`\n\n` +
-            `Verzeichnis auflisten:\n` +
+            `List a directory:\n` +
             `\`\`\`action:list_dir\npath: src\n\`\`\`\n`
         );
 
         // ── Planungs-Werkzeug ────────────────────────────────────────────────
         if (planning) {
             parts.push(
-                `\n## Planungs-Werkzeug\n\n` +
-                `Bei Aufgaben mit mehr als 2 Schritten legst du ZUERST einen Plan an:\n` +
-                `\`\`\`action:plan\n- [ ] Bestehende Auth-Logik in src/auth analysieren\n- [ ] Token-Refresh in authService.ts ergänzen\n- [ ] Tests in auth.test.ts erweitern\n- [ ] npm test ausführen\n\`\`\`\n\n` +
-                `Fortschritt markieren – \`[x]\` erledigt, \`[>]\` in Arbeit, \`[ ]\` offen:\n` +
-                `\`\`\`action:plan\n- [x] Bestehende Auth-Logik analysiert\n- [>] Token-Refresh ergänzen\n- [ ] Tests erweitern\n- [ ] npm test ausführen\n\`\`\`\n\n` +
-                `Gib bei jeder Plan-Aktualisierung die VOLLSTÄNDIGE Liste aus (nicht nur die geänderte Zeile).\n`
+                `\n## Planning tool\n\n` +
+                `For tasks with more than 2 steps, write a plan FIRST:\n` +
+                `\`\`\`action:plan\n- [ ] Analyse the existing auth logic in src/auth\n- [ ] Add token refresh to authService.ts\n- [ ] Extend the tests in auth.test.ts\n- [ ] Run npm test\n\`\`\`\n\n` +
+                `Mark progress – \`[x]\` done, \`[>]\` in progress, \`[ ]\` open:\n` +
+                `\`\`\`action:plan\n- [x] Analysed the existing auth logic\n- [>] Add token refresh\n- [ ] Extend the tests\n- [ ] Run npm test\n\`\`\`\n\n` +
+                `Write the COMPLETE list on every plan update (not just the changed line).\n` +
+                `Write the plan items in the user's language – the user reads them.\n`
             );
         }
 
         // ── Schreib-Werkzeuge ────────────────────────────────────────────────
         parts.push(
-            `\n## Schreib-Werkzeuge\n\n` +
-            `Gezielte Änderung (BEVORZUGT – sicher und sparsam):\n` +
-            `\`\`\`action:patch_file\npath: src/datei.ts\n---\n<<<SEARCH\n<exakter bestehender Code>\n>>>REPLACE\n<neuer Code>\n\`\`\`\n` +
-            `WICHTIG: Innerhalb des Blocks KEINE weiteren Backticks. Der Suchtext steht direkt ` +
-            `nach \`<<<SEARCH\`, der neue Text direkt nach \`>>>REPLACE\` – ohne eigenen Code-Block ` +
-            `drumherum. Der einzige schließende Zaun ist der des Aktionsblocks.\n` +
-            `Mehrere Änderungen in einer Datei: weitere \`<<<SEARCH … >>>REPLACE …\` Paare direkt anhängen.\n\n` +
-            `Zeilenbereich ersetzen (Zeilennummern aus read_file):\n` +
-            `\`\`\`action:replace_lines\npath: src/datei.ts\nstart_line: 42\nend_line: 58\n---\n<neuer Code für diesen Bereich>\n\`\`\`\n\n` +
-            `Neue Datei erstellen:\n` +
-            `\`\`\`action:create_file\npath: src/neu.ts\n---\n<vollständiger Dateiinhalt>\n\`\`\`\n\n` +
-            `Ganze Datei ersetzen (nur wenn nötig – IMMER vollständiger Inhalt):\n` +
-            `\`\`\`action:edit_file\npath: src/datei.ts\n---\n<VOLLSTÄNDIGER neuer Dateiinhalt>\n\`\`\`\n\n` +
-            `Datei löschen:\n\`\`\`action:delete_file\npath: src/alt.ts\n\`\`\`\n\n` +
-            `Shell-Befehl (WSL/Linux, für Build & Tests):\n\`\`\`action:shell\nnpm test\n\`\`\`\n\n` +
-            `Web-Suche (liefert Titel, Adresse und kurzen Auszug):\n` +
-            `\`\`\`action:web_search\nquery: suchbegriff\n\`\`\`\n\n` +
-            `Seite abrufen und lesen – nach einer Suche fast immer nötig, denn die\n` +
-            `Trefferliste allein beantwortet keine Frage:\n` +
-            `\`\`\`action:web_fetch\nurl: https://example.com/doku\n\`\`\`\n`
+            `\n## Writing tools\n\n` +
+            `Targeted change (PREFERRED – safe and economical):\n` +
+            `\`\`\`action:patch_file\npath: src/file.ts\n---\n<<<SEARCH\n<exact existing code>\n>>>REPLACE\n<new code>\n\`\`\`\n` +
+            `IMPORTANT: NO further backticks inside the block. The search text comes straight ` +
+            `after \`<<<SEARCH\`, the new text straight after \`>>>REPLACE\` – with no code block ` +
+            `around them. The only closing fence is the one of the action block.\n` +
+            `Several changes in one file: append further \`<<<SEARCH … >>>REPLACE …\` pairs directly.\n\n` +
+            `Replace a line range (line numbers from read_file):\n` +
+            `\`\`\`action:replace_lines\npath: src/file.ts\nstart_line: 42\nend_line: 58\n---\n<new code for that range>\n\`\`\`\n\n` +
+            `Create a new file:\n` +
+            `\`\`\`action:create_file\npath: src/new.ts\n---\n<complete file content>\n\`\`\`\n\n` +
+            `Replace a whole file (only when necessary – ALWAYS the complete content):\n` +
+            `\`\`\`action:edit_file\npath: src/file.ts\n---\n<COMPLETE new file content>\n\`\`\`\n\n` +
+            `Delete a file:\n\`\`\`action:delete_file\npath: src/old.ts\n\`\`\`\n\n` +
+            `Shell command – WSL/bash by default, for build, tests and git:\n` +
+            `\`\`\`action:shell\nnpm test\n\`\`\`\n` +
+            `Windows PowerShell when the command genuinely needs Windows (services, ` +
+            `registry, drivers, WinGet, Windows-only executables, COM). Mind the ` +
+            `syntax: no \`&&\`, use \`;\` – and \`Get-ChildItem\`, not \`ls\`:\n` +
+            `\`\`\`action:shell\nshell: powershell\n---\nGet-Service -Name Spooler | Select-Object Status, Name\n\`\`\`\n` +
+            `Prefer WSL. Only reach for PowerShell when WSL cannot do the job.\n\n` +
+            `Web search (returns title, address and a short excerpt):\n` +
+            `\`\`\`action:web_search\nquery: search terms\n\`\`\`\n\n` +
+            `Fetch and read a page – almost always needed after a search, because the\n` +
+            `result list alone answers no question:\n` +
+            `\`\`\`action:web_fetch\nurl: https://example.com/docs\n\`\`\`\n`
+        );
+
+        // ── Rückfrage an den Benutzer ────────────────────────────────────────
+        parts.push(
+            `\n## Asking the user to decide\n` +
+            `When the task allows several defensible routes and the choice is the ` +
+            `user's to make, ask – with concrete options instead of an open question:\n` +
+            `\`\`\`action:ask_user\nheader: Library\n` +
+            `question: Which date library should the project use?\nmulti: false\noptions:\n` +
+            `date-fns — small, modular, the usual choice for new projects\n` +
+            `Luxon — time zones built in, larger bundle\n` +
+            `Neither — write the two helpers we need by hand\n\`\`\`\n` +
+            `The answer comes back as the result of the action; carry on with it and ` +
+            `do not ask the same thing twice. Put your recommendation first.\n\n` +
+            `Do NOT ask when:\n` +
+            `- you can find the answer by reading the code (then read it),\n` +
+            `- it is a detail the user does not care about (then decide, say what you ` +
+            `assumed in one sentence and carry on),\n` +
+            `- you only want permission to keep working (you have it – keep working).\n`
         );
 
         // ── Ansage vor jeder Aktion ──────────────────────────────────────────
         // Ohne diese Anweisung führt das Modell Werkzeuge stumm aus und der
         // Benutzer sieht nur eine Liste von Aktionen, ohne zu wissen, warum.
         parts.push(
-            `\n## Sage an, was du tust – vor jeder Aktion\n` +
-            `Schreibe vor jedem Werkzeugaufruf EINEN kurzen Satz in der Ich-Form: was du ` +
-            `jetzt tust und warum. Danach die Aktion. Keine Aufzählung vorab, keine ` +
-            `Wiederholung hinterher.\n\n` +
-            `So:\n` +
-            `  Ich schaue mir zuerst den Tokenizer an, weil die Zahlen-Tests fehlschlagen.\n` +
+            `\n## Say what you are doing – before every action\n` +
+            `Before each tool call, write ONE short sentence in the first person: what you ` +
+            `are doing now and why. Then the action. No list up front, no repetition ` +
+            `afterwards. **Write this sentence in the user's language.**\n\n` +
+            `Like this:\n` +
+            `  I'll look at the tokenizer first, because the number tests are failing.\n` +
             `  → read_file src/tokenizer.js\n\n` +
-            `  Der Tokenizer liest nur eine Ziffer. Ich sammle die Ziffern in einer Schleife.\n` +
+            `  The tokenizer only reads a single digit. I'll collect the digits in a loop.\n` +
             `  → patch_file src/tokenizer.js\n\n` +
-            `  Jetzt prüfe ich, ob die Tests durchlaufen.\n` +
+            `  Now I'll check whether the tests pass.\n` +
             `  → shell npm test\n\n` +
-            `Nicht so: "Ich werde die Dateien analysieren, dann den Plan erstellen, dann ` +
-            `die Fehler beheben und dann testen." – das sagt nichts über den aktuellen Schritt.\n` +
-            `Wenn ein Schritt fehlschlägt, sage in einem Satz, was du daraus schließt, bevor ` +
-            `du es anders versuchst.\n`
+            `Not like this: "I will analyse the files, then create the plan, then fix the ` +
+            `errors and then test." – that says nothing about the current step.\n` +
+            `If a step fails, say in one sentence what you conclude from it before you try ` +
+            `something else.\n`
         );
 
         // ── Regeln ───────────────────────────────────────────────────────────
         parts.push(
-            `\n## Regeln\n` +
+            `\n## Rules\n` +
             (analyze
-                ? `- **Erst lesen, dann schreiben.** Bevor du eine bestehende Datei änderst, hast du sie mit read_file gelesen oder mit grep gefunden. Ändere nie Code, den du nicht gesehen hast.\n`
+                ? `- **Read before you write.** Before you change an existing file, you have read it with read_file or found it with grep. Never change code you have not seen.\n`
                 : '') +
-            `- Nutze **patch_file** statt edit_file, wenn du nur einen Teil änderst.\n` +
-            `- Bei **edit_file**: VOLLSTÄNDIGER Dateiinhalt, alle bestehenden Zeilen enthalten. NIEMALS Platzhalter wie \`// ... bestehender Code ...\`, \`# rest unchanged\`, \`...\`.\n` +
-            `- Verwende Aktions-Blöcke IMMER mit drei Backticks – niemals \`<tags>\` oder \`[tags]\`.\n` +
-            `- Zum Lesen von Dateien nutze **read_file/grep/glob**, NICHT die Shell (cat, head, grep).\n` +
-            `- Halte dich an Stil, Namensgebung und Struktur des vorhandenen Codes.\n` +
-            `- Keine Code-Beispiele im Text ("So könnte man…", "Hier ist ein Beispiel:"). Setze die Änderung als Aktion um.\n` +
-            `- Ist die Aufgabe wirklich unklar: stelle genau EINE konkrete Frage.\n` +
-            `- Höchstens 3 Aktionen pro Runde. Lieber kleine Schritte mit Ansage als ein ` +
-            `großer Block – nach jeder Runde siehst du die Ergebnisse und kannst nachsteuern.\n`
+            `- Use **patch_file** instead of edit_file when you only change part of a file.\n` +
+            `- With **edit_file**: the COMPLETE file content, including every existing line. NEVER placeholders like \`// ... existing code ...\`, \`# rest unchanged\`, \`...\`.\n` +
+            `- ALWAYS write action blocks with three backticks – never \`<tags>\` or \`[tags]\`.\n` +
+            `- To read files use **read_file/grep/glob**, NOT the shell (cat, head, grep).\n` +
+            `- Follow the style, naming and structure of the existing code.\n` +
+            `- No code examples in prose ("one could…", "here is an example:"). Implement the change as an action.\n` +
+            `- If the task is genuinely unclear: ask exactly ONE concrete question.\n` +
+            `- At most 3 actions per round. Small steps with an announcement beat one big ` +
+            `block – after each round you see the results and can adjust.\n`
         );
 
         return parts.join('');
     }
-
     /** Aktuellen Plan als Kontext-Block (damit die KI weiß, wo sie steht). */
     private buildPlanContext(): string {
         if (this.plan.length === 0) return '';
         const marks = { done: '[x]', doing: '[>]', todo: '[ ]' };
         const list = this.plan.map(s => `- ${marks[s.status]} ${s.text}`).join('\n');
         const open = this.plan.filter(s => s.status !== 'done').length;
-        return `\n\n## Aktueller Arbeitsplan (${this.plan.length - open}/${this.plan.length} erledigt)\n${list}\n` +
+        return `\n\n## Current work plan (${this.plan.length - open}/${this.plan.length} done)\n${list}\n` +
             (open > 0
-                ? `Arbeite den nächsten offenen Schritt ab und aktualisiere den Plan mit action:plan.`
-                : `Alle Schritte erledigt – prüfe das Ergebnis und schließe mit action:done ab.`);
+                ? `Work on the next open step and update the plan with action:plan.`
+                : `Every step is done – verify the result and finish with action:done.`);
     }
 
     /**
@@ -1085,19 +1181,19 @@ und füge ihn als letzten action:shell Block an.` : '';
             const result = await this.mcpClient.complete([
                 {
                     role: 'system',
-                    content: 'Du fasst den Verlauf einer Programmier-Sitzung zusammen, '
-                        + 'damit die Arbeit mit weniger Kontext weitergehen kann. '
-                        + 'Antworte NUR mit der Zusammenfassung, ohne Vorrede.'
+                    content: 'You summarise the transcript of a coding session so the work '
+                        + 'can continue with less context. Answer with the summary ONLY, '
+                        + 'no preamble. Write it in the language of the transcript.'
                 },
                 {
                     role: 'user',
-                    content: `Fasse zusammen, was in dieser Sitzung passiert ist. Nenne knapp:\n`
-                        + `1. Die Aufgabe des Benutzers\n`
-                        + `2. Welche Dateien gelesen und welche geändert wurden (mit Pfaden)\n`
-                        + `3. Welche Erkenntnisse für die weitere Arbeit wichtig sind\n`
-                        + `4. Was noch offen ist\n\n`
-                        + `Maximal 25 Zeilen. Konkret, keine Floskeln.\n\n`
-                        + `--- VERLAUF ---\n${transcript}`
+                    content: `Summarise what happened in this session. State briefly:\n`
+                        + `1. The user's task\n`
+                        + `2. Which files were read and which were changed (with paths)\n`
+                        + `3. Which findings matter for the remaining work\n`
+                        + `4. What is still open\n\n`
+                        + `At most 25 lines. Concrete, no filler.\n\n`
+                        + `--- TRANSCRIPT ---\n${transcript}`
                 }
             ], { maxTokens: 1500 });
             summary = this.stripReasoning(result.content).trim();
@@ -1116,7 +1212,7 @@ und füge ihn als letzten action:shell Block an.` : '';
         }
 
         this.conversationHistory = [
-            { role: 'assistant', content: `## Zusammenfassung des bisherigen Verlaufs\n${summary}` },
+            { role: 'assistant', content: `## Summary of the conversation so far\n${summary}` },
             ...keep
         ];
 
@@ -1399,6 +1495,9 @@ und füge ihn als letzten action:shell Block an.` : '';
                     case 'shell':
                         executed.push(await this.handleShellAction(blockContent, confirm, onActionProgress));
                         break;
+                    case 'ask_user':
+                        executed.push(await this.handleAskUserAction(blockContent, confirm, onActionProgress));
+                        break;
                     case 'web_search':
                         executed.push(await this.handleWebSearchAction(blockContent, onActionProgress));
                         break;
@@ -1649,7 +1748,10 @@ und füge ihn als letzten action:shell Block an.` : '';
             return { type: 'shell', description: 'Shell deaktiviert', success: false, output: 'Shell-Befehle sind deaktiviert.' };
         }
 
-        const trimmed = command.trim();
+        // Der Block kann eine Kopfzeile `shell: powershell` tragen. Ohne sie
+        // gilt die Einstellung – für Build und Tests ist das WSL.
+        const { shellKind, command: rest } = AIEngine.parseShellBlock(command);
+        const trimmed = rest.trim();
 
         // cat/head/tail: VOR dem Confirm-Dialog abfangen und direkt lesen
         let workDirEarly: string;
@@ -1667,8 +1769,10 @@ und füge ihn als letzten action:shell Block an.` : '';
             }
         }
 
+        const shellLabel = ShellRunner.resolveShell(shellKind, config) === 'powershell'
+            ? 'PowerShell' : 'WSL';
         const choice = await confirm(
-            `Shell-Befehl ausführen (WSL):\n\`${trimmed}\``,
+            `Shell-Befehl ausführen (${shellLabel}):\n\`${trimmed}\``,
             ['Ausführen', 'Etwas anderes', 'Ablehnen']
         );
 
@@ -1701,16 +1805,21 @@ und füge ihn als letzten action:shell Block an.` : '';
 
         // Beim Start als "läuft" melden, danach mit Ergebnis überschreiben –
         // dieselbe Karte, damit man den Befehl nicht zweimal liest.
+        // Werkzeugname zeigt die Shell: sonst sieht man in der Zeile nicht, ob
+        // der Befehl unter WSL oder in der PowerShell lief – bei Fehlern ist das
+        // die erste Frage.
+        const toolName = shellLabel === 'PowerShell' ? 'PowerShell' : 'Bash';
+
         onActionProgress?.(`Shell: ${commandToRun}`, '', {
-            tool: 'Bash', target: commandToRun, running: true
+            tool: toolName, target: commandToRun, running: true
         });
 
-        const result = await this.shellRunner.run(commandToRun, workDir, 120_000, confirm);
+        const result = await this.shellRunner.run(commandToRun, workDir, 120_000, confirm, shellKind);
         const output = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, 4000);
         const ok = result.exitCode === 0;
 
         onActionProgress?.(`Shell: ${commandToRun}`, output || '(keine Ausgabe)', {
-            tool: 'Bash',
+            tool: toolName,
             target: commandToRun,
             detail: ok ? undefined : `Exit ${result.exitCode}`,
             ok
@@ -1722,6 +1831,168 @@ und füge ihn als letzten action:shell Block an.` : '';
             success: result.exitCode === 0,
             output: output || '(keine Ausgabe)'
         };
+    }
+
+    /**
+     * Entscheidungsfrage an den Benutzer – und warten.
+     *
+     * Das Gegenstück zu Claude Codes Frage-Dialog: eine Frage, 2–4 Optionen mit
+     * Beschriftung und Erklärung, Einfach- oder Mehrfachauswahl, plus ein
+     * Freitextfeld für „etwas anderes". Die Antwort geht als Ausgabe der Aktion
+     * zurück ins Modell, also in die nächste Runde der Schleife.
+     *
+     * Wichtig für die Schleife: die Antwort ist eine ERFOLGREICHE Aktion mit
+     * Ausgabe. Damit greift Zweig 3 von `planNextStep` und das Modell arbeitet
+     * mit der Entscheidung weiter, statt stehenzubleiben.
+     */
+    private async handleAskUserAction(
+        content: string,
+        confirm: ConfirmFn,
+        onActionProgress?: ActionProgressCallback
+    ): Promise<ExecutedAction> {
+        const request = AIEngine.parseAskBlock(content);
+        if (!request.question || request.options.length === 0) {
+            throw new Error('ask_user braucht "question:" und mindestens eine Option');
+        }
+
+        this.logger.info(`Frage an den Benutzer: ${request.question} `
+            + `(${request.options.length} Optionen${request.multi ? ', Mehrfachauswahl' : ''})`);
+
+        onActionProgress?.(`Frage: ${request.question}`, '', {
+            tool: 'Frage', target: request.question, running: true
+        });
+
+        // Ohne Dialog-Callback (kopflos, Tests, Sidebar) über die
+        // Bestätigungskarte fragen – die kennt jeder Aufrufer.
+        const answer = this.onAsk
+            ? await this.onAsk(request)
+            : await confirm(
+                `${request.question}\n\n`
+                + request.options.map(o => `- **${o.label}** – ${o.description}`).join('\n'),
+                request.options.map(o => o.label)
+            );
+
+        const clean = (answer ?? '').trim();
+
+        onActionProgress?.(`Frage: ${request.question}`, clean || '(abgebrochen)', {
+            tool: 'Frage', target: request.question,
+            detail: clean ? undefined : 'abgebrochen', ok: !!clean
+        });
+
+        if (!clean) {
+            return {
+                type: 'shell',
+                description: `Frage unbeantwortet: ${request.question.slice(0, 50)}`,
+                success: false,
+                output: 'The user did not answer. Do not ask again – decide yourself, '
+                    + 'state your assumption in one sentence and carry on.'
+            };
+        }
+
+        this.logger.info(`Antwort des Benutzers: ${clean}`);
+        return {
+            type: 'shell',
+            description: `Entscheidung: ${clean.slice(0, 60)}`,
+            success: true,
+            output: `The user answered the question "${request.question}" with: ${clean}\n\n`
+                + `Work with that decision now. Do not ask again.`
+        };
+    }
+
+    /**
+     * `ask_user`-Block zerlegen.
+     *
+     * Format – Kopfzeilen plus eine Option pro Zeile:
+     *
+     *     header: Bibliothek
+     *     question: Welche Datumsbibliothek?
+     *     multi: false
+     *     options:
+     *     date-fns — klein, modular, Standard in neuen Projekten
+     *     Luxon — Zeitzonen eingebaut, größer
+     *
+     * Der Gedankenstrich trennt Beschriftung und Erklärung; erlaubt sind „—",
+     * „–", „ - " und „:". Fehlt er, ist die ganze Zeile die Beschriftung.
+     */
+    static parseAskBlock(raw: string): AskRequest {
+        const text = raw.replace(/\r\n/g, '\n');
+        const field = (name: string): string => {
+            const m = new RegExp(`^\\s*${name}:\\s*(.*)$`, 'im').exec(text);
+            return (m?.[1] ?? '').trim();
+        };
+
+        const question = field('question') || field('frage');
+        const header = field('header') || field('titel') || 'Entscheidung';
+        const multi = /^(true|ja|yes|1)$/i.test(field('multi') || field('mehrfach'));
+
+        // Optionen: alles nach einer Zeile `options:` bzw. `optionen:`,
+        // sonst jede Zeile, die wie eine Aufzählung aussieht.
+        const optionsStart = /^\s*(?:options|optionen):\s*$/im.exec(text);
+        const body = optionsStart
+            ? text.slice(optionsStart.index + optionsStart[0].length)
+            : text;
+
+        const known = /^\s*(?:question|frage|header|titel|multi|mehrfach|absicht|options|optionen)\s*:/i;
+        const options: AskOption[] = [];
+        for (const line of body.split('\n')) {
+            // Nur echte Aufzählungszeichen entfernen. Ein weiter gefasstes
+            // Muster fräst auch die Beschriftung an: aus „3 Varianten" würde
+            // „Varianten".
+            const trimmed = line.replace(/^\s*(?:[-*•]\s+|\d+[.)]\s+)/, '').trim();
+            if (!trimmed || known.test(line)) continue;
+            // Trenner zwischen Beschriftung und Erklärung. Der Bindestrich
+            // braucht Abstand auf BEIDEN Seiten, sonst zerschneidet er
+            // „date-fns" mitten im Namen.
+            const split = /\s+(?:—|–|::)\s*|\s+-\s+|:\s+/.exec(trimmed);
+            if (split) {
+                options.push({
+                    label: trimmed.slice(0, split.index).trim(),
+                    description: trimmed.slice(split.index + split[0].length).trim()
+                });
+            } else {
+                options.push({ label: trimmed, description: '' });
+            }
+            if (options.length >= 4) break;   // wie bei Claude Code: höchstens 4
+        }
+
+        return { header, question, options, multi };
+    }
+
+    /**
+     * Shell-Block zerlegen: optionale Kopfzeile `shell: powershell`, Rest Befehl.
+     *
+     * Der Block darf beides sein – eine reine Befehlszeile (der übliche Fall)
+     * oder ein Kopf-plus-Rumpf-Block mit `---`. Ein Befehl, der zufällig mit
+     * „shell:" beginnt, wird nicht zur Kopfzeile: geprüft wird auf die beiden
+     * bekannten Werte.
+     */
+    static parseShellBlock(raw: string): { shellKind: ShellKind; command: string } {
+        const lines = raw.replace(/\r\n/g, '\n').split('\n');
+        let shellKind: ShellKind = 'auto';
+        let start = 0;
+
+        const head = /^\s*shell:\s*(\w+)\s*$/i.exec(lines[0] ?? '');
+        if (head) {
+            const value = head[1].toLowerCase();
+            if (value === 'powershell' || value === 'ps' || value === 'pwsh') {
+                shellKind = 'powershell';
+                start = 1;
+            } else if (value === 'wsl' || value === 'bash' || value === 'sh') {
+                shellKind = value === 'wsl' ? 'wsl' : 'bash';
+                start = 1;
+            }
+        }
+
+        // Trenner überspringen – auch wenn gar keine Kopfzeile davor stand:
+        // manche Modelle schreiben ihn gewohnheitsmäßig immer.
+        while (/^\s*(?:---)?\s*$/.test(lines[start] ?? '')
+               && start < lines.length
+               && !/\S/.test(lines[start] ?? '')) {
+            start++;
+        }
+        if (/^\s*---\s*$/.test(lines[start] ?? '')) start++;
+
+        return { shellKind, command: lines.slice(start).join('\n') };
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1857,6 +2128,13 @@ und füge ihn als letzten action:shell Block an.` : '';
         const summary = content.match(/^(?:zusammenfassung|summary):\s*([\s\S]+)$/mi);
         const text = (summary ? summary[1] : content).trim();
         this.logger.info('KI meldet Aufgabe abgeschlossen.');
+
+        // Die Zusammenfassung ist die Schlussantwort, keine Werkzeugausgabe.
+        // Als `output` landete sie in einer Monospace-Box mit vier sichtbaren
+        // Zeilen – Aufzählungen und Hervorhebungen darin waren nur Rohtext.
+        // `process()` gibt sie deshalb als Nachricht in den Chat.
+        this.lastDoneSummary = text;
+
         return {
             type: 'info',
             description: '✅ Aufgabe abgeschlossen',
@@ -2070,12 +2348,12 @@ und füge ihn als letzten action:shell Block an.` : '';
                     this.conversationHistory = [{
                         role: 'user',
                         content:
-                            `Zur Information – das ist in der VORHERIGEN, ABGESCHLOSSENEN Sitzung ` +
-                            `passiert. Es ist reines Hintergrundwissen und KEIN offener Auftrag. ` +
-                            `Arbeite ausschließlich an der Aufgabe, die als nächstes kommt.\n\n${digest}`
+                            `For your information – this happened in the PREVIOUS, FINISHED ` +
+                            `session. It is background knowledge only and NOT an open task. ` +
+                            `Work exclusively on the task that comes next.\n\n${digest}`
                     }, {
                         role: 'assistant',
-                        content: 'Verstanden – das ist Hintergrund. Ich warte auf die neue Aufgabe.'
+                        content: 'Understood – that is background. I am waiting for the new task.'
                     }];
                     this.logger.info(`Hintergrund-Notiz aus letzter Session geladen (${digest.length} Zeichen)`);
                 }
@@ -2123,14 +2401,15 @@ und füge ihn als letzten action:shell Block an.` : '';
                     {
                         role: 'system',
                         content:
-                            'Du bist ein Suchbegriff-Extraktor. ' +
-                            'Gib NUR den optimierten Suchbegriff zurück — maximal 5 Wörter, keine Erklärung, keine Satzzeichen.\n\n' +
-                            'Beispiele:\n' +
+                            'You extract search terms. ' +
+                            'Return ONLY the optimised query — at most 5 words, no explanation, ' +
+                            'no punctuation. Keep product and library names verbatim.\n\n' +
+                            'Examples:\n' +
                             'Input: "suche im Internet nach der REST API von Checkmk"\n' +
                             'Output: Checkmk REST API\n\n' +
                             'Input: "recherchiere wie man in Python async/await benutzt"\n' +
                             'Output: Python async await tutorial\n\n' +
-                            'Input: "suche nach der npm Dokumentation für axios und zeige mir Beispiele"\n' +
+                            'Input: "look up the npm docs for axios and show me examples"\n' +
                             'Output: axios npm documentation\n\n' +
                             'Input: "google nach TypeScript generics"\n' +
                             'Output: TypeScript generics'

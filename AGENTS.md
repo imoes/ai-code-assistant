@@ -11,7 +11,7 @@ Code analysiert, plant, schreibt und testet.
 
 - Quellcode: `src/*.ts`, Einstieg `src/extension.ts`
 - Build: `npm run compile` (TypeScript → `out/`)
-- Tests: `npm test` — 487 Prüfungen, ohne Netz und ohne Modellserver. Die Suite fährt die
+- Tests: `npm test` — 589 Prüfungen, ohne Netz und ohne Modellserver. Die Suite fährt die
   echte Engine gegen einen `vscode`-Stub (`test/vscode-stub.js`) und lokale Testserver.
   Neue Funktion → Test in `test/` ergänzen und in `test/run-all.js` eintragen.
 - Paketieren: `npm run package` (erzeugt `ai-code-assistant-<version>.vsix`)

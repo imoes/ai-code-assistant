@@ -149,7 +149,8 @@ function listen() {
         // Die Meldung an die KI muss handlungsleitend sein, sonst wiederholt
         // das Modell dieselbe Suche endlos.
         const forAI = ws.formatForAI(r);
-        check('Meldung sagt: nicht wiederholen', /Wiederhole sie NICHT/.test(forAI), forAI.slice(0, 120));
+        // Die Meldung geht ans Modell, ist also englisch (siehe LANGUAGE_RULE).
+        check('Meldung sagt: nicht wiederholen', /Do NOT repeat it/.test(forAI), forAI.slice(0, 160));
         check('Meldung nennt web_fetch als Ausweg', /web_fetch/.test(forAI), forAI.slice(0, 200));
         check('Meldung nennt den Grund', /429/.test(forAI), forAI.slice(0, 200));
 

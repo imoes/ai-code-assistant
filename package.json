@@ -2,7 +2,7 @@
   "name": "ai-code-assistant",
   "displayName": "AI Code Assistant (llama.cpp MCP)",
   "description": "Autonomer AI Code Assistant basierend auf llama.cpp MCP – erstellt, bearbeitet und testet Code direkt im Workspace.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "repository": {
     "type": "git",
     "url": "https://gitlab.ippen.media/mutkluge/ai-code-assistant"
@@ -171,6 +171,22 @@
           "default": true,
           "description": "Shell-Befehle durch die KI erlauben"
         },
+        "aiAssistant.shell": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "wsl", "powershell"],
+          "enumDescriptions": [
+            "Automatisch – unter Windows WSL/bash, sonst die System-Shell. Der Assistent darf pro Befehl auf PowerShell wechseln, wenn es Windows braucht.",
+            "Immer WSL/bash (unter Linux und macOS die System-Shell).",
+            "Immer Windows PowerShell. Achtung: Build- und Testbefehle erwarten meist eine POSIX-Shell."
+          ],
+          "markdownDescription": "Welche Shell der Assistent standardmäßig benutzt.\n\nUnabhängig davon kann er pro Befehl die andere wählen – manche Aufgaben gehen nur in einer: `npm test` gehört nach WSL, ein `Get-Service` oder das Ansprechen eines Windows-Programms nur in die PowerShell. Der Assistent bekommt beide Wege im Prompt genannt und ist angewiesen, WSL zu bevorzugen."
+        },
+        "aiAssistant.allowPowerShell": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "PowerShell-Befehle erlauben.\n\nAusgeschaltet lehnt der Assistent sie ab und bekommt gesagt, dass er WSL nehmen soll. `aiAssistant.allowShellCommands` schaltet beide Shells zusammen ab."
+        },
         "aiAssistant.confirmDangerousOps": {
           "type": "boolean",
           "default": true,
@@ -178,8 +194,8 @@
         },
         "aiAssistant.systemPrompt": {
           "type": "string",
-          "default": "Du bist ein erfahrener Software-Entwickler und AI Code Assistant. Du hast Zugriff auf den Workspace des Benutzers und kannst Dateien erstellen, bearbeiten, löschen und Shell-Befehle ausführen. Antworte immer auf Deutsch, sofern nicht anders gewünscht. Sei präzise und erkläre deine Aktionen.",
-          "description": "System-Prompt für den AI-Assistenten"
+          "default": "You are an experienced software developer and coding assistant. You have access to the user's workspace and can create, edit and delete files and run shell commands. Be precise and explain your actions. Always answer in the language the user used in their request.",
+          "markdownDescription": "System-Prompt für den Assistenten.\n\nDie Anweisungen an das Modell sind **englisch** – Modelle folgen englischen Instruktionen zuverlässiger, und der Prompt fällt kürzer aus. Die **Antwort** kommt trotzdem in der Sprache der Anfrage: fragst du auf Deutsch, antwortet der Assistent auf Deutsch. Der Assistent bekommt diese Regel bei jeder Anfrage ausdrücklich mitgeteilt.\n\nWer lieber deutsche Prompts will, kann hier deutschen Text eintragen – das Werkzeug-Handbuch bleibt davon unberührt."
         },
         "aiAssistant.autoTest": {
           "type": "boolean",

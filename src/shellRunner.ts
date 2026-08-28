@@ -26,7 +26,30 @@ const DANGEROUS_PATTERNS = [
 ];
 
 /**
- * ShellRunner: Führt Shell-Befehle sicher über WSL aus.
+ * Welche Shell einen Befehl ausführt.
+ *
+ * `auto` folgt der Einstellung `aiAssistant.shell`; das Modell kann pro Befehl
+ * davon abweichen, weil manche Aufgaben nur in einer der beiden gehen: `npm
+ * test` gehört unter WSL, ein `Get-Service` oder das Ansprechen eines
+ * Windows-Programms nur in die PowerShell.
+ */
+export type ShellKind = 'auto' | 'wsl' | 'powershell' | 'bash';
+
+/** Gefährliche PowerShell-Muster – das Gegenstück zu DANGEROUS_PATTERNS. */
+const DANGEROUS_PS_PATTERNS = [
+    /Remove-Item\s+.*-Recurse.*-Force/i,
+    /Format-Volume/i,
+    /Clear-Disk/i,
+    /Stop-Computer|Restart-Computer/i,
+    /Set-ExecutionPolicy\s+Unrestricted/i,
+    /iex\s*\(|Invoke-Expression\s*\(/i,       // Download-und-ausführen
+    /Invoke-WebRequest.*\|\s*iex/i,
+    /reg\s+delete/i,
+    /Remove-ItemProperty\s+.*HKLM/i,
+];
+
+/**
+ * ShellRunner: Führt Shell-Befehle sicher aus – über WSL/bash oder PowerShell.
  * Bestätigungen werden über ConfirmFn als In-Chat-Karte angezeigt.
  */
 export class ShellRunner {
@@ -77,7 +100,8 @@ export class ShellRunner {
         command: string,
         workDir: string,
         timeoutMs = 30_000,
-        confirmFn?: ConfirmFn
+        confirmFn?: ConfirmFn,
+        shellKind: ShellKind = 'auto'
     ): Promise<ShellResult> {
         const config = vscode.workspace.getConfiguration('aiAssistant');
         const allowShell = config.get<boolean>('allowShellCommands', true);
@@ -89,13 +113,26 @@ export class ShellRunner {
             };
         }
 
-        // cat/head/tail abfangen: direkt einlesen statt WSL-Befehl ausführen
+        const shell = ShellRunner.resolveShell(shellKind, config);
+
+        if (shell === 'powershell' && !config.get<boolean>('allowPowerShell', true)) {
+            return {
+                stdout: '',
+                stderr: 'PowerShell ist abgeschaltet (aiAssistant.allowPowerShell). '
+                    + 'Nutze WSL oder bitte den Benutzer, die Einstellung zu ändern.',
+                exitCode: -1, command, timedOut: false
+            };
+        }
+
+        // cat/head/tail abfangen: direkt einlesen statt einen Prozess zu starten.
+        // Gilt für beide Shells – die Datei liest Node ohnehin schneller.
         const fileReadResult = ShellRunner.interceptFileReadCommand(command, workDir, this.logger);
         if (fileReadResult) {
             return fileReadResult;
         }
 
-        const isDangerous = DANGEROUS_PATTERNS.some(p => p.test(command));
+        const patterns = shell === 'powershell' ? DANGEROUS_PS_PATTERNS : DANGEROUS_PATTERNS;
+        const isDangerous = patterns.some(p => p.test(command));
         const confirmDangerous = config.get<boolean>('confirmDangerousOps', true);
 
         // Gefährliche Befehle immer bestätigen lassen
@@ -112,33 +149,32 @@ export class ShellRunner {
             }
         }
 
-        // Unter Windows läuft die Shell über WSL, sonst direkt über bash.
-        // Vorher war `wsl` hart verdrahtet – auf Linux und macOS scheiterte
-        // damit JEDER Befehl, auch `echo test`.
-        const useWsl = process.platform === 'win32';
+        const useWsl = shell === 'wsl';
 
-        const shellWorkDir = useWsl
-            ? ShellRunner.windowsToWslPath(workDir)
-            : workDir;
+        // In der PowerShell bleibt der Windows-Pfad, wie er ist – die
+        // WSL-Umschreibung würde ihn dort unbrauchbar machen.
+        const shellWorkDir = useWsl ? ShellRunner.windowsToWslPath(workDir) : workDir;
         // Windows-Pfade im Befehl selbst konvertieren (z.B. cd d:\foo → cd /mnt/d/foo)
         const convertedCommand = useWsl
             ? ShellRunner.convertWindowsPathsInCommand(command)
             : command;
-        const fullCommand = `cd ${ShellRunner.escapeShellArg(shellWorkDir)} && ${convertedCommand}`;
+
+        const fullCommand = shell === 'powershell'
+            // Set-Location statt cd, und der Befehl folgt nach `;`: PowerShell 5.1
+            // kennt kein `&&`. Ein `if ($?)` wäre falsch, denn ein fehlgeschlagenes
+            // Set-Location soll den Job abbrechen – das erledigt -ErrorAction Stop.
+            ? `Set-Location -LiteralPath ${ShellRunner.escapePsArg(shellWorkDir)} -ErrorAction Stop; ${convertedCommand}`
+            : `cd ${ShellRunner.escapeShellArg(shellWorkDir)} && ${convertedCommand}`;
 
         if (convertedCommand !== command) {
             this.logger.info(`Shell: Windows-Pfade konvertiert: ${command} → ${convertedCommand}`);
         }
-        this.logger.info(
-            `Shell (${useWsl ? 'WSL' : process.platform}): ${convertedCommand}  [in ${shellWorkDir}]`
-        );
+        this.logger.info(`Shell (${shell}): ${convertedCommand}  [in ${shellWorkDir}]`);
 
         return new Promise<ShellResult>((resolve) => {
             let timedOut = false;
 
-            const [exe, args] = useWsl
-                ? ['wsl', ['bash', '-c', fullCommand]]
-                : ['bash', ['-c', fullCommand]] as [string, string[]];
+            const [exe, args] = ShellRunner.spawnArgs(shell, fullCommand);
 
             const proc = cp.spawn(exe as string, args as string[], {
                 shell: false,
@@ -167,12 +203,61 @@ export class ShellRunner {
             proc.on('error', (err) => {
                 clearTimeout(timer);
                 const msg = err.message.includes('ENOENT')
-                    ? 'WSL nicht gefunden. Bitte WSL installieren (wsl --install).'
+                    ? (shell === 'wsl'
+                        ? 'WSL nicht gefunden. Bitte WSL installieren (wsl --install).'
+                        : shell === 'powershell'
+                            ? 'PowerShell nicht gefunden (powershell.exe fehlt im PATH).'
+                            : 'bash nicht gefunden.')
                     : err.message;
                 this.logger.error('Shell-Prozess Fehler', err);
                 resolve({ stdout: '', stderr: msg, exitCode: -1, command, timedOut: false });
             });
         });
+    }
+
+    /**
+     * Welche Shell es am Ende wird.
+     *
+     * `auto` heißt: die Einstellung entscheidet, und deren Standard richtet sich
+     * nach dem Betriebssystem. Auf Linux und macOS gibt es kein WSL – dort war
+     * `wsl` früher fest verdrahtet und JEDER Befehl scheiterte, auch `echo test`.
+     */
+    static resolveShell(
+        requested: ShellKind,
+        config: { get<T>(key: string, fallback: T): T }
+    ): 'wsl' | 'powershell' | 'bash' {
+        const onWindows = process.platform === 'win32';
+
+        if (requested === 'powershell') return 'powershell';
+        if (requested === 'wsl') return onWindows ? 'wsl' : 'bash';
+        if (requested === 'bash') return onWindows ? 'wsl' : 'bash';
+
+        const preferred = config.get<string>('shell', 'auto');
+        if (preferred === 'powershell') return onWindows ? 'powershell' : 'bash';
+        if (preferred === 'wsl' || preferred === 'bash') return onWindows ? 'wsl' : 'bash';
+
+        // auto: unter Windows WSL, weil Build- und Testbefehle dort hingehören
+        return onWindows ? 'wsl' : 'bash';
+    }
+
+    /** Programm und Argumente für die gewählte Shell. */
+    static spawnArgs(
+        shell: 'wsl' | 'powershell' | 'bash',
+        fullCommand: string
+    ): [string, string[]] {
+        if (shell === 'wsl') return ['wsl', ['bash', '-c', fullCommand]];
+        if (shell === 'bash') return ['bash', ['-c', fullCommand]];
+        // -NonInteractive, damit ein Read-Host nicht wartet, bis der Timeout greift.
+        // -NoProfile, damit das Profil des Benutzers das Ergebnis nicht verfälscht.
+        return ['powershell.exe', [
+            '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+            '-Command', fullCommand
+        ]];
+    }
+
+    /** Argument für die PowerShell quoten: einfache Anführungszeichen verdoppeln. */
+    static escapePsArg(arg: string): string {
+        return `'${arg.replace(/'/g, "''")}'`;
     }
 
     openTerminal(workDir: string): vscode.Terminal {

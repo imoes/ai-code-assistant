@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import {
-    AIEngine, ExecutedAction, PlanStep, AssistantMode, ActionMeta, getAssistantMode
+    AIEngine, ExecutedAction, PlanStep, AssistantMode, ActionMeta, AskRequest, getAssistantMode
 } from './aiEngine';
 import { SettingsPanel } from './settingsPanel';
 import { ActionHistory } from './actionHistory';
@@ -24,7 +24,8 @@ interface WebviewMessage {
         | 'actionProgress'
         | 'inputEnabled'
         | 'setMode'
-        | 'clearHistory';
+        | 'clearHistory'
+        | 'decisionResponse';
     text?: string;
     requestId?: string;
     choice?: string;
@@ -181,7 +182,10 @@ export class ChatPanel {
                 }
                 break;
 
-            case 'confirmResponse': {
+            case 'confirmResponse':
+            // Der Entscheidungs-Dialog nutzt dieselbe Warteschlange: eine
+            // Antwort ist eine Antwort, gleich aus welcher Karte sie kommt.
+            case 'decisionResponse': {
                 const handler = this.pendingConfirmations.get(msg.requestId ?? '');
                 if (handler) {
                     this.pendingConfirmations.delete(msg.requestId!);
@@ -313,6 +317,11 @@ export class ChatPanel {
             this.post({ type: 'narration', text });
         });
 
+        // Entscheidungsfrage als Karte im Chat – wie der Frage-Dialog im
+        // Claude-Code-Plugin: Optionen mit Beschriftung und Erklärung,
+        // Einfach- oder Mehrfachauswahl, plus Freitext für „etwas anderes".
+        this.aiEngine.setAskCallback((request: AskRequest) => this.requestDecision(request));
+
         try {
             let streamStarted = false;
 
@@ -434,6 +443,29 @@ export class ChatPanel {
     buildConfirmFn(): ConfirmFn {
         return (message, choices, diff) =>
             this.requestConfirmation(message, choices, diff);
+    }
+
+    /**
+     * Entscheidungsfrage als Karte im Chat stellen und auf die Antwort warten.
+     *
+     * Nutzt dieselbe Warteschlange wie die Bestätigung; nur die Karte im
+     * Webview ist eine andere (Radio- bzw. Kästchen-Optionen mit Erklärung und
+     * einem Freitextfeld). Die Antwort ist die Beschriftung der Auswahl, bei
+     * Mehrfachauswahl mit `", "` verbunden – so hält es auch Claude Code.
+     */
+    private requestDecision(request: AskRequest): Promise<string> {
+        const requestId = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        return new Promise<string>((resolve) => {
+            this.pendingConfirmations.set(requestId, resolve);
+            this.post({
+                type: 'decisionRequest',
+                requestId,
+                header: request.header,
+                question: request.question,
+                options: request.options,
+                multi: request.multi
+            });
+        });
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1076,6 +1108,98 @@ export class ChatPanel {
       color: var(--fg-muted);
       margin-bottom: 8px;
     }
+    /* ── Entscheidungs-Karte ──────────────────────────────────────────────
+       Nachgebaut nach dem Frage-Dialog im Claude-Code-Plugin. Sie soll
+       auffallen: der Assistent wartet an dieser Stelle auf den Benutzer. */
+    .decision-card {
+      background: var(--card-bg, rgba(127,127,127,.06));
+      border: 1px solid var(--accent, #4a9eff);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      max-width: 85%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .decision-card.decision-done { border-color: var(--border); opacity: .85; }
+    .decision-header {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--accent, #4a9eff);
+      font-weight: 600;
+    }
+    .decision-question { font-size: 14px; line-height: 1.45; }
+    .decision-options { display: flex; flex-direction: column; gap: 6px; }
+    .decision-option {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      background: var(--code-bg);
+    }
+    .decision-option:hover,
+    .decision-option:focus { border-color: var(--accent, #4a9eff); outline: none; }
+    .decision-option.decision-checked { border-color: var(--accent, #4a9eff); }
+    .decision-option.decision-locked { cursor: default; opacity: .6; }
+    .decision-radio, .decision-box {
+      width: 14px; height: 14px; margin-top: 2px; flex: 0 0 14px;
+      border: 1px solid var(--fg-muted);
+    }
+    .decision-radio { border-radius: 50%; }
+    .decision-box { border-radius: 3px; }
+    .decision-checked .decision-radio,
+    .decision-checked .decision-box {
+      border-color: var(--accent, #4a9eff);
+      background: var(--accent, #4a9eff);
+      box-shadow: inset 0 0 0 2px var(--code-bg);
+    }
+    .decision-body { display: flex; flex-direction: column; gap: 2px; }
+    .decision-label { font-size: 13px; }
+    .decision-desc { font-size: 11px; color: var(--fg-muted); line-height: 1.4; }
+    .decision-input {
+      width: 100%;
+      padding: 7px 10px;
+      background: var(--code-bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: inherit;
+      font-size: 12px;
+    }
+    .decision-input:focus { outline: none; border-color: var(--accent, #4a9eff); }
+    .decision-ok {
+      align-self: flex-start;
+      padding: 6px 14px;
+      border: none;
+      border-radius: var(--radius);
+      background: var(--accent, #4a9eff);
+      color: #fff;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .decision-ok:disabled { opacity: .45; cursor: default; }
+    .decision-answer { font-size: 12px; color: var(--accent, #4a9eff); }
+
+    /* Bilanz-Fusszeile: unauffaellig, damit die Antwort darueber die Hauptsache
+       bleibt. Kein Kasten, keine Monospace-Ausgaben. */
+    .actions-summary {
+      background: none;
+      border: none;
+      border-top: 1px solid var(--border);
+      border-radius: 0;
+      padding: 6px 0 0;
+      max-width: 100%;
+    }
+    .actions-summary-line {
+      font-size: 11px;
+      color: var(--fg-muted);
+      letter-spacing: .02em;
+    }
+    .actions-summary .action-item { margin-top: 4px; font-size: 12px; }
     .action-item { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 4px; line-height: 1.4; }
     .action-ok   { color: #6c6; }
     .action-fail { color: #c66; }
@@ -1250,8 +1374,11 @@ modeSelect.addEventListener('change', () =>
   vscode.postMessage({type:'setMode', mode: modeSelect.value}));
 
 // ── Nachrichten vom Extension-Host ──────────────────────────────────────────
-window.addEventListener('message', (ev) => {
-  const msg = ev.data;
+// Als benannte Funktion, damit der Testlauf (test/webview-rows.js) genau diesen
+// Weg fahren kann statt die Handler einzeln aufzurufen.
+window.addEventListener('message', (ev) => handleHostMessage(ev.data));
+
+function handleHostMessage(msg) {
   switch (msg.type) {
     case 'userMessage':       resetPlan(); resetStats(); append(makeUserMsg(msg.text)); break;
     case 'plan':             renderPlan(msg.steps); break;
@@ -1263,6 +1390,7 @@ window.addEventListener('message', (ev) => {
     case 'assistantMessageStart':
       currentAssistantEl = makeAssistantMsg('');
       currentAssistantEl.dataset.raw = '';
+      streamedEl = currentAssistantEl;
       append(currentAssistantEl); break;
     case 'assistantToken':
       if (currentAssistantEl) {
@@ -1290,6 +1418,12 @@ window.addEventListener('message', (ev) => {
     case 'fileDiff':       renderFileDiff(msg.change); break;
     case 'stats':          renderStats(msg.stats); break;
     case 'inputEnabled':   setThinking(false); setInputEnabled(msg.value); finalizeProgress(); resetStats(); break;
+    case 'decisionRequest':
+      append(makeDecisionCard(msg.requestId, msg.header, msg.question, msg.options, msg.multi));
+      pendingCount++;
+      updateBanner();
+      setThinking(false);
+      scrollBottom(); break;
     case 'confirmRequest':
       append(makeConfirmCard(
         msg.requestId, msg.message, msg.choices,
@@ -1299,9 +1433,127 @@ window.addEventListener('message', (ev) => {
       updateBanner();
       scrollBottom(); break;
   }
-});
+}
 
 // ── Bestätigungs-Karte mit farbigem Diff ────────────────────────────────────
+/**
+ * Entscheidungs-Karte: eine Frage, 2-4 Optionen, ein Freitextfeld.
+ *
+ * Nachgebaut nach dem Frage-Dialog im Claude-Code-Plugin: ein Etikett fuer die
+ * Entscheidung, die Frage in groesserer Schrift, dann die Optionen als Radio
+ * (Einfachauswahl) oder Kaestchen (Mehrfachauswahl), jede mit Beschriftung und
+ * Erklaerung. Auswahl per Klick, Enter oder Leertaste; "Etwas anderes" nimmt
+ * Freitext. Bei Einfachauswahl schickt ein Klick die Antwort sofort - eine
+ * zweite Bestaetigung waere ein Klick zu viel.
+ */
+function makeDecisionCard(requestId, header, question, options, multi) {
+  const card = document.createElement('div');
+  card.className = 'decision-card';
+
+  if (header) {
+    const tag = document.createElement('div');
+    tag.className = 'decision-header';
+    tag.textContent = header;
+    card.appendChild(tag);
+  }
+
+  const q = document.createElement('div');
+  q.className = 'decision-question';
+  q.textContent = question;
+  card.appendChild(q);
+
+  const chosen = new Set();
+  let answered = false;
+
+  const send = (value) => {
+    if (answered) return;
+    answered = true;
+    card.classList.add('decision-done');
+    const shown = document.createElement('div');
+    shown.className = 'decision-answer';
+    shown.textContent = '\\u2192 ' + value;
+    card.appendChild(shown);
+    for (const el of card.querySelectorAll('.decision-option')) el.classList.add('decision-locked');
+    if (freeWrap) freeWrap.style.display = 'none';
+    pendingCount = Math.max(0, pendingCount - 1);
+    updateBanner();
+    vscode.postMessage({ type: 'decisionResponse', requestId, choice: value });
+  };
+
+  const list = document.createElement('div');
+  list.className = 'decision-options';
+
+  for (const opt of (options || [])) {
+    const row = document.createElement('div');
+    row.className = 'decision-option';
+    row.tabIndex = 0;
+    row.setAttribute('role', multi ? 'checkbox' : 'radio');
+    row.setAttribute('aria-checked', 'false');
+
+    const mark = document.createElement('div');
+    mark.className = multi ? 'decision-box' : 'decision-radio';
+    row.appendChild(mark);
+
+    const body = document.createElement('div');
+    body.className = 'decision-body';
+    const label = document.createElement('div');
+    label.className = 'decision-label';
+    label.textContent = opt.label;
+    body.appendChild(label);
+    if (opt.description) {
+      const desc = document.createElement('div');
+      desc.className = 'decision-desc';
+      desc.textContent = opt.description;
+      body.appendChild(desc);
+    }
+    row.appendChild(body);
+
+    const pick = () => {
+      if (answered) return;
+      if (!multi) { send(opt.label); return; }
+      if (chosen.has(opt.label)) chosen.delete(opt.label); else chosen.add(opt.label);
+      row.classList.toggle('decision-checked', chosen.has(opt.label));
+      row.setAttribute('aria-checked', chosen.has(opt.label) ? 'true' : 'false');
+      if (okBtn) okBtn.disabled = chosen.size === 0;
+    };
+    row.addEventListener('click', pick);
+    row.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); pick(); }
+    });
+
+    list.appendChild(row);
+  }
+  card.appendChild(list);
+
+  // Freitext: die Optionen deckten nie alles ab, und ohne dieses Feld muesste
+  // der Benutzer die laufende Aufgabe abbrechen, um etwas anderes zu sagen.
+  const freeWrap = document.createElement('div');
+  freeWrap.className = 'decision-free';
+  const free = document.createElement('input');
+  free.type = 'text';
+  free.className = 'decision-input';
+  free.placeholder = 'Etwas anderes\\u2026 (Enter schickt ab)';
+  free.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && free.value.trim()) { ev.preventDefault(); send(free.value.trim()); }
+  });
+  freeWrap.appendChild(free);
+  card.appendChild(freeWrap);
+
+  let okBtn = null;
+  if (multi) {
+    okBtn = document.createElement('button');
+    okBtn.className = 'decision-ok';
+    okBtn.textContent = '\\u00dcbernehmen';
+    okBtn.disabled = true;
+    okBtn.addEventListener('click', () => {
+      if (chosen.size > 0) send([...chosen].join(', '));
+    });
+    card.appendChild(okBtn);
+  }
+
+  return card;
+}
+
 function makeConfirmCard(requestId, message, choices, diffText, hasDiff, stats) {
   const card = document.createElement('div');
   card.className = 'confirm-card';
@@ -1541,6 +1793,10 @@ function resetStats() {
   setThinkingPhase("KI denkt...");
 }
 
+// Der gestreamte Absatz der laufenden Runde. Wird am Rundenende durch den
+// bereinigten Text ersetzt (siehe appendNarration).
+let streamedEl = null;
+
 // Zeilen der laufenden Runde, nach Schluessel. Eine Map statt "nur die letzte
 // Zeile": im Fenster-Lauf holte der Assistent zwei Seiten, und die erste Zeile
 // blieb auf "laeuft..." stehen, waehrend die fertige Ausgabe eine zweite Zeile
@@ -1561,16 +1817,39 @@ function progressKey(description) {
 }
 
 /**
- * Ansage des Assistenten fuer eine Zwischenrunde.
+ * Der geprueft saubere Text einer Runde.
+ *
+ * Waehrend des Streamens rendert der Chat die ROHE Modellantwort - da stehen die
+ * Aktionsbloecke noch drin. Im Fenster sah man deshalb ">>>REPLACE" und
+ * Quellcode statt einer Antwort. Die Engine liefert nach jeder Runde den
+ * bereinigten Text nach, und der ersetzt hier den gestreamten Absatz.
  *
  * Bewusst nicht als 'assistantMessage': die gibt das Eingabefeld wieder frei,
  * und der Assistent arbeitet ja noch. Ausserdem beendet sie die laufende
  * Werkzeugzeile, damit die naechste Aktion eine neue bekommt.
  */
 function appendNarration(text) {
-  if (!text || !String(text).trim()) return;
+  const clean = String(text == null ? '' : text).trim();
+
+  // Gestreamten Absatz dieser Runde durch den sauberen Text ersetzen.
+  if (streamedEl) {
+    const el = streamedEl;
+    streamedEl = null;
+    if (clean) {
+      el.dataset.raw = clean;
+      updateAssistantEl(el);
+    } else if (el.parentNode) {
+      // Nichts als Aktionsmarkup: der leere Absatz hat im Chat nichts zu suchen
+      el.parentNode.removeChild(el);
+    }
+    finalizeProgress();
+    scrollBottom();
+    return;
+  }
+
+  if (!clean) return;
   finalizeProgress();
-  append(makeAssistantMsg(text));
+  append(makeAssistantMsg(clean));
 }
 
 /** Wie viele Zeilen Ausgabe ohne Aufklappen zu sehen sind. */
@@ -1773,21 +2052,42 @@ function renderPlan(steps) {
 
 /** Plan-Karte freigeben, damit die nächste Aufgabe eine neue erhält. */
 function resetPlan() { planEl = null; }
+/**
+ * Fusszeile am Ende eines Laufs: eine Zeile Bilanz, plus die Fehlschlaege.
+ *
+ * Fruener stand hier jede Aktion samt Ausgabe noch einmal - seit jede Aktion
+ * ihre eigene Werkzeugzeile hat, war das eine zweite, monospace gesetzte Kopie
+ * des ganzen Laufs. Und sie stand als LETZTES im Chat, also dort, wo man die
+ * Antwort erwartet. Erfolge sind oben schon zu sehen; nur was schiefging muss
+ * hier noch einmal auftauchen, damit es nicht im Verlauf nach oben rutscht.
+ */
 function makeActionsPanel(actions, title) {
   const p = document.createElement('div');
-  p.className = 'actions-panel';
-  const h = document.createElement('h4');
-  h.textContent = title || 'Ausgeführte Aktionen'; p.appendChild(h);
-  for (const a of actions) {
+  p.className = 'actions-panel actions-summary';
+
+  const failed = actions.filter(a => !a.success);
+  const ok = actions.length - failed.length;
+
+  const h = document.createElement('div');
+  h.className = 'actions-summary-line';
+  h.textContent = (title || 'Ausgeführte Aktionen')
+    + '  \\u00b7  ' + ok + ' erfolgreich'
+    + (failed.length ? ', ' + failed.length + ' fehlgeschlagen' : '');
+  p.appendChild(h);
+
+  for (const a of failed) {
     const row = document.createElement('div');
     row.className = 'action-item';
-    row.innerHTML = '<span class="' + (a.success ? 'action-ok' : 'action-fail') + '">' +
-      (a.success ? '✅' : '❌') + '</span> ' + esc(a.description);
+    // Ueber textContent statt innerHTML: die Beschreibung kommt aus einer
+    // Modellantwort und darf kein Markup einschleusen koennen.
+    const icon = document.createElement('span');
+    icon.className = 'action-fail';
+    icon.textContent = '\\u274c';
+    row.appendChild(icon);
+    const label = document.createElement('span');
+    label.textContent = ' ' + a.description;
+    row.appendChild(label);
     p.appendChild(row);
-    if (a.output) {
-      const out = document.createElement('div');
-      out.className = 'action-output'; out.textContent = a.output; p.appendChild(out);
-    }
   }
   return p;
 }
@@ -1954,8 +2254,24 @@ function renderMdBasic(text) {
  * Das <details>-Element wird nur einmal erstellt und danach nie mehr ersetzt,
  * damit der Benutzer es ein-/ausklappen kann ohne dass es zurückgesetzt wird.
  */
+/**
+ * Aktionsmarkup aus dem noch laufenden Stream schneiden.
+ *
+ * Der Chat rendert waehrend des Streamens die rohe Antwort. Ab der ersten
+ * Aktions-Kopfzeile ist der Rest Werkzeugaufruf und keine Antwort mehr - ohne
+ * diesen Schnitt blitzten ">>>REPLACE" und der Quellcode im Chat auf, bis die
+ * Engine den bereinigten Text nachlieferte. Nur ein Schnitt, keine
+ * Rekonstruktion: die verlaessliche Fassung kommt ohnehin nach.
+ */
+function cutActionMarkup(text) {
+  // Backticks im Muster muessen escaped werden: dieser Code steckt in einem
+  // TypeScript-Template-String, ein rohes \` beendet ihn (siehe AGENTS.md).
+  const cut = String(text).search(/(^|\\n)[ \\t]*(?:\`\`\`)?action:[a-z_]+/i);
+  return cut === -1 ? text : text.slice(0, cut);
+}
+
 function updateAssistantEl(el) {
-  const raw = el.dataset.raw || '';
+  const raw = cutActionMarkup(el.dataset.raw || '');
   const thinkStart = raw.indexOf('<think>');
 
   if (thinkStart === -1) {

@@ -197,8 +197,50 @@ section('AIEngine: Werkzeug-Handbuch im Prompt');
                         'action:shell', 'action:web_search']) {
         check(`Handbuch nennt ${tool}`, manual.includes(tool));
     }
-    check('Handbuch erklaert Agenten-Schleife', manual.includes('Agenten-Schleife'));
-    check('Handbuch: erst lesen dann schreiben', manual.includes('Erst lesen, dann schreiben'));
+    check('Handbuch erklaert Agenten-Schleife', manual.includes('agent loop'));
+    check('Handbuch: erst lesen dann schreiben', manual.includes('Read before you write'));
+
+    // ── Sprache: englische Anweisungen, Antwort in der Sprache der Anfrage ───
+    // Englische Prompts, weil Modelle ihnen zuverlaessiger folgen. Die Antwort
+    // muss davon unberuehrt bleiben - sonst antwortet ein Assistent mit
+    // deutschem Bedienfeld ploetzlich englisch.
+    const { LANGUAGE_RULE, TOOL_DEFINITIONS } = require(path.join(PROJECT, 'out', 'aiEngine.js'));
+    const tools = require(path.join(PROJECT, 'out', 'toolCallParser.js'));
+
+    check('Sprachregel steht am Anfang des Handbuchs',
+        manual.startsWith(LANGUAGE_RULE), manual.slice(0, 80));
+    check('Sprachregel verlangt die Sprache der Anfrage',
+        /language they used in their request/.test(LANGUAGE_RULE), LANGUAGE_RULE);
+    check('Sprachregel nennt Ansage, Plan und Abschluss',
+        /announcing each action/.test(LANGUAGE_RULE)
+        && /plan items/.test(LANGUAGE_RULE)
+        && /closing summary/.test(LANGUAGE_RULE), LANGUAGE_RULE);
+    check('Sprachregel nimmt Code und Pfade aus',
+        /Identifiers, code, file paths/.test(LANGUAGE_RULE), LANGUAGE_RULE);
+
+    // Das Handbuch selbst ist englisch: kein deutscher Anweisungssatz mehr.
+    // Geprueft an Woertern, die nur in Anweisungen vorkommen.
+    for (const deutsch of ['Nutze das', 'Arbeite ', 'Schreibe vor jedem',
+                           'Gib bei jeder', 'Halte dich an', 'Verwende Aktions']) {
+        check(`Handbuch ohne deutschen Anweisungstext: "${deutsch}"`,
+            !manual.includes(deutsch),
+            manual.slice(Math.max(0, manual.indexOf(deutsch) - 40), manual.indexOf(deutsch) + 60));
+    }
+
+    // Werkzeugkatalog: englische Beschreibungen, aber der WERT von `absicht`
+    // gehoert in die Sprache des Benutzers - der Satz landet direkt im Chat.
+    for (const t of tools.TOOL_DEFINITIONS) {
+        check(`${t.name}: Beschreibung englisch`,
+            !/[äöüß]/i.test(t.description), t.description);
+        check(`${t.name}: absicht verlangt die Benutzersprache`,
+            /language the user used/.test(t.parameters.properties.absicht.description),
+            t.parameters.properties.absicht.description);
+    }
+    const done = tools.TOOL_DEFINITIONS.find(t => t.name === 'done');
+    check('done: Abschlusstext in der Benutzersprache und als Markdown',
+        /language the user used/.test(done.parameters.properties.zusammenfassung.description)
+        && /Markdown/.test(done.parameters.properties.zusammenfassung.description),
+        done.parameters.properties.zusammenfassung.description);
 }
 
 section('AIEngine: Plan-Parsing');
@@ -220,7 +262,7 @@ section('AIEngine: Plan-Parsing');
     try { engine.handlePlanAction('nur freier Text ohne Liste'); } catch { threw = true; }
     check('leerer Plan wirft', threw);
 
-    check('Plan-Kontext im Prompt', engine.buildPlanContext().includes('Aktueller Arbeitsplan'),
+    check('Plan-Kontext im Prompt', engine.buildPlanContext().includes('Current work plan'),
         engine.buildPlanContext().slice(0, 80));
 }
 
@@ -1108,21 +1150,21 @@ function runLoopTests() {
         [{ type: 'analysis', description: 'read_file: a.ts', success: true, output: 'Inhalt' }], 0, cfg);
     check('Analyse fuehrt zu naechstem Schritt', s1 !== null, String(s1));
     check('Analyse-Prompt fordert Umsetzung',
-        s1 && s1.prompt.includes('ERGEBNISSE DEINER CODE-ANALYSE'), s1 && s1.prompt.slice(0, 80));
+        s1 && s1.prompt.includes('RESULTS OF YOUR CODE ANALYSIS'), s1 && s1.prompt.slice(0, 80));
 
     // Shell-Fehler -> Reparatur, und zwar VOR der Analyse-Auswertung
     const s2 = engine.planNextStep([
         { type: 'analysis', description: 'read_file: a.ts', success: true, output: 'Inhalt' },
         { type: 'shell', description: 'Shell: npm test', success: false, output: 'TS2304: Cannot find name' }
     ], 1, cfg);
-    check('Shell-Fehler hat Vorrang', s2 && s2.prompt.includes('FEHLER-ANALYSE'), s2 && s2.reason);
+    check('Shell-Fehler hat Vorrang', s2 && s2.prompt.includes('ERROR ANALYSIS'), s2 && s2.reason);
 
     // Benutzer-Anweisung
     const s3 = engine.planNextStep([
         { type: 'shell', description: 'Abgelehnt: rm -rf /', success: false,
           output: 'Benutzer-Anweisung: Nutze stattdessen npm ci' }
     ], 1, cfg);
-    check('Benutzer-Anweisung erkannt', s3 && s3.prompt.includes('Benutzer hat folgende Anweisung'),
+    check('Benutzer-Anweisung erkannt', s3 && s3.prompt.includes('THE USER GAVE YOU AN INSTRUCTION'),
         s3 && s3.reason);
 
     // Nur Dateiaenderung, kein offener Plan, Auto-Test AUS -> Stopp
@@ -1138,7 +1180,7 @@ function runLoopTests() {
     engine.handlePlanAction('- [x] Analysiert\n- [ ] Bugfix einbauen\n- [ ] Test');
     const s5 = engine.planNextStep(
         [{ type: 'file_edit', description: 'Bearbeitet: a.ts', success: true }], 1, cfg);
-    check('offener Plan treibt Schleife', s5 !== null && s5.prompt.includes('PLAN FORTSETZEN'),
+    check('offener Plan treibt Schleife', s5 !== null && s5.prompt.includes('CONTINUE THE PLAN'),
         s5 && s5.reason);
     check('naechster Schritt benannt', s5 && s5.prompt.includes('Bugfix einbauen'), s5 && s5.prompt.slice(0, 200));
 
@@ -1174,9 +1216,9 @@ function runLoopTests() {
 
     const f1 = engine.planNextStep(failedPatch, 1, cfg);
     check('fehlgeschlagener Patch wird zurueckgemeldet',
-        f1 !== null && f1.prompt.includes('NICHT ANGEWENDET'), f1 && f1.reason);
+        f1 !== null && f1.prompt.includes('WAS NOT APPLIED'), f1 && f1.reason);
     check('Prompt warnt vor Wiederholung',
-        f1 && f1.prompt.includes('Wiederhole NICHT'), f1 && f1.prompt.slice(0, 120));
+        f1 && f1.prompt.includes('Do NOT repeat the same call'), f1 && f1.prompt.slice(0, 120));
     check('Ursache steht im Prompt',
         f1 && f1.prompt.includes('BEREITS VORHANDEN'), f1 && f1.prompt.slice(0, 200));
 
@@ -1217,8 +1259,7 @@ function runLoopTests() {
     vscode.__settings.agentLoop = true;
 
     runTaskAnchorTests(cfg);
-    runOutputCapTests(cfg);
-    return runBareActionTests();
+    return runOutputCapTests(cfg).then(() => runBareActionTests());
 }
 
 // ── Lange Ausgaben duerfen den Kontext nicht fluten ─────────────────────────
@@ -1260,7 +1301,182 @@ function runOutputCapTests(cfg) {
     check('kurze Ausgabe unverandert',
         kurz && kurz.prompt.includes('11 gruen') && !/ausgelassen/.test(kurz.prompt));
 
-    runVerifyAfterChangeTests(cfg);
+    return runVerifyAfterChangeTests(cfg);
+}
+
+// ── Zwei Shells: WSL und PowerShell ─────────────────────────────────────────
+// Manche Aufgaben gehen nur in einer: `npm test` gehoert nach WSL, ein
+// Get-Service nur in die PowerShell. Der Assistent waehlt pro Befehl.
+function runShellChoiceTests() {
+    section('Shell: WSL oder PowerShell');
+
+    const { AIEngine } = require(path.join(PROJECT, 'out', 'aiEngine.js'));
+    const { ShellRunner } = require(path.join(PROJECT, 'out', 'shellRunner.js'));
+
+    // Block ohne Kopfzeile: reiner Befehl, Shell nach Einstellung
+    const plain = AIEngine.parseShellBlock('npm test');
+    check('ohne Kopfzeile: auto', plain.shellKind === 'auto', plain.shellKind);
+    check('ohne Kopfzeile: Befehl unveraendert', plain.command === 'npm test', plain.command);
+
+    // Kopfzeile powershell, mit und ohne Trenner
+    for (const raw of ['shell: powershell\nGet-Service Spooler',
+                       'shell: powershell\n---\nGet-Service Spooler',
+                       'shell: PowerShell\nGet-Service Spooler',
+                       'shell: pwsh\nGet-Service Spooler']) {
+        const p = AIEngine.parseShellBlock(raw);
+        check(`Kopfzeile erkannt: ${JSON.stringify(raw.split('\n')[0])}`,
+            p.shellKind === 'powershell' && p.command.trim() === 'Get-Service Spooler',
+            JSON.stringify(p));
+    }
+
+    const wsl = AIEngine.parseShellBlock('shell: wsl\nnpm test');
+    check('Kopfzeile wsl', wsl.shellKind === 'wsl' && wsl.command.trim() === 'npm test',
+        JSON.stringify(wsl));
+
+    // Ein Befehl, der zufaellig mit "shell:" anfaengt, ist keine Kopfzeile
+    const notHead = AIEngine.parseShellBlock('shell: gibtsnicht\necho hallo');
+    check('unbekannter Wert ist keine Kopfzeile',
+        notHead.shellKind === 'auto' && notHead.command.startsWith('shell: gibtsnicht'),
+        JSON.stringify(notHead));
+
+    // Aufloesung: was am Ende laeuft
+    const cfgAuto = { get: (k, d) => (k === 'shell' ? 'auto' : d) };
+    const cfgPs = { get: (k, d) => (k === 'shell' ? 'powershell' : d) };
+    const onWindows = process.platform === 'win32';
+
+    check('powershell angefordert -> powershell',
+        ShellRunner.resolveShell('powershell', cfgAuto) === 'powershell');
+    check('wsl angefordert -> wsl bzw. bash',
+        ShellRunner.resolveShell('wsl', cfgAuto) === (onWindows ? 'wsl' : 'bash'));
+    check('auto folgt der Einstellung',
+        ShellRunner.resolveShell('auto', cfgPs) === (onWindows ? 'powershell' : 'bash'));
+    check('auto ohne Einstellung: WSL bzw. bash',
+        ShellRunner.resolveShell('auto', cfgAuto) === (onWindows ? 'wsl' : 'bash'));
+
+    // Aufrufparameter
+    const [psExe, psArgs] = ShellRunner.spawnArgs('powershell', 'Get-Date');
+    check('PowerShell wird als powershell.exe gestartet', psExe === 'powershell.exe', psExe);
+    check('PowerShell ohne Profil', psArgs.includes('-NoProfile'), JSON.stringify(psArgs));
+    check('PowerShell nicht interaktiv', psArgs.includes('-NonInteractive'), JSON.stringify(psArgs));
+    check('PowerShell bekommt den Befehl',
+        psArgs[psArgs.length - 1] === 'Get-Date', JSON.stringify(psArgs));
+
+    const [wslExe, wslArgs] = ShellRunner.spawnArgs('wsl', 'npm test');
+    check('WSL ueber bash -c', wslExe === 'wsl' && wslArgs[0] === 'bash' && wslArgs[1] === '-c',
+        JSON.stringify([wslExe, wslArgs]));
+
+    // Quoting: einfache Anfuehrungszeichen verdoppeln, nicht mit Backslash
+    check('PowerShell-Quoting verdoppelt Apostrophe',
+        ShellRunner.escapePsArg("D:\\Otto's Ordner") === "'D:\\Otto''s Ordner'",
+        ShellRunner.escapePsArg("D:\\Otto's Ordner"));
+
+    // Das Handbuch muss beide Wege nennen, sonst nutzt das Modell sie nicht
+    const manual = engine.buildToolManual();
+    check('Handbuch nennt PowerShell', /PowerShell/.test(manual));
+    check('Handbuch nennt die Kopfzeile',
+        manual.includes('shell: powershell'), 'fehlt');
+    check('Handbuch warnt vor der Syntax',
+        /no `&&`/.test(manual) && /Get-ChildItem/.test(manual), 'fehlt');
+    check('Handbuch bevorzugt WSL',
+        /Prefer WSL/.test(manual), 'fehlt');
+}
+
+// ── Entscheidungsfrage an den Benutzer ──────────────────────────────────────
+// Vorbild ist der Frage-Dialog im Claude-Code-Plugin: Frage, 2-4 Optionen mit
+// Beschriftung und Erklaerung, Einfach- oder Mehrfachauswahl, Freitext.
+function runAskUserTests() {
+    section('ask_user: Entscheidung beim Benutzer');
+
+    const { AIEngine } = require(path.join(PROJECT, 'out', 'aiEngine.js'));
+
+    const block = [
+        'header: Bibliothek',
+        'question: Welche Datumsbibliothek soll das Projekt nutzen?',
+        'multi: false',
+        'options:',
+        'date-fns — klein, modular, ueblich in neuen Projekten',
+        'Luxon — Zeitzonen eingebaut, groesseres Bundle',
+        'Keine — die zwei Helfer selbst schreiben'
+    ].join('\n');
+
+    const req = AIEngine.parseAskBlock(block);
+    check('Etikett gelesen', req.header === 'Bibliothek', req.header);
+    check('Frage gelesen', /Datumsbibliothek/.test(req.question), req.question);
+    check('Einfachauswahl', req.multi === false, String(req.multi));
+    check('drei Optionen', req.options.length === 3, JSON.stringify(req.options));
+    check('Beschriftung getrennt', req.options[0].label === 'date-fns', req.options[0].label);
+    check('Erklaerung getrennt',
+        req.options[0].description === 'klein, modular, ueblich in neuen Projekten',
+        req.options[0].description);
+    check('Option ohne Erklaerung erlaubt',
+        AIEngine.parseAskBlock('question: X\noptions:\nJa\nNein').options[1].label === 'Nein');
+
+    // Mehrfachauswahl und Aufzaehlungszeichen
+    const multi = AIEngine.parseAskBlock(
+        'question: Welche Features?\nmehrfach: ja\noptions:\n- Login - mit OAuth\n- Export - als CSV');
+    check('Mehrfachauswahl erkannt', multi.multi === true, String(multi.multi));
+    check('Aufzaehlungszeichen entfernt', multi.options[0].label === 'Login', multi.options[0].label);
+    check('Trenner " - " erkannt', multi.options[0].description === 'mit OAuth',
+        multi.options[0].description);
+
+    // Hoechstens vier Optionen - wie bei Claude Code
+    const many = AIEngine.parseAskBlock(
+        'question: X\noptions:\nA\nB\nC\nD\nE\nF');
+    check('hoechstens vier Optionen', many.options.length === 4, String(many.options.length));
+
+    // Kopfzeilen landen NICHT als Optionen
+    check('Kopfzeilen sind keine Optionen',
+        !req.options.some(o => /^(header|question|multi)/i.test(o.label)),
+        JSON.stringify(req.options.map(o => o.label)));
+
+    // Ohne Frage: Fehler statt stiller Leerlauf
+    let threw = false;
+    return engine.parseAndExecuteActions(
+        '```action:ask_user\noptions:\nJa\nNein\n```', async () => 'Ja'
+    ).then(actions => {
+        check('ask_user ohne Frage meldet einen Fehler',
+            actions.length === 1 && !actions[0].success
+            && /question/.test(String(actions[0].output)),
+            JSON.stringify(actions));
+
+        // Mit Callback: die Antwort geht als ERFOLGREICHE Aktion mit Ausgabe
+        // zurueck - nur so treibt sie die Schleife weiter.
+        let gefragt = null;
+        engine.setAskCallback(async (r) => { gefragt = r; return 'date-fns'; });
+        return engine.parseAndExecuteActions(
+            '```action:ask_user\n' + block + '\n```', async () => 'egal');
+    }).then(actions => {
+        check('Frage wurde gestellt', actions.length === 1, JSON.stringify(actions));
+        check('Antwort ist erfolgreich', actions[0].success, JSON.stringify(actions[0]));
+        check('Antwort steht in der Ausgabe',
+            /date-fns/.test(actions[0].output), actions[0].output);
+        check('Ausgabe verbietet die Wiederholung',
+            /Do not ask again/.test(actions[0].output), actions[0].output);
+        check('Beschreibung nennt die Entscheidung',
+            /Entscheidung/.test(actions[0].description), actions[0].description);
+
+        // Die Antwort muss die Schleife weitertreiben (Zweig 3)
+        const cfg2 = vscode.workspace.getConfiguration();
+        engine.lastActionSignature = '';
+        engine.repeatCount = 0;
+        engine.plan = [];
+        engine.taskComplete = false;
+        const step = engine.planNextStep(actions, 1, cfg2);
+        check('Antwort treibt die Schleife weiter', step !== null, JSON.stringify(step));
+        check('Folge-Prompt enthaelt die Antwort',
+            step && /date-fns/.test(step.prompt), step && step.prompt.slice(0, 200));
+
+        // Abbruch: keine Endlosschleife aus Fragen
+        engine.setAskCallback(async () => '');
+        return engine.parseAndExecuteActions(
+            '```action:ask_user\n' + block + '\n```', async () => 'egal');
+    }).then(actions => {
+        check('abgebrochene Frage gilt als Fehlschlag', !actions[0].success,
+            JSON.stringify(actions[0]));
+        check('Abbruch weist auf Selbstentscheiden hin',
+            /decide yourself/.test(actions[0].output), actions[0].output);
+        engine.setAskCallback(undefined);
+    });
 }
 
 // ── Geaendert, aber nicht geprueft ──────────────────────────────────────────
@@ -1285,11 +1501,11 @@ function runVerifyAfterChangeTests(cfg) {
 
     check('Aenderung ohne Test treibt die Schleife weiter', step !== null, JSON.stringify(step));
     check('Prompt fordert die Tests an',
-        step && /Tests des Projekts/.test(step.prompt), step && step.prompt.slice(0, 120));
+        step && /tests now/.test(step.prompt), step && step.prompt.slice(0, 120));
     check('Prompt nennt die geaenderte Datei',
         step && step.prompt.includes('src/tokenizer.js'), step && step.prompt.slice(0, 200));
     check('Prompt erinnert an offene Punkte',
-        step && /Punkte des Auftrags offen/.test(step.prompt), step && step.prompt.slice(-200));
+        step && /points of the task are still open/.test(step.prompt), step && step.prompt.slice(-200));
     check('Auftrag steht auch hier im Prompt',
         step && step.prompt.includes('variablen.test.js'), step && step.prompt.slice(0, 200));
 
@@ -1302,7 +1518,7 @@ function runVerifyAfterChangeTests(cfg) {
         { type: 'shell', description: 'Shell: npm test', success: true, output: '11 gruen' }
     ], 1, cfg);
     check('mit Testlauf keine Nachfrage',
-        mitTest !== null && !/DU HAST GEÄNDERT/.test(mitTest.prompt),
+        mitTest !== null && !/VERIFIED NOTHING/.test(mitTest.prompt),
         mitTest && mitTest.prompt.slice(0, 80));
 
     // Gescheiterte Aenderung zaehlt nicht als Aenderung: dafuer ist Zweig 1b da
@@ -1312,7 +1528,7 @@ function runVerifyAfterChangeTests(cfg) {
         [{ type: 'file_edit', description: 'Patch fehlgeschlagen: a.js', success: false, output: 'nope' }],
         1, cfg);
     check('gescheiterte Aenderung geht in die Fehlerrueckmeldung',
-        gescheitert !== null && /NICHT ANGEWENDET/.test(gescheitert.prompt),
+        gescheitert !== null && /WAS NOT APPLIED/.test(gescheitert.prompt),
         gescheitert && gescheitert.prompt.slice(0, 80));
 
     // Ist die KI fertig, wird nicht nachgefragt
@@ -1323,6 +1539,9 @@ function runVerifyAfterChangeTests(cfg) {
     engine.taskComplete = false;
 
     vscode.__settings.autoTest = vorher;
+
+    runShellChoiceTests();
+    return runAskUserTests();
 }
 
 // ── Zaunlose Aktions-Kopfzeilen ─────────────────────────────────────────────
@@ -1488,7 +1707,7 @@ function runTaskAnchorTests(cfg) {
             step !== null && step.prompt.includes('Aendere keine Dateien'),
             step ? step.prompt.slice(0, 100) : 'null');
         check(`${label}: als Auftrag ausgewiesen`,
-            step !== null && step.prompt.includes('DEIN AUFTRAG'),
+            step !== null && step.prompt.includes('YOUR TASK'),
             step ? step.prompt.slice(0, 100) : 'null');
     }
 
@@ -1510,8 +1729,8 @@ function runTaskAnchorTests(cfg) {
     const bare = engine.planNextStep(
         [{ type: 'analysis', description: 'read_file: a.ts', success: true, output: 'Inhalt' }], 1, cfg);
     check('ohne Auftrag kein leerer Kopf',
-        bare !== null && !bare.prompt.includes('DEIN AUFTRAG')
-        && bare.prompt.startsWith('ERGEBNISSE'),
+        bare !== null && !bare.prompt.includes('YOUR TASK')
+        && bare.prompt.startsWith('RESULTS'),
         bare ? bare.prompt.slice(0, 60) : 'null');
 
     // ── Wiederhergestellter Verlauf ist Hintergrund, kein offener Auftrag ────

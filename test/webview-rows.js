@@ -147,9 +147,12 @@ function loadWebview() {
         ...Object.keys(sandbox),
         script + `
         ;return {
-            dispatch: (msg) => handleMessage(msg),
+            dispatch: handleHostMessage,
             appendOrUpdateProgress,
             finalizeProgress,
+            appendNarration,
+            makeActionsPanel,
+            cutActionMarkup,
             setThinking,
             progressKey,
             renderMdBasic
@@ -249,6 +252,84 @@ if (loaded.error) {
     check('keine rohen Escape-Reste im Skript',
         !/["'][^"']*\b00[0-9a-f]{2}\b[^"']*["']/.test(script),
         (script.match(/["'][^"']*\b00[0-9a-f]{2}\b[^"']*["']/) || [''])[0]);
+
+    // ── Der gestreamte Absatz darf kein Aktionsmarkup zeigen ────────────────
+    // Im Fenster stand ">>>REPLACE" samt Quellcode im Chat: der Chat rendert
+    // waehrend des Streamens die ROHE Antwort, und dort stehen die Bloecke drin.
+    section('Antworttext: Stream und Nachlieferung');
+
+    const msgs = () => chat.flatten().filter(e => e._class.has('msg-assistant'));
+
+    check('Schnitt ab der Aktions-Kopfzeile',
+        api.cutActionMarkup('Ich erweitere den Tokenizer.\n```action:patch_file\npath: a.js')
+            .trim() === 'Ich erweitere den Tokenizer.',
+        JSON.stringify(api.cutActionMarkup('Ich erweitere den Tokenizer.\n```action:patch_file\npath: a.js')));
+    check('Schnitt auch ohne Zaun',
+        api.cutActionMarkup('Fertig.\naction:done\nzusammenfassung: x').trim() === 'Fertig.',
+        JSON.stringify(api.cutActionMarkup('Fertig.\naction:done\nzusammenfassung: x')));
+    check('normaler Text bleibt ganz',
+        api.cutActionMarkup('Nur Text mit ```js\ncode\n``` drin.').includes('code'));
+
+    // Kompletter Rundenverlauf: streamen, dann bereinigten Text nachliefern
+    const vorher = msgs().length;
+    api.dispatch({ type: 'assistantMessageStart' });
+    api.dispatch({ type: 'assistantToken', text: 'Ich erweitere den Tokenizer.\n\n```action:patch_file\n' });
+    api.dispatch({ type: 'assistantToken', text: 'path: src/tokenizer.js\n---\n<<<SEARCH\nalt\n>>>REPLACE\nneu\n```' });
+
+    const gestreamt = msgs()[msgs().length - 1];
+    check('waehrend des Streams kein Aktionsmarkup sichtbar',
+        !gestreamt.innerHTML.includes('REPLACE') && !gestreamt.innerHTML.includes('action:'),
+        gestreamt.innerHTML.slice(0, 160));
+    check('die Ansage ist sichtbar',
+        gestreamt.innerHTML.includes('Ich erweitere den Tokenizer'), gestreamt.innerHTML.slice(0, 120));
+
+    api.dispatch({ type: 'assistantMessageEnd' });
+    api.dispatch({ type: 'narration', text: 'Ich erweitere den Tokenizer um Bezeichner.' });
+
+    check('kein zweiter Absatz durch die Nachlieferung',
+        msgs().length === vorher + 1, `${vorher} -> ${msgs().length}`);
+    check('nachgelieferter Text ersetzt den gestreamten',
+        msgs()[msgs().length - 1].innerHTML.includes('um Bezeichner'),
+        msgs()[msgs().length - 1].innerHTML.slice(0, 120));
+
+    // Runde ganz ohne Prosa: der leere Absatz muss verschwinden
+    const vorLeer = msgs().length;
+    api.dispatch({ type: 'assistantMessageStart' });
+    api.dispatch({ type: 'assistantToken', text: '```action:read_file\npath: a.ts\n```' });
+    api.dispatch({ type: 'assistantMessageEnd' });
+    api.dispatch({ type: 'narration', text: '' });
+    check('Runde nur mit Werkzeugaufruf laesst keinen leeren Absatz',
+        msgs().length === vorLeer, `${vorLeer} -> ${msgs().length}`);
+
+    // Abschluss-Zusammenfassung kommt als Markdown-Nachricht, nicht als
+    // Monospace-Werkzeugausgabe. Im Fenster stand sie in einer Ausgabe-Box mit
+    // vier sichtbaren Zeilen - Aufzaehlungen darin waren nur Rohtext.
+    const vorAbschluss = msgs().length;
+    api.dispatch({ type: 'narration', text: 'Fertig:\n\n- Tokenizer erweitert\n- 14 Tests gruen' });
+    check('Abschluss erscheint als eigener Absatz',
+        msgs().length === vorAbschluss + 1, `${vorAbschluss} -> ${msgs().length}`);
+    check('Abschluss ist als Liste gesetzt, nicht als Rohtext',
+        /<ul>/.test(msgs()[msgs().length - 1].innerHTML),
+        msgs()[msgs().length - 1].innerHTML.slice(0, 200));
+
+    // ── Fusszeile: Bilanz statt zweiter Kopie des Laufs ─────────────────────
+    section('Fusszeile: Bilanz statt Wiederholung');
+    {
+        const panel = api.makeActionsPanel([
+            { description: 'Gepacht: src/tokenizer.js', success: true, output: 'viel Text' },
+            { description: 'Shell: npm test', success: true, output: 'TAP version 13\nok 1\nok 2' },
+            { description: 'Patch fehlgeschlagen: src/parser.js', success: false, output: 'nope' }
+        ], 'Ausgeführte Aktionen (5 Schritte)');
+
+        const text = panel.textContent;
+        check('Bilanz nennt Erfolge und Fehlschlaege',
+            /2 erfolgreich/.test(text) && /1 fehlgeschlagen/.test(text), text);
+        check('Fehlschlag wird benannt', /src\/parser\.js/.test(text), text);
+        check('Erfolge werden NICHT wiederholt',
+            !/tokenizer\.js/.test(text) && !/npm test/.test(text), text);
+        check('keine Ausgaben in der Fusszeile',
+            !/TAP version/.test(text) && !/viel Text/.test(text), text);
+    }
 
     report();
 }

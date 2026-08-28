@@ -55,7 +55,7 @@ export interface ToolCallLogger {
 export const KNOWN_ACTIONS = new Set([
     'read_file', 'grep', 'glob', 'list_dir',
     'create_file', 'edit_file', 'replace_lines', 'patch_file', 'delete_file',
-    'shell', 'web_search', 'web_fetch', 'plan', 'todo', 'done', 'finish'
+    'shell', 'web_search', 'web_fetch', 'plan', 'todo', 'done', 'finish', 'ask_user'
 ]);
 
 /**
@@ -144,198 +144,249 @@ function numProp(description: string) {
 }
 
 /**
+ * Beschreibung des Feldes `absicht` – steht in JEDEM Werkzeug.
+ *
+ * Englisch wie der ganze Katalog, aber mit dem ausdrücklichen Hinweis, dass der
+ * WERT in der Sprache des Benutzers zu schreiben ist: der Satz landet direkt im
+ * Chat. Ohne den Hinweis antwortet ein Modell auf eine deutsche Frage plötzlich
+ * mit englischen Ansagen.
+ */
+const INTENT_PROP = 'ONE short sentence in the first person: what you are doing '
+    + 'here and why. It is shown to the user, so write it in the language the '
+    + 'user used in their request.';
+
+/**
  * Unsere Aktionen als Werkzeuge im OpenAI-Schema.
  *
  * Damit kann llama.cpp das modellspezifische Format selbst erzeugen und parsen –
  * das ist der einzige Weg, der ohne Formatpflege für Qwen, Gemma, Kimi, laguna,
  * DeepSeek, Mistral und alles Künftige funktioniert.
+ *
+ * Die Beschreibungen sind **englisch**: Modelle folgen englischen Instruktionen
+ * zuverlässiger, und der Katalog steht in jeder Anfrage im Prompt. Die Antwort
+ * des Modells bleibt in der Sprache des Benutzers – siehe LANGUAGE_RULE und
+ * INTENT_PROP.
  */
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
     {
         name: 'read_file',
-        description: 'Liest eine Datei aus dem Workspace mit Zeilennummern. '
-            + 'Nutze das, um bestehenden Code zu verstehen, BEVOR du ihn änderst.',
+        description: 'Reads a file from the workspace with line numbers. '
+            + 'Use it to understand existing code BEFORE you change it.',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                path: strProp('Pfad relativ zum Workspace, z.B. src/parser.js'),
-                offset: numProp('1-basierte Startzeile (optional, Standard 1)'),
-                limit: numProp('Maximale Zeilenanzahl (optional, Standard 400)')
+                absicht: strProp(INTENT_PROP),
+                path: strProp('Path relative to the workspace, e.g. src/parser.js'),
+                offset: numProp('1-based start line (optional, default 1)'),
+                limit: numProp('Maximum number of lines (optional, default 400)')
             },
             required: ['absicht', 'path']
         }
     },
     {
         name: 'grep',
-        description: 'Durchsucht das gesamte Projekt mit einem regulären Ausdruck '
-            + '(wie ripgrep) und liefert Datei, Zeilennummer und Zeileninhalt.',
+        description: 'Searches the whole project with a regular expression '
+            + '(like ripgrep) and returns file, line number and line content.',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                pattern: strProp('Regulärer Ausdruck, z.B. class\\s+\\w+Service'),
-                glob: strProp('Dateifilter (optional), z.B. **/*.ts'),
-                path: strProp('Auf diesen Unterordner beschränken (optional)'),
-                ignore_case: strProp('"true" um Groß-/Kleinschreibung zu ignorieren (optional)')
+                absicht: strProp(INTENT_PROP),
+                pattern: strProp('Regular expression, e.g. class\\s+\\w+Service'),
+                glob: strProp('File filter (optional), e.g. **/*.ts'),
+                path: strProp('Restrict to this subfolder (optional)'),
+                ignore_case: strProp('"true" to ignore case (optional)')
             },
             required: ['absicht', 'pattern']
         }
     },
     {
         name: 'glob',
-        description: 'Findet Dateien nach Namensmuster, z.B. alle Testdateien.',
+        description: 'Finds files by name pattern, e.g. all test files.',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                pattern: strProp('Glob-Muster, z.B. **/*.test.js')
+                absicht: strProp(INTENT_PROP),
+                pattern: strProp('Glob pattern, e.g. **/*.test.js')
             },
             required: ['absicht', 'pattern']
         }
     },
     {
         name: 'list_dir',
-        description: 'Listet den Inhalt eines Verzeichnisses auf.',
+        description: 'Lists the contents of a directory.',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                path: strProp('Verzeichnis relativ zum Workspace, z.B. src')
+                absicht: strProp(INTENT_PROP),
+                path: strProp('Directory relative to the workspace, e.g. src')
             },
             required: ['absicht', 'path']
         }
     },
     {
         name: 'plan',
-        description: 'Legt den Arbeitsplan als Todo-Liste an oder aktualisiert ihn. '
-            + 'Bei Aufgaben mit mehr als zwei Schritten zuerst aufrufen. '
-            + 'Immer die VOLLSTÄNDIGE Liste übergeben.',
+        description: 'Creates or updates the work plan as a todo list. '
+            + 'Call it first for tasks with more than two steps. '
+            + 'Always pass the COMPLETE list.',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                steps: strProp('Eine Zeile pro Schritt: "- [ ] offen", "- [>] in Arbeit", "- [x] erledigt"')
+                absicht: strProp(INTENT_PROP),
+                steps: strProp('One line per step: "- [ ] open", "- [>] in progress", '
+                    + '"- [x] done". The user reads these, so write them in the '
+                    + 'language the user used.')
             },
             required: ['absicht', 'steps']
         }
     },
     {
         name: 'patch_file',
-        description: 'Ändert einen Teil einer Datei gezielt. Bevorzugtes Werkzeug für Änderungen.',
+        description: 'Changes part of a file in place. The preferred tool for changes.',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                path: strProp('Pfad relativ zum Workspace'),
-                patch: strProp('Ein oder mehrere Blöcke der Form: '
-                    + '<<<SEARCH\\n<exakter bestehender Code>\\n>>>REPLACE\\n<neuer Code>')
+                absicht: strProp(INTENT_PROP),
+                path: strProp('Path relative to the workspace'),
+                patch: strProp('One or more blocks of the form: '
+                    + '<<<SEARCH\\n<exact existing code>\\n>>>REPLACE\\n<new code>')
             },
             required: ['absicht', 'path', 'patch']
         }
     },
     {
         name: 'replace_lines',
-        description: 'Ersetzt einen Zeilenbereich. Zeilennummern stammen aus read_file.',
+        description: 'Replaces a range of lines. Line numbers come from read_file.',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                path: strProp('Pfad relativ zum Workspace'),
-                start_line: numProp('Erste zu ersetzende Zeile (1-basiert, inklusiv)'),
-                end_line: numProp('Letzte zu ersetzende Zeile (inklusiv)'),
-                content: strProp('Neuer Code für diesen Bereich')
+                absicht: strProp(INTENT_PROP),
+                path: strProp('Path relative to the workspace'),
+                start_line: numProp('First line to replace (1-based, inclusive)'),
+                end_line: numProp('Last line to replace (inclusive)'),
+                content: strProp('New code for that range')
             },
             required: ['absicht', 'path', 'start_line', 'end_line', 'content']
         }
     },
     {
         name: 'create_file',
-        description: 'Erstellt eine neue Datei mit vollständigem Inhalt.',
+        description: 'Creates a new file with its complete content.',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                path: strProp('Pfad relativ zum Workspace'),
-                content: strProp('Vollständiger Dateiinhalt')
+                absicht: strProp(INTENT_PROP),
+                path: strProp('Path relative to the workspace'),
+                content: strProp('Complete file content')
             },
             required: ['absicht', 'path', 'content']
         }
     },
     {
         name: 'edit_file',
-        description: 'Ersetzt eine ganze Datei. Nur nutzen, wenn patch_file nicht reicht – '
-            + 'der Inhalt muss VOLLSTÄNDIG sein, ohne Platzhalter wie "... bestehender Code ...".',
+        description: 'Replaces a whole file. Only use it when patch_file is not enough – '
+            + 'the content must be COMPLETE, with no placeholders like "... existing code ...".',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                path: strProp('Pfad relativ zum Workspace'),
-                content: strProp('Vollständiger neuer Dateiinhalt, alle Zeilen enthalten')
+                absicht: strProp(INTENT_PROP),
+                path: strProp('Path relative to the workspace'),
+                content: strProp('Complete new file content, every line included')
             },
             required: ['absicht', 'path', 'content']
         }
     },
     {
         name: 'delete_file',
-        description: 'Löscht eine Datei.',
+        description: 'Deletes a file.',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                path: strProp('Pfad relativ zum Workspace')
+                absicht: strProp(INTENT_PROP),
+                path: strProp('Path relative to the workspace')
             },
             required: ['absicht', 'path']
         }
     },
     {
         name: 'shell',
-        description: 'Führt einen Shell-Befehl im Workspace aus (WSL/Linux). '
-            + 'Für Build und Tests, NICHT zum Lesen von Dateien.',
+        description: 'Runs a command in the workspace. Two shells are available: '
+            + 'WSL/bash (default – build, tests, git, everything POSIX) and Windows '
+            + 'PowerShell. For build and tests, NOT for reading files.',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                command: strProp('Der Befehl, z.B. npm test')
+                absicht: strProp(INTENT_PROP),
+                command: strProp('The command, e.g. npm test'),
+                shell: strProp('Which shell: "wsl" (default, POSIX) or "powershell" '
+                    + '(Windows: services, registry, drivers, WinGet, Windows-only '
+                    + 'executables, COM). Pick powershell only when the command '
+                    + 'genuinely needs Windows – the syntax differs (no && , '
+                    + 'Get-ChildItem instead of ls).')
             },
             required: ['absicht', 'command']
         }
     },
     {
-        name: 'web_search',
-        description: 'Sucht im Internet, wenn aktuelles Wissen fehlt.',
+        name: 'ask_user',
+        description: 'Asks the user a decision question and waits for the answer. '
+            + 'Use it when the task allows several defensible routes and the choice '
+            + 'is the user\'s to make – a library, a naming scheme, whether to touch '
+            + 'a file at all. Do NOT use it for things you can find out yourself by '
+            + 'reading the code, and not to ask for permission to keep working.',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                query: strProp('Suchbegriff')
+                absicht: strProp(INTENT_PROP),
+                question: strProp('The question, one sentence, in the user\'s language.'),
+                options: strProp('One option per line: "Label — short explanation of '
+                    + 'what happens if chosen". 2 to 4 options, mutually exclusive '
+                    + 'unless multi is true. Put your recommendation first. In the '
+                    + 'user\'s language.'),
+                header: strProp('2–3 word label for this decision, e.g. "Library" '
+                    + '(optional)'),
+                multi: strProp('"true" if several options may be picked at once '
+                    + '(optional, default false)')
+            },
+            required: ['absicht', 'question', 'options']
+        }
+    },
+    {
+        name: 'web_search',
+        description: 'Searches the web when current knowledge is missing.',
+        parameters: {
+            type: 'object',
+            properties: {
+                absicht: strProp(INTENT_PROP),
+                query: strProp('Search terms')
             },
             required: ['absicht', 'query']
         }
     },
     {
         name: 'web_fetch',
-        description: 'Ruft eine Webseite ab und gibt ihren Text zurück. '
-            + 'Nutze das nach einer Suche: die Trefferliste enthält nur Titel und '
-            + 'Adressen, die Antwort steht auf der Seite selbst.',
+        description: 'Fetches a web page and returns its text. '
+            + 'Use it after a search: the result list holds only titles and '
+            + 'addresses, the answer is on the page itself.',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                url: strProp('Vollständige http(s)-Adresse')
+                absicht: strProp(INTENT_PROP),
+                url: strProp('Full http(s) address')
             },
             required: ['absicht', 'url']
         }
     },
     {
         name: 'done',
-        description: 'Meldet die Aufgabe als abgeschlossen. Erst aufrufen, wenn '
-            + 'wirklich nichts mehr zu tun ist.',
+        description: 'Reports the task as finished. Only call it when there is '
+            + 'genuinely nothing left to do.',
         parameters: {
             type: 'object',
             properties: {
-                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
-                zusammenfassung: strProp('Was erledigt wurde')
+                absicht: strProp(INTENT_PROP),
+                zusammenfassung: strProp('What was done. This is the closing answer to '
+                    + 'the user – write it in the language the user used, and use '
+                    + 'Markdown where it helps (lists, `code`).')
             },
             required: ['absicht', 'zusammenfassung']
         }
@@ -349,7 +400,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
  * Aufgabe untersuchen und planen, aber nichts anfassen.
  */
 export const READ_ONLY_ACTIONS = new Set([
-    'read_file', 'grep', 'glob', 'list_dir', 'plan', 'web_search', 'web_fetch', 'done'
+    'read_file', 'grep', 'glob', 'list_dir', 'plan', 'web_search', 'web_fetch', 'done',
+    'ask_user'
 ]);
 
 /** Werkzeugkatalog für einen Modus: im Plan-Modus nur die lesenden Werkzeuge. */
@@ -434,8 +486,14 @@ const BODY_ARGS = new Set([
     'patch', 'patches', 'steps', 'plan', 'items', 'command', 'cmd'
 ]);
 
-/** Aktionen, deren Block AUSSCHLIESSLICH aus dem Wert besteht. */
-const BODY_ONLY = new Set(['shell', 'plan', 'todo']);
+/**
+ * Aktionen, deren Block AUSSCHLIESSLICH aus dem Wert besteht.
+ *
+ * `shell` gehört seit dem Shell-Wahlschalter NICHT mehr dazu: mit zwei
+ * Argumenten würde `Object.values().join()` sonst „npm test\npowershell"
+ * ergeben – und der Assistent versuchte, das als Befehl auszuführen.
+ */
+const BODY_ONLY = new Set(['plan', 'todo']);
 
 // DeepSeek nutzt Fullwidth-Balken (U+FF5C) und Lower-One-Eighth-Block (U+2581).
 // Als Escapes geschrieben, damit die Datei nicht von der Kodierung abhängt.
@@ -689,8 +747,11 @@ function renderActionBlock(name: string, argsIn: Record<string, string>): string
         else headers.push(`${k}: ${v.replace(/\r?\n/g, ' ').trim()}`);
     }
 
+    // Der Trenner `---` steht nur zwischen Kopfzeilen und Rumpf. Ohne
+    // Kopfzeilen begann der Block sonst mit einer Leerzeile und einem nackten
+    // `---` – und der landete beim `shell`-Werkzeug im Befehl.
     const block = bodies.length > 0
-        ? `${headers.join('\n')}\n---\n${bodies.join('\n')}`
+        ? (headers.length > 0 ? `${headers.join('\n')}\n---\n` : '') + bodies.join('\n')
         : headers.join('\n');
 
     return `${prefix}\`\`\`action:${name}\n${block}\n\`\`\`\n`;
