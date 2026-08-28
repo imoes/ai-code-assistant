@@ -2,6 +2,35 @@
 
 Alle nennenswerten Änderungen an diesem Projekt. Neueste Version oben.
 
+## 0.9.0
+
+- **Die Web-Suche findet ohne Schlüssel wieder etwas.** Statt einer Quelle werden jetzt
+  mehrere unabhängige gleichzeitig gefragt und die Treffer zusammengeführt: DuckDuckGo
+  (bei Sperre die Lite-Oberfläche), Stack Overflow über die offizielle API und Wikipedia.
+  Fällt eine aus, tragen die anderen — im Testlauf war DuckDuckGo von dieser Leitung
+  komplett gesperrt, und vier von fünf Fragen lieferten trotzdem Treffer.
+
+  Der Hintergrund: es gibt keine kostenlose, unbegrenzte Websuche. Die Bing-Such-API ist
+  seit August 2025 abgeschaltet, Brave seit Februar 2026 kostenpflichtig, und eine eigene
+  SearXNG-Instanz verlagert das Problem nur — sie befragt Google und Bing für dich, deren
+  Sperren gelten weiter. Unbegrenzt ist nur „Seite abrufen" (`web_fetch`), und für
+  Dokumentation ist das ohnehin der kürzere Weg.
+- **Der Assistent prüft seine Änderung selbst.** Vorher endete die Arbeit nach der ersten
+  erfolgreichen Dateiänderung: bei einem Auftrag mit fünf Punkten wurde der erste umgesetzt
+  und nie getestet. Jetzt laufen die Tests, und es geht weiter, bis alle Punkte erledigt
+  und die Tests grün sind. Ebenso sieht der Assistent die Ausgabe eines Testlaufs jetzt
+  auch dann, wenn er im selben Zug eine Datei geändert hat — der übliche Fall.
+- **Abbrechen wirkt zwischen den Iterationen, und eine neue Aufgabe unterbricht die
+  laufende.** Das Eingabefeld bleibt während eines Laufs bedienbar; Enter stoppt die alte
+  Aufgabe und startet die neue. Vorher beendete „Abbrechen" nur die aktuelle Anfrage und
+  die Schleife lief weiter.
+- **Der Assistent sagt in jeder Runde, was er vorhat**, nicht nur am Anfang. Und er nimmt
+  keine Aufgabe aus einer früheren Sitzung mehr auf: die letzte Sitzung kommt als kurze,
+  klar als abgeschlossen markierte Notiz statt als nachgespieltes Gespräch.
+- **Rohes Werkzeug-Markup verschwindet aus den Antworten.** `action:done`, `>>>REPLACE`
+  und abgeschnittene Blöcke standen bisher als Text im Chat, wenn das Modell einen
+  Backtick-Zaun wegließ.
+
 ## 0.8.0
 
 - **Antworten werden als Markdown dargestellt:** Aufzählungen, nummerierte Listen,
