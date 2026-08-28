@@ -200,7 +200,7 @@ git clone <repo>
 cd ai-code-assistant
 npm install          # on Windows via WSL: wsl npm install
 npm run compile      # on Windows via WSL: wsl npm run compile
-npm test             # 700 checks, no network and no model server needed
+npm test             # 779 checks, no network and no model server needed
 npm run package
 ```
 

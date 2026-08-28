@@ -11,6 +11,17 @@ export interface AnalysisResult {
     output: string;
     /** false wenn nichts gefunden wurde bzw. ein Fehler auftrat */
     success: boolean;
+    /**
+     * true, wenn die Analyse gar nicht durchgeführt werden konnte – Datei fehlt,
+     * Pfad außerhalb des Workspace, ungültiges Muster.
+     *
+     * Nötig, weil `success: false` zwei sehr verschiedene Dinge bedeutet: „keine
+     * Treffer" (ein gültiges Ergebnis) und „ging nicht" (ein Fehlschlag). Die
+     * Engine hat deshalb pauschal `success: true` gemeldet – und im Fenster-Lauf
+     * galten sieben abgelehnte Lesevorgänge als erfolgreiche Analyse. Das Modell
+     * arbeitete eine Runde blind, und die Schleife hielt das für getane Arbeit.
+     */
+    error?: boolean;
 }
 
 const IGNORE_DIRS = new Set([
@@ -63,7 +74,7 @@ export class CodeAnalyzer {
         try {
             abs = this.fileManager.resolvePath(rawPath);
         } catch (err) {
-            return { description: `read_file: ${relPath}`, output: (err as Error).message, success: false };
+            return { description: `read_file: ${relPath}`, output: (err as Error).message, success: false, error: true };
         }
 
         if (!fs.existsSync(abs)) {
@@ -75,7 +86,8 @@ export class CodeAnalyzer {
             return {
                 description: `read_file: ${relPath}`,
                 output: `Datei nicht gefunden: ${relPath}${hint}`,
-                success: false
+                success: false,
+                error: true
             };
         }
 
@@ -87,7 +99,8 @@ export class CodeAnalyzer {
             return {
                 description: `read_file: ${relPath}`,
                 output: `Datei zu groß (${Math.round(stat.size / 1024)} KB). Nutze grep um gezielt zu suchen.`,
-                success: false
+                success: false,
+                error: true
             };
         }
 
@@ -145,7 +158,7 @@ export class CodeAnalyzer {
         try {
             regex = new RegExp(pattern, ignoreCase ? 'i' : '');
         } catch (err) {
-            return { description: label, output: `Ungültiges Regex-Muster: ${(err as Error).message}`, success: false };
+            return { description: label, output: `Ungültiges Regex-Muster: ${(err as Error).message}`, success: false, error: true };
         }
 
         let root: string;
@@ -154,7 +167,7 @@ export class CodeAnalyzer {
             workspaceRoot = this.fileManager.getWorkspaceRoot();
             root = searchPath ? this.fileManager.resolvePath(searchPath) : workspaceRoot;
         } catch (err) {
-            return { description: label, output: (err as Error).message, success: false };
+            return { description: label, output: (err as Error).message, success: false, error: true };
         }
 
         const globRe = globPattern ? this.globToRegex(globPattern) : null;
@@ -214,7 +227,7 @@ export class CodeAnalyzer {
         const label = `glob: ${globPattern}`;
         let root: string;
         try { root = this.fileManager.getWorkspaceRoot(); }
-        catch (err) { return { description: label, output: (err as Error).message, success: false }; }
+        catch (err) { return { description: label, output: (err as Error).message, success: false, error: true }; }
 
         const globRe = this.globToRegex(globPattern);
         const matches: string[] = [];
@@ -248,10 +261,10 @@ export class CodeAnalyzer {
         const label = `list_dir: ${relPath}`;
         let abs: string;
         try { abs = this.fileManager.resolvePath(rawPath); }
-        catch (err) { return { description: label, output: (err as Error).message, success: false }; }
+        catch (err) { return { description: label, output: (err as Error).message, success: false, error: true }; }
 
         if (!fs.existsSync(abs)) {
-            return { description: label, output: `Verzeichnis nicht gefunden: ${relPath}`, success: false };
+            return { description: label, output: `Verzeichnis nicht gefunden: ${relPath}`, success: false, error: true };
         }
 
         const entries: string[] = [];
@@ -271,7 +284,7 @@ export class CodeAnalyzer {
                 }
             }
         } catch (err) {
-            return { description: label, output: `Lesefehler: ${(err as Error).message}`, success: false };
+            return { description: label, output: `Lesefehler: ${(err as Error).message}`, success: false, error: true };
         }
 
         return {

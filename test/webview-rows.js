@@ -218,6 +218,59 @@ if (loaded.error) {
     check('Ausgabe steht in der Zeile',
         rows[0].querySelector('.tool-output') !== null);
 
+    // ── Ein echter Shell-Befehl mit Anfuehrungszeichen und Backslashes ──────
+    // Im Fenster-Lauf standen fuer EINEN sed-Aufruf zwei Zeilen da: eine auf
+    // "laeuft...", darunter dieselbe mit dem Ergebnis. Genau dieser Befehl.
+    section('Werkzeugzeilen: sed-Befehl mit Sonderzeichen');
+
+    api.finalizeProgress();
+    const SED = 'sed -i "s/const OPERATORS = new Set(\\[\'+\', \'-\', \'\\*\', \'\\/\', \'\\^\'\\]);'
+        + '/const OPERATORS = new Set([\'+\', \'-\', \'*\', \'\\/\', \'^\', \'%\']);/" src/tokenizer.js';
+    const sedVorher = toolRows().length;
+    api.appendOrUpdateProgress('Shell: ' + SED, '', { tool: 'Bash', target: SED, running: true });
+    api.appendOrUpdateProgress('Shell: ' + SED, '(keine Ausgabe)', { tool: 'Bash', target: SED, ok: true });
+    const sedRows = toolRows().slice(sedVorher);
+    check('sed-Befehl bekommt genau EINE Zeile', sedRows.length === 1,
+        sedRows.length + ' Zeilen: ' + sedRows.map(r => detailOf(r)).join(' | '));
+    check('und sie steht nicht auf "laeuft"',
+        sedRows.every(r => detailOf(r) !== 'läuft…'),
+        sedRows.map(detailOf).join(' | '));
+
+    // ── Ein Ergebnis findet seine laufende Zeile auch bei Textabweichung ────
+    // Das ist die Haertung: kommt die Abschlussmeldung mit leicht anderem
+    // Beschreibungstext an, wird trotzdem die laufende Zeile desselben
+    // Werkzeugs und Ziels aktualisiert - statt eine zweite anzulegen und die
+    // erste fuer immer auf "laeuft..." stehen zu lassen.
+    api.finalizeProgress();
+    const v2 = toolRows().length;
+    api.appendOrUpdateProgress('Shell: npm run build', '', {
+        tool: 'Bash', target: 'npm run build', running: true });
+    api.appendOrUpdateProgress('Bash: npm run build', 'fertig', {
+        tool: 'Bash', target: 'npm run build', ok: true });
+    const r2 = toolRows().slice(v2);
+    check('Ergebnis findet die laufende Zeile ueber Werkzeug und Ziel',
+        r2.length === 1, r2.length + ' Zeilen');
+    check('keine verwaiste "laeuft"-Zeile',
+        r2.every(r => detailOf(r) !== 'läuft…'), r2.map(detailOf).join(' | '));
+
+    // ── Und auch, wenn die Liste zwischendurch geleert wurde ───────────────
+    // Jede Bestaetigung schickt 'inputEnabled' hinterher, und das leert die
+    // Zuordnungsliste. Im Fenster stand danach "Bash node --test" zweimal da:
+    // oben auf "laeuft...", darunter dasselbe mit Exit 1.
+    api.finalizeProgress();
+    const v3 = toolRows().length;
+    api.appendOrUpdateProgress('Shell: node --test', '', {
+        tool: 'Bash', target: 'node --test', running: true });
+    api.dispatch({ type: 'inputEnabled', value: true });   // leert die Liste
+    api.appendOrUpdateProgress('Shell: node --test', 'TAP version 13', {
+        tool: 'Bash', target: 'node --test', detail: 'Exit 1', ok: false });
+    const r3 = toolRows().slice(v3);
+    check('Ergebnis findet die Zeile auch nach dem Leeren der Liste',
+        r3.length === 1, r3.length + ' Zeilen: ' + r3.map(detailOf).join(' | '));
+    check('und sie zeigt den Exit-Code, nicht "laeuft"',
+        r3.length === 1 && detailOf(r3[0]) === 'Exit 1',
+        r3.map(detailOf).join(' | '));
+
     // ── Nach dem Abschnitt ist derselbe Befehl ein NEUER Vorgang ────────────
     section('Werkzeugzeilen: zweiter Lauf desselben Befehls');
 
@@ -229,6 +282,65 @@ if (loaded.error) {
     check('zweiter Testlauf bekommt eine eigene Zeile',
         toolRows().length === afterFirst + 1,
         afterFirst + ' -> ' + toolRows().length);
+
+    // ── Nativer Tool-Call: es gibt keinen Text zum Anzeigen ────────────────
+    // Beobachtet: 2.1k Tokens erzeugt, im Chat kein einziges Zeichen. Das
+    // Modell schrieb einen Tool-Call - dabei bleibt `content` leer. Die
+    // Statuszeile muss dann wenigstens sagen, WAS gerade geschrieben wird.
+    section('Statuszeile: nativer Tool-Call');
+
+    const phase = () => store.get('thinking-label').textContent;
+
+    api.dispatch({ type: 'stats', stats: {
+        promptTokens: 14600, promptPerSecond: 86, cachedTokens: 6200,
+        predictedTokens: 2100, predictedPerSecond: 20.7 } });
+    check('ohne Werkzeug: der alte Text', /Antwort wird erzeugt/.test(phase()), phase());
+
+    api.dispatch({ type: 'stats', stats: {
+        promptTokens: 14600, promptPerSecond: 86, cachedTokens: 6200,
+        predictedTokens: 2100, predictedPerSecond: 20.7, tool: 'create_file' } });
+    check('mit Werkzeug: es steht da, was geschrieben wird',
+        /Datei wird geschrieben/.test(phase()), phase());
+    check('und die Tokenzahl bleibt', /2\.1k Tok|2100 Tok/.test(phase()), phase());
+
+    api.dispatch({ type: 'stats', stats: {
+        promptTokens: 100, promptPerSecond: 80, cachedTokens: 0,
+        predictedTokens: 50, predictedPerSecond: 20, tool: 'shell' } });
+    check('shell wird als Befehl benannt', /Befehl wird formuliert/.test(phase()), phase());
+
+    // Ein unbekanntes Werkzeug faellt nicht auf die Nase
+    api.dispatch({ type: 'stats', stats: {
+        promptTokens: 100, promptPerSecond: 80, cachedTokens: 0,
+        predictedTokens: 50, predictedPerSecond: 20, tool: 'irgendwas_neues' } });
+    check('unbekanntes Werkzeug wird trotzdem benannt',
+        /irgendwas_neues/.test(phase()), phase());
+
+    // ── Die Arbeitsanzeige darf nicht ins Leere verschwinden ───────────────
+    // Beginnt eine Runde direkt mit einem Aktionsblock, wird der aus der
+    // Anzeige geschnitten. Vorher ging die Anzeige beim ERSTEN Token aus - der
+    // Absatz war leer, die Anzeige weg, und im Fenster sah es aus, als sei
+    // nichts mehr los, waehrend das Modell eine ganze Datei schrieb.
+    section('Arbeitsanzeige waehrend eines Aktionsblocks');
+
+    const sichtbar = () => store.get('thinking').classList.contains('visible');
+
+    api.dispatch({ type: 'thinking', value: true });
+    api.dispatch({ type: 'assistantMessageStart' });
+    api.dispatch({ type: 'assistantToken', text: '```action:create_file\n' });
+    check('reines Aktionsmarkup laesst die Anzeige an', sichtbar() === true);
+
+    api.dispatch({ type: 'assistantToken', text: 'path: test/modulo.test.js\n---\nconst t = 1;\n' });
+    check('auch mitten im Block bleibt sie an', sichtbar() === true);
+
+    api.dispatch({ type: 'assistantMessageEnd' });
+    check('am Ende der Runde geht sie aus', sichtbar() === false);
+
+    // Kommt echter Text, verschwindet sie sofort - da steht ja etwas
+    api.dispatch({ type: 'thinking', value: true });
+    api.dispatch({ type: 'assistantMessageStart' });
+    api.dispatch({ type: 'assistantToken', text: 'Ich lese zuerst den Tokenizer.' });
+    check('bei echtem Text geht sie aus', sichtbar() === false);
+    api.dispatch({ type: 'assistantMessageEnd' });
 
     // ── Hinweistext ────────────────────────────────────────────────────────
     section('Hinweistext unter dem Eingabefeld');

@@ -45,11 +45,39 @@ export class FileManager {
     }
 
     resolvePath(relOrAbsPath: string): string {
-        const p = path.isAbsolute(relOrAbsPath)
-            ? relOrAbsPath
-            : path.join(this.getWorkspaceRoot(), relOrAbsPath);
+        // Strip the leading slash FIRST, then test for "absolute": on Windows
+        // `path.isAbsolute` considers `/src/x` absolute, so the check would
+        // never reach this case.
+        const cleaned = FileManager.stripRootSlash(relOrAbsPath);
+        const p = path.isAbsolute(cleaned)
+            ? cleaned
+            : path.join(this.getWorkspaceRoot(), cleaned);
         this.assertInsideWorkspace(p);
         return p;
+    }
+
+    /**
+     * Remove a leading slash: `/src/parser.js` means `src/parser.js`.
+     *
+     * Models write paths with a leading slash all the time, and what they mean
+     * is the root of the project. On Windows, though, `/src/parser.js` is
+     * drive-relative: `path.isAbsolute()` says true, and it turns into
+     * `C:\src\parser.js` – outside the workspace, so it is rejected.
+     *
+     * Observed in a window run: the model read seven files as `/AGENTS.md`,
+     * `/src/tokenizer.js` … and got "Zugriff außerhalb des Workspace
+     * verweigert" seven times. It worked a whole round blind, without having
+     * seen a single file.
+     *
+     * A genuine absolute path is left untouched – `C:\…`, `D:/…` and `/mnt/d/…`
+     * carry a drive and are still checked, and rejected where appropriate. Only
+     * the drive-less leading slash is read as "from the project root".
+     */
+    static stripRootSlash(p: string): string {
+        if (/^[a-zA-Z]:[\\/]/.test(p)) return p;          // C:\… or C:/…
+        if (/^[\\/]mnt[\\/][a-zA-Z][\\/]/.test(p)) return p;  // WSL drive
+        if (/^[\\/]{2}/.test(p)) return p;                 // UNC: \\server\share
+        return p.replace(/^[\\/]+/, '');
     }
 
     /**

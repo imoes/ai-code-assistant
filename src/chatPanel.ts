@@ -4,7 +4,7 @@ import {
 } from './aiEngine';
 import { SettingsPanel } from './settingsPanel';
 import { ActionHistory } from './actionHistory';
-import { MCPClient, GenerationStats } from './mcpClient';
+import { MCPClient, GenerationStats, StreamCallback } from './mcpClient';
 import { FileManager } from './fileManager';
 import { Logger } from './logger';
 import { ConfirmFn, DiffMeta, AppliedChange } from './confirm';
@@ -295,76 +295,21 @@ export class ChatPanel {
         this.post({ type: 'thinking', value: true });
 
         const confirmFn = this.buildConfirmFn();
-
-        // Display AI plan changes live as a checklist in the chat
-        this.aiEngine.setPlanCallback((steps: PlanStep[]) => {
-            this.post({ type: 'plan', steps });
-        });
-
-        // Show every applied file change with a colored diff.
-        // In auto-mode, this is the ONLY way to see changes – no confirmation
-        // card appears there.
-        this.fileManager.setDiffReporter((change: AppliedChange) => {
-            this.post({ type: 'fileDiff', change });
-        });
-
-        // Running metrics: progress of prompt evaluation and tokens/second.
-        // With large contexts, input evaluation alone takes minutes –
-        // without this display, the user only sees "AI is thinking…" and doesn't know
-        // if anything is happening at all.
-        this.aiEngine.setStatsCallback((stats: GenerationStats) => {
-            this.post({ type: 'stats', stats });
-        });
-
-        // Ansage jeder Runde im Chat zeigen. process() gibt nur den Text der
-        // ersten Runde zurück – ohne diesen Weg stand ab Schritt 2 nur
-        // "nächster Schritt…" da, ohne zu sagen, was der Assistent vorhat.
-        // Eigener Nachrichtentyp, nicht 'assistantMessage': der gibt das
-        // Eingabefeld wieder frei, und der Assistent arbeitet ja noch.
-        this.aiEngine.setNarrationCallback((text: string) => {
-            this.post({ type: 'narration', text });
-        });
-
-        // Decision question as a card in the chat – like the question dialog in the
-        // Claude-Code plugin: options with label and explanation,
-        // single or multiple selection, plus free text for "something else".
-        this.aiEngine.setAskCallback((request: AskRequest) => this.requestDecision(request));
+        this.bindEngineCallbacks();
 
         try {
-            let streamStarted = false;
+            const stream = this.buildStreamFn();
 
             const result = await this.aiEngine.process(
                 userText,
-                (token: string, done: boolean) => {
-                    if (!streamStarted) {
-                        streamStarted = true;
-                        this.post({ type: 'thinking', value: false });
-                        this.post({ type: 'assistantMessageStart' });
-                    }
-                    if (!done) {
-                        this.post({ type: 'assistantToken', text: token });
-                    } else {
-                        this.post({ type: 'assistantMessageEnd' });
-                    }
-                },
+                stream.onToken,
                 confirmFn,
-                (iteration: number, reason: string) => {
-                    this.post({ type: 'thinking', value: false });
-                    this.post({ type: 'iterationMessage', iteration, reason });
-                    this.post({ type: 'thinking', value: true });
-                },
+                this.onIterationFn(),
                 0,
-                (description: string, output: string, meta?: ActionMeta) => {
-                    // Display the action along with its output in the chat. `meta` carries
-                    // the tool name, target, and state – without it, the line
-                    // only shows "Action" and the entire description as the target.
-                    this.post({ type: 'thinking', value: false });
-                    this.post({ type: 'actionProgress', description, output, meta });
-                    this.post({ type: 'thinking', value: true });
-                }
+                this.onActionProgressFn()
             );
 
-            if (!streamStarted) {
+            if (!stream.started()) {
                 if (result.text) {
                     this.post({ type: 'assistantMessage', text: result.text });
                 }
@@ -451,6 +396,109 @@ export class ChatPanel {
     buildConfirmFn(): ConfirmFn {
         return (message, choices, diff) =>
             this.requestConfirmation(message, choices, diff);
+    }
+
+    /**
+     * The token stream into the chat – for a single run AND for the loop.
+     *
+     * The loop used to pass an empty callback, on the reasoning that the round's
+     * text arrives as the announcement afterwards anyway. What that looked like
+     * in the window: "Antwort wird erzeugt… 1.6k Tok" for two minutes and not one
+     * character in the chat. A reasoning model spends most of its output on
+     * thinking, which reaches the panel as a `<think>` block and is rendered as a
+     * collapsed "🧠 Reasoning" section – so there IS something to show, and in the
+     * loop it is needed most: the rounds are long and nothing else moves.
+     */
+    /**
+     * The round announcement – and the thinking indicator around it.
+     *
+     * Both halves matter. The loop path used to post the announcement alone, so
+     * after the first iteration the "KI denkt…" bar was gone and never came
+     * back: the assistant worked for minutes and the panel looked idle. Whoever
+     * writes a line into the chat also has to say that work continues.
+     */
+    private onIterationFn() {
+        return (iteration: number, reason: string) => {
+            this.post({ type: 'thinking', value: false });
+            this.post({ type: 'iterationMessage', iteration, reason });
+            this.post({ type: 'thinking', value: true });
+        };
+    }
+
+    /**
+     * An action with its output in the chat. `meta` carries the tool name, the
+     * target and the state – without it the row shows only "Aktion" and the
+     * whole description as the target.
+     */
+    private onActionProgressFn() {
+        return (description: string, output: string, meta?: ActionMeta) => {
+            this.post({ type: 'thinking', value: false });
+            this.post({ type: 'actionProgress', description, output, meta });
+            this.post({ type: 'thinking', value: true });
+        };
+    }
+
+    private buildStreamFn(): { onToken: StreamCallback; started: () => boolean } {
+        let started = false;
+        return {
+            started: () => started,
+            onToken: (token: string, done: boolean) => {
+                if (!started) {
+                    started = true;
+                    this.post({ type: 'thinking', value: false });
+                    this.post({ type: 'assistantMessageStart' });
+                }
+                if (!done) {
+                    this.post({ type: 'assistantToken', text: token });
+                } else {
+                    this.post({ type: 'assistantMessageEnd' });
+                }
+            }
+        };
+    }
+
+    /**
+     * Point every one of the engine's feedback paths at THIS panel.
+     *
+     * In one place, because otherwise it goes wrong exactly the way it did go
+     * wrong: the `/loop` path set only two of the callbacks, and inside the loop
+     * the token statistics were missing – the user saw "KI denkt…" for minutes
+     * without a single number. Every path that starts the engine calls this.
+     *
+     * Still per run and not in the constructor: with several chat tabs open they
+     * all share the same engine instance. Whoever is running owns the callbacks
+     * – otherwise the output lands in the wrong tab.
+     */
+    private bindEngineCallbacks(): void {
+        // The plan as a live checklist in the chat
+        this.aiEngine.setPlanCallback((steps: PlanStep[]) => {
+            this.post({ type: 'plan', steps });
+        });
+
+        // Jede angewandte Änderung als farbiger Diff. Im Auto-Modus ist das der
+        // EINZIGE Weg, Änderungen zu sehen – eine Bestätigungskarte gibt es dort
+        // nicht.
+        this.fileManager.setDiffReporter((change: AppliedChange) => {
+            this.post({ type: 'fileDiff', change });
+        });
+
+        // Laufende Kennzahlen: Fortschritt der Prompt-Auswertung und Token/s.
+        // Bei großem Kontext dauert allein die Eingabe-Auswertung Minuten – ohne
+        // diese Anzeige sieht der Benutzer nur „KI denkt…" und weiß nicht, ob
+        // überhaupt etwas passiert.
+        this.aiEngine.setStatsCallback((stats: GenerationStats) => {
+            this.post({ type: 'stats', stats });
+        });
+
+        // Ansage jeder Runde im Chat. process() gibt nur den Text der ersten
+        // Runde zurück – ohne diesen Weg stand ab Schritt 2 nur „nächster
+        // Schritt…" da, ohne zu sagen, was der Assistent vorhat.
+        this.aiEngine.setNarrationCallback((text: string) => {
+            this.post({ type: 'narration', text });
+        });
+
+        // Entscheidungsfrage als Karte im Chat.
+        this.aiEngine.setAskCallback((request: AskRequest) => this.requestDecision(request));
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -543,21 +591,17 @@ export class ChatPanel {
         });
         this.post({ type: 'thinking', value: true });
 
-        this.aiEngine.setNarrationCallback((t: string) => this.post({ type: 'narration', text: t }));
-        this.aiEngine.setAskCallback((r: AskRequest) => this.requestDecision(r));
+        // Alle Rückmeldewege, nicht nur zwei – siehe bindEngineCallbacks.
+        this.bindEngineCallbacks();
 
         try {
             const result = await this.aiEngine.runLoop(
                 task,
                 budget,
-                () => { /* Der Rundentext kommt über die Ansage, nicht als Stream */ },
+                this.buildStreamFn().onToken,
                 this.buildConfirmFn(),
-                (iteration: number, reason: string) => {
-                    this.post({ type: 'iterationMessage', iteration, reason });
-                },
-                (description: string, output: string, meta?: ActionMeta) => {
-                    this.post({ type: 'actionProgress', description, output, meta });
-                },
+                this.onIterationFn(),
+                this.onActionProgressFn(),
                 (round: number, total: number, note: string) => {
                     this.post({ type: 'loopRound', round, total, note });
                 }
@@ -568,6 +612,17 @@ export class ChatPanel {
                 text: `**Schleife beendet** – ${result.rounds} Runde(n), `
                     + `${result.actions} Aktion(en). Grund: ${result.stopped}.`
             });
+
+            // What happened across the rounds, in one piece. The rows from
+            // during the run are far above once the loop has taken eight rounds.
+            if (result.log.length > 0) {
+                this.post({
+                    type: 'actions',
+                    actions: this.summarizeActions(result.log),
+                    title: `Ausgeführte Aktionen (${result.rounds} `
+                        + `${result.rounds === 1 ? 'Runde' : 'Runden'})`
+                });
+            }
         } catch (err) {
             this.post({
                 type: 'errorMessage',
@@ -1558,6 +1613,12 @@ function handleHostMessage(msg) {
       if (currentAssistantEl) {
         currentAssistantEl.dataset.raw += msg.text;
         updateAssistantEl(currentAssistantEl);
+        // Die Arbeitsanzeige darf erst weg, wenn wirklich etwas dasteht.
+        // Beginnt eine Runde direkt mit einem Aktionsblock, wird der aus der
+        // Anzeige geschnitten - dann war der Absatz leer UND die Anzeige aus:
+        // im Fenster sah das aus, als sei nichts mehr los, waehrend das Modell
+        // gerade eine ganze Datei schrieb.
+        setThinking(cutActionMarkup(currentAssistantEl.dataset.raw).trim() === '');
         scrollBottom();
       } break;
     case 'assistantMessageEnd':
@@ -1953,6 +2014,21 @@ function setThinkingPhase(text) {
   if (thinkingLabel) thinkingLabel.textContent = text;
 }
 
+/** Was der Assistent gerade schreibt, in Worten statt im Werkzeugnamen. */
+function TOOL_VERB(tool) {
+  const verbs = {
+    create_file: 'Datei wird geschrieben', edit_file: 'Datei wird geändert',
+    patch_file: 'Patch wird geschrieben', replace_lines: 'Zeilen werden ersetzt',
+    delete_file: 'Datei wird gelöscht', shell: 'Befehl wird formuliert',
+    read_file: 'Datei wird gelesen', grep: 'Suche wird formuliert',
+    glob: 'Suche wird formuliert', list_dir: 'Verzeichnis wird gelesen',
+    web_search: 'Suche wird formuliert', web_fetch: 'Abruf wird vorbereitet',
+    plan: 'Plan wird geschrieben', done: 'Zusammenfassung wird geschrieben',
+    ask_user: 'Frage wird formuliert', remember: 'Regel wird notiert'
+  };
+  return verbs[tool] || (tool + ' wird geschrieben');
+}
+
 function renderStats(s) {
   if (!s || !statsBar) return;
   statsBar.classList.add('visible');
@@ -1970,9 +2046,16 @@ function renderStats(s) {
   } else {
     statsProgress.classList.remove('visible');
     if (s.predictedTokens > 0) {
-      setThinkingPhase('Antwort wird erzeugt… ' + fmtNum(s.predictedTokens) + ' Tok');
+      // With a native tool call there is no text to show – so at least say
+      // WHICH call is being written. Without it the panel showed "Antwort wird
+      // erzeugt… 2.1k Tok" for minutes and nothing else.
+      setThinkingPhase(s.tool
+        ? TOOL_VERB(s.tool) + '… ' + fmtNum(s.predictedTokens) + ' Tok'
+        : 'Antwort wird erzeugt… ' + fmtNum(s.predictedTokens) + ' Tok');
     }
   }
+
+  if (s.tool) parts.push('\\u2699 ' + s.tool);
 
   if (s.promptTokens > 0) {
     let inPart = '↓ ' + fmtNum(s.promptTokens) + ' Tok';
@@ -2146,6 +2229,32 @@ function styleToolRow(row, meta) {
   }
 }
 
+/**
+ * Ein Ergebnis darf seine laufende Zeile auch dann finden, wenn der
+ * Beschreibungstext leicht abweicht - gesucht wird ueber Werkzeug und Ziel.
+ *
+ * Der Grund: im Fenster standen fuer EINEN sed-Aufruf zwei Zeilen, die obere
+ * fuer immer auf "laeuft...". Eine Zeile, die nie ein Ergebnis bekommt, laesst
+ * den Benutzer glauben, der Befehl haenge noch - genau die Unklarheit, gegen
+ * die die Zeilen da sind.
+ */
+function findRunningRow(meta) {
+  if (!meta || meta.running || !meta.tool || !meta.target) return null;
+  // Im DOM gesucht, nicht in progressRows: die Liste wird zwischendurch
+  // geleert (jede Bestaetigung schickt 'inputEnabled' hinterher), und dann
+  // stand die laufende Zeile fuer immer auf "laeuft...", waehrend ihr Ergebnis
+  // eine zweite Zeile bekam. Genau so sah es beim Testlauf aus.
+  const rows = chat.querySelectorAll('.tool-row');
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (row.dataset.tool === meta.tool && row.dataset.target === meta.target
+        && row.classList.contains('tool-running')) {
+      return row;
+    }
+  }
+  return null;
+}
+
 function appendOrUpdateProgress(description, output, meta) {
   const key = progressKey((meta && meta.tool ? meta.tool + ' ' : '') + description);
 
@@ -2153,7 +2262,7 @@ function appendOrUpdateProgress(description, output, meta) {
   // andere Aktion gemeldet wurde. Zwei verschiedene Vorgaenge bekommen zwei
   // Zeilen - ohne diese Unterscheidung ueberschrieb jede Meldung die vorherige
   // und man sah am Ende nur eine einzige Zeile.
-  const known = progressRows.get(key);
+  const known = progressRows.get(key) || findRunningRow(meta);
   if (known) {
     styleToolRow(known, meta);
     fillOutput(known.querySelector('.tool-output'), output);
@@ -2163,6 +2272,8 @@ function appendOrUpdateProgress(description, output, meta) {
 
   const row = buildToolRow(meta, description);
   row.dataset.key = key;
+  row.dataset.tool = (meta && meta.tool) || '';
+  row.dataset.target = (meta && meta.target) || '';
   styleToolRow(row, meta);
   fillOutput(row.querySelector('.tool-output'), output);
 
@@ -2381,8 +2492,13 @@ function renderMdBasic(text) {
     if (ph) {
       closeList();
       const b = blocks[Number(ph[1])];
+      const code = b.code.replace(/\\s+$/, '');
+      // Empty block = empty framed box in the chat. This happens when the
+      // action markup was cut out of the text and only its fence remained,
+      // or when streaming has just opened a fence. Nothing to show.
+      if (code.trim() === '') continue;
       out.push('<pre' + (b.lang ? ' data-lang="' + esc(b.lang) + '"' : '') +
-        '><code>' + esc(b.code.replace(/\\s+$/, '')) + '</code></pre>');
+        '><code>' + esc(code) + '</code></pre>');
       continue;
     }
 

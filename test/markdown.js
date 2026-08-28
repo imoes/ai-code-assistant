@@ -165,6 +165,20 @@ section('Markdown: Code');
     check('offener Block zerfaellt nicht in Absaetze',
         !streaming.includes('<p>const x'), streaming);
 
+    // Ein leerer Block ist im Chat ein leerer Rahmen - genau das stand im
+    // Fenster unter der Antwort. Es entsteht, wenn das Aktionsmarkup aus dem
+    // Text geschnitten wird und nur der Zaun uebrig bleibt.
+    const leer = renderMdBasic('Erledigt.\n\n```\n```');
+    check('leerer Code-Block wird nicht gezeigt', !leer.includes('<pre'), leer);
+    check('der Text darueber bleibt', leer.includes('Erledigt.'), leer);
+
+    const nurZaun = renderMdBasic('```js\n\n\n```');
+    check('Block nur aus Leerzeilen wird nicht gezeigt', nurZaun === '', nurZaun);
+
+    const offenLeer = renderMdBasic('Ich schreibe:\n```ts\n');
+    check('gerade geoeffneter Block bleibt leer',
+        !offenLeer.includes('<pre'), offenLeer);
+
     const inlineCode = renderMdBasic('Nutze `npm test` dafuer.');
     check('Inline-Code', inlineCode.includes('<code>npm test</code>'), inlineCode);
 }

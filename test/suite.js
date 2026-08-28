@@ -93,6 +93,57 @@ section('CodeAnalyzer: read_file');
     let blocked;
     try { blocked = analyzer.readFile('../../../etc/passwd'); } catch (e) { blocked = { success: false, output: e.message }; }
     check('Workspace-Grenze haelt', !blocked.success, blocked.output.slice(0, 80));
+
+    // ── Fuehrender Schraegstrich meint die Projektwurzel ─────────────────────
+    // Im Fenster-Lauf schrieb das Modell alle Pfade als /src/tokenizer.js. Unter
+    // Windows ist das laufwerksrelativ: daraus wurde C:\src\tokenizer.js,
+    // ausserhalb des Workspace, abgelehnt. Sieben Lesevorgaenge in Folge
+    // scheiterten, das Modell arbeitete eine ganze Runde blind.
+    const withSlash = analyzer.readFile('/src/services/userService.ts');
+    const without = analyzer.readFile('src/services/userService.ts');
+    check('/pfad wird als workspace-relativ gelesen',
+        withSlash.success && withSlash.output === without.output,
+        withSlash.output.slice(0, 120));
+    check('kein Sicherheitsfehler bei /pfad',
+        !/Sicherheitsfehler|verweigert/.test(withSlash.output), withSlash.output.slice(0, 120));
+
+    // Backslash-Pfade nur unter Windows: auf Linux ist "\" ein gueltiges
+    // Zeichen in Dateinamen, "src\index.ts" waere dort ein anderer Name.
+    if (process.platform === 'win32') {
+        check('auch mit Backslash', analyzer.readFile('\\src\\index.ts').success);
+    } else {
+        check('fuehrender Backslash wird abgetrennt',
+            require(path.join(PROJECT, 'out', 'fileManager.js'))
+                .FileManager.stripRootSlash('\\src\\index.ts') === 'src\\index.ts');
+    }
+
+    // Ein ECHTER absoluter Pfad bleibt abgelehnt - der Schutz darf nicht fallen
+    let abs;
+    try { abs = analyzer.readFile('C:\\Windows\\win.ini'); }
+    catch (e) { abs = { success: false, output: e.message }; }
+    check('echter absoluter Pfad bleibt abgelehnt', !abs.success, abs.output.slice(0, 80));
+
+    let wslAbs;
+    try { wslAbs = analyzer.readFile('/mnt/c/Windows/win.ini'); }
+    catch (e) { wslAbs = { success: false, output: e.message }; }
+    check('WSL-Laufwerkspfad bleibt abgelehnt', !wslAbs.success, wslAbs.output.slice(0, 80));
+
+    // ── Eine abgelehnte Analyse MUSS als Fehlschlag zurueckkommen ────────────
+    // Vorher meldete handleAnalysisAction pauschal success:true. Die Schleife
+    // hielt sieben abgelehnte Lesevorgaenge fuer getane Arbeit.
+    check('fehlende Datei ist als Fehler markiert', missing.error === true,
+        JSON.stringify({ success: missing.success, error: missing.error }));
+    check('gelesene Datei ist NICHT als Fehler markiert', !without.error,
+        JSON.stringify({ success: without.success, error: without.error }));
+
+    // "Keine Treffer" ist KEIN Fehler - sonst gilt jede ergebnislose Suche als
+    // Fehlschlag und die Schleife meldet sie zurueck, statt weiterzuarbeiten.
+    const nothing = analyzer.grep('zzz_gibt_es_ganz_sicher_nicht_zzz');
+    check('keine Treffer ist kein Fehler', !nothing.error,
+        JSON.stringify({ success: nothing.success, error: nothing.error }));
+    const noGlob = analyzer.glob('**/*.gibtsnicht');
+    check('kein Glob-Treffer ist kein Fehler', !noGlob.error,
+        JSON.stringify({ success: noGlob.success, error: noGlob.error }));
 }
 
 section('CodeAnalyzer: grep');
@@ -1565,9 +1616,85 @@ function runVerifyAfterChangeTests(cfg) {
 
     vscode.__settings.autoTest = vorher;
 
+    // ── Eine Runde, die nur den Plan umschreibt, ist keine Arbeit ───────────
+    // Im Fenster-Lauf sagte der Assistent "ich fuehre jetzt die Tests aus" und
+    // schickte nur einen Plan, in dem der Testschritt abgehakt war. Fuer die
+    // Schleife sah das nach Fortschritt aus.
+    engine.lastActionSignature = '';
+    engine.repeatCount = 0;
+    engine.plan = [{ text: 'Tests ausfuehren', status: 'done' }];
+    const nurPlan = engine.planNextStep(
+        [{ type: 'plan', description: 'Plan: 1/1 erledigt', success: true }], 1, cfg);
+    check('Plan allein wird benannt',
+        nurPlan !== null && /ONLY UPDATED BOOKKEEPING/.test(nurPlan.prompt),
+        nurPlan && nurPlan.prompt.slice(0, 90));
+    check('und der Testlauf eingefordert',
+        nurPlan !== null && /action:shell/.test(nurPlan.prompt),
+        nurPlan && nurPlan.prompt);
+
+    // Plan PLUS echte Arbeit ist Arbeit - dann greift der Zweig nicht
+    engine.lastActionSignature = '';
+    engine.repeatCount = 0;
+    const planUndArbeit = engine.planNextStep([
+        { type: 'plan', description: 'Plan: 1/2 erledigt', success: true },
+        { type: 'shell', description: 'npm test', success: true, output: '11/11 gruen' }
+    ], 1, cfg);
+    check('Plan mit echter Arbeit greift den Zweig nicht',
+        planUndArbeit !== null && !/BOOKKEEPING/.test(planUndArbeit.prompt),
+        planUndArbeit && planUndArbeit.reason);
+    engine.plan = [];
+
     runShellChoiceTests();
     runCommandTests();
+    runCallbackWiringTests();
     return runAskUserTests().then(() => runQueueTests());
+}
+
+// ── Beide Bahnen muessen ALLE Rueckmeldewege setzen ─────────────────────────
+// Der Fehler, der das noetig macht: die /loop-Bahn setzte nur zwei der fuenf
+// Callbacks. In der Schleife fehlte darum die Token-Statistik - der Benutzer sah
+// minutenlang "KI denkt..." ohne jede Zahl. Beide Bahnen rufen jetzt
+// bindEngineCallbacks() auf; dieser Test haelt fest, dass keine davon
+// eigenmaechtig einzelne Callbacks setzt.
+function runCallbackWiringTests() {
+    section('Chat-Panel: alle Rueckmeldewege gesetzt');
+
+    const src = fs.readFileSync(path.join(PROJECT, 'src', 'chatPanel.ts'), 'utf-8');
+
+    // Beide Bahnen binden ueber die gemeinsame Stelle
+    const calls = (src.match(/this\.bindEngineCallbacks\(\)/g) || []).length;
+    check('runUserMessage und runLoopTask binden gemeinsam', calls >= 2, String(calls));
+
+    // Die einzelnen Setter kommen NUR in bindEngineCallbacks vor. Ein zweiter
+    // Aufruf woanders heisst: eine Bahn setzt von Hand und kann etwas vergessen.
+    for (const setter of ['setStatsCallback', 'setNarrationCallback', 'setAskCallback',
+                          'setPlanCallback', 'setDiffReporter']) {
+        const n = (src.match(new RegExp(`\\.${setter}\\(`, 'g')) || []).length;
+        check(`${setter} nur an einer Stelle`, n === 1,
+            `${n}x gefunden – gehoert ausschliesslich in bindEngineCallbacks`);
+    }
+
+    // Auch der Token-Strom gehoert BEIDEN Bahnen. Die Schleife gab hier lange
+    // einen leeren Callback mit ("der Rundentext kommt ja als Ansage") - im
+    // Fenster hiess das: zwei Minuten "Antwort wird erzeugt... 1.6k Tok" und
+    // kein Zeichen im Chat. Ein Reasoning-Modell verbringt genau dort die
+    // meiste Zeit, und der <think>-Block waere aufklappbar zu sehen gewesen.
+    const streamBuilds = (src.match(/this\.buildStreamFn\(\)/g) || []).length;
+    check('beide Bahnen holen sich den Token-Strom', streamBuilds >= 2,
+        String(streamBuilds));
+    check('kein leerer Stream-Callback mehr',
+        !/\(\)\s*=>\s*\{\s*\/\*[^*]*Stream[^*]*\*\/\s*\}/.test(src),
+        'ein Aufruf uebergibt noch eine leere Funktion als onStream');
+
+    // Und bindEngineCallbacks setzt wirklich alle fuenf
+    const body = src.slice(src.indexOf('private bindEngineCallbacks'));
+    const end = body.indexOf('\n    }');
+    const inner = body.slice(0, end);
+    for (const setter of ['setPlanCallback', 'setDiffReporter', 'setStatsCallback',
+                          'setNarrationCallback', 'setAskCallback']) {
+        check(`bindEngineCallbacks setzt ${setter}`, inner.includes(setter + '('),
+            'fehlt');
+    }
 }
 
 // ── Slash-Befehle: /goal, /loop, /help ──────────────────────────────────────
@@ -1959,6 +2086,218 @@ function runDisplayStripTests() {
     }).then(actions => {
         check('dieselbe Datei zweimal gelesen: nur einmal', actions.length === 1,
             JSON.stringify(actions.map(a => a.description)));
+
+        return runSeparatorTests();
+    }).then(() => {
+        return runFeedbackTests();
+    });
+}
+
+// ── Jede Aktion muss im Chat sichtbar werden ────────────────────────────────
+// Der Fehler: acht Handler riefen onActionProgress gar nicht auf. Eine
+// angelegte Datei, ein abgelehnter Befehl, eine gemerkte Regel - alles lief,
+// und im Chat stand nichts. Beim Shell-Befehl war es besonders sichtbar: das
+// Kommando selbst tauchte nie auf, obwohl genau das die Frage ist, wenn ein
+// Lauf schiefgeht.
+//
+// Nachgetragen wird die Zeile jetzt zentral in parseAndExecuteActions. Dieser
+// Test haelt das fest, damit eine neue Aktion nicht wieder still bleibt.
+// ── Der fehlende "---"-Trenner ──────────────────────────────────────────────
+// Im Fenster-Lauf starben SECHS Schreibversuche hintereinander an
+// 'Kein "---" Trenner gefunden' - patch_file dreimal, dann replace_lines,
+// edit_file und create_file. Der Assistent kam erst weiter, als er zu `sed`
+// ueber die Shell griff. Sechs Runden fuer einen Operator.
+//
+// Der Trenner ist ableitbar: der Kopf besteht aus bekannten "key: value"-Zeilen,
+// der Rumpf beginnt bei der ersten Zeile, die keine ist.
+function runSeparatorTests() {
+    section('Aktionsbloecke ohne "---" Trenner');
+
+    const split = AIEngine.splitHeaderAndBody.bind(AIEngine);
+
+    // Mit Trenner bleibt alles wie es war - er hat Vorrang
+    const mit = split('path: a.ts\n---\nexport const a = 1;');
+    check('mit Trenner: Kopf', mit.header.trim() === 'path: a.ts', JSON.stringify(mit));
+    check('mit Trenner: Rumpf', mit.body === 'export const a = 1;', JSON.stringify(mit));
+
+    // Und er hat Vorrang, auch wenn der Inhalt selbst wie ein Kopf aussieht
+    const yaml = split('path: conf.yml\n---\npath: /var/log\nmode: append');
+    check('Trenner schlaegt inhaltsgleiche Kopfzeile',
+        yaml.body === 'path: /var/log\nmode: append', JSON.stringify(yaml));
+
+    // Ohne Trenner: der Rumpf beginnt nach den Kopfzeilen
+    const ohne = split('path: src/tokenizer.js\n<<<SEARCH\nalt\n>>>REPLACE\nneu');
+    check('ohne Trenner: Kopf erkannt', ohne.header.trim() === 'path: src/tokenizer.js',
+        JSON.stringify(ohne));
+    check('ohne Trenner: Rumpf ab <<<SEARCH',
+        ohne.body === '<<<SEARCH\nalt\n>>>REPLACE\nneu', JSON.stringify(ohne));
+
+    const mehrere = split('path: a.ts\nstart_line: 3\nend_line: 7\nconst x = 1;');
+    check('mehrere Kopfzeilen', /start_line: 3/.test(mehrere.header)
+        && mehrere.body === 'const x = 1;', JSON.stringify(mehrere));
+
+    // Nur Kopfzeilen: da ist nichts zu raten, der Aufrufer soll meckern
+    check('nur Kopfzeilen gibt leeren Kopf zurueck',
+        split('path: a.ts').header === '', JSON.stringify(split('path: a.ts')));
+    check('leerer Block ebenso', split('').header === '');
+
+    // Und jetzt durch den echten Parser: genau die Bloecke aus dem Lauf
+    const rows = [];
+    const collect = (d, o, m) => rows.push({ d, o, m });
+    // Die Bestaetigung heisst je nach Aktion anders - "Anwenden" beim Patch,
+    // "Ausfuehren" bei der Shell. Wer pauschal "Ausfuehren" antwortet, lehnt
+    // den Patch ab, ohne es zu merken.
+    const jaBitte = async (_msg, choices) =>
+        (choices && choices.includes('Anwenden')) ? 'Anwenden' : 'Ausführen';
+    const run = (response) => {
+        rows.length = 0;
+        return engine.parseAndExecuteActions(response, jaBitte, collect);
+    };
+
+    return run([
+        '```action:create_file',
+        'path: ohne-trenner.txt',
+        'Zeile eins',
+        'Zeile zwei',
+        '```'
+    ].join('\n')).then(actions => {
+        check('create_file ohne Trenner wird ausgefuehrt',
+            actions.length === 1 && actions[0].success === true,
+            JSON.stringify(actions));
+        const geschrieben = fs.readFileSync(path.join(SANDBOX, 'ohne-trenner.txt'), 'utf-8');
+        check('und der Inhalt ist der Rumpf, nicht der Kopf',
+            geschrieben.trim() === 'Zeile eins\nZeile zwei', JSON.stringify(geschrieben));
+
+        return run([
+            '```action:patch_file',
+            'path: src/index.ts',
+            '<<<SEARCH',
+            'const svc = new UserService();',
+            '>>>REPLACE',
+            'const svc = new UserService(); /* gepatcht */',
+            '```'
+        ].join('\n'));
+    }).then(actions => {
+        check('patch_file ohne Trenner wird angewendet',
+            actions.length === 1 && actions[0].success === true,
+            JSON.stringify(actions));
+        const datei = fs.readFileSync(path.join(SANDBOX, 'src', 'index.ts'), 'utf-8');
+        check('der Patch steht in der Datei', datei.includes('/* gepatcht */'),
+            datei.slice(0, 120));
+    });
+}
+
+function runFeedbackTests() {
+    section('Rueckmeldung: jede Aktion bekommt eine Zeile');
+
+    // Reine Beschriftungsfunktionen
+    check('toolLabel: shell -> Bash', AIEngine.toolLabel('shell') === 'Bash');
+    check('toolLabel: create_file -> Write', AIEngine.toolLabel('create_file') === 'Write');
+    check('toolLabel: unbekannt bleibt stehen', AIEngine.toolLabel('quatsch') === 'quatsch');
+    check('actionTarget: Pfad aus der Kopfzeile',
+        AIEngine.actionTarget('create_file', 'path: src/neu.ts\n---\nx', 'Datei erstellt')
+            === 'src/neu.ts');
+    check('actionTarget: Shell nimmt den Befehl',
+        AIEngine.actionTarget('shell', 'npm run build', 'Shell') === 'npm run build');
+    check('actionTarget: Shell mit Kopfzeile nimmt nur den Befehl',
+        AIEngine.actionTarget('shell', 'shell: powershell\nGet-Date', 'Shell') === 'Get-Date');
+
+    const rows = [];
+    const collect = (description, output, meta) => rows.push({ description, output, meta });
+    const run = (response, answer = 'Ausführen') => {
+        rows.length = 0;
+        return engine.parseAndExecuteActions(response, async () => answer, collect);
+    };
+
+    // 1. Der gemeldete Fehler: ein abgelehnter Befehl hinterliess keine Spur.
+    return run('```action:shell\nnpm run build\n```', 'Ablehnen').then(() => {
+        check('abgelehnter Befehl bekommt eine Zeile', rows.length === 1,
+            JSON.stringify(rows));
+        check('und das Kommando steht darin',
+            rows[0] && rows[0].meta && rows[0].meta.target === 'npm run build',
+            JSON.stringify(rows[0] && rows[0].meta));
+        check('als Fehlschlag markiert', rows[0] && rows[0].meta.ok === false,
+            JSON.stringify(rows[0] && rows[0].meta));
+
+        // 2. Eine angelegte Datei
+        return run('```action:create_file\npath: rueckmeldung.txt\n---\nhallo\n```');
+    }).then(() => {
+        check('create_file bekommt eine Zeile', rows.length === 1, JSON.stringify(rows));
+        check('mit Werkzeug Write', rows[0] && rows[0].meta.tool === 'Write',
+            JSON.stringify(rows[0] && rows[0].meta));
+        check('mit dem Pfad als Ziel', rows[0] && rows[0].meta.target === 'rueckmeldung.txt',
+            JSON.stringify(rows[0] && rows[0].meta));
+
+        // 3. Eine gemerkte Regel
+        return run('```action:remember\nregel: Erst lesen, dann patchen.\nwarum: Patch schlug fehl.\n```');
+    }).then(() => {
+        check('remember bekommt eine Zeile', rows.length === 1, JSON.stringify(rows));
+        check('mit Werkzeug Gelernt', rows[0] && rows[0].meta.tool === 'Gelernt',
+            JSON.stringify(rows[0] && rows[0].meta));
+
+        // 4. read_file meldet selbst - dann KEINE zweite Zeile
+        return run('```action:read_file\npath: src/index.ts\n```');
+    }).then(() => {
+        const eigene = rows.filter(r => r.meta && r.meta.tool === 'Read');
+        check('read_file meldet selbst', eigene.length >= 1, JSON.stringify(rows));
+        check('und wird nicht doppelt gemeldet',
+            rows.filter(r => !r.meta.running).length === 1, JSON.stringify(rows));
+
+        // 5. Plan und done zeigen sich selbst - keine Werkzeugzeile
+        return run('```action:plan\n- [ ] Schritt eins\n```');
+    }).then(() => {
+        check('Plan bekommt KEINE Werkzeugzeile', rows.length === 0, JSON.stringify(rows));
+
+        return run('```action:done\nzusammenfassung: fertig\n```');
+    }).then(() => {
+        check('done bekommt KEINE Werkzeugzeile', rows.length === 0, JSON.stringify(rows));
+        engine.taskComplete = false;
+
+        // 5b. Eine Aktion, die einen Fehler WIRFT, braucht ihre Zeile ebenso.
+        //     Im Fenster-Lauf stand die Ansage "Tokenizer erweitern", vier
+        //     Zeilen spaeter "1 Aenderung nicht angewendet" - und dazwischen
+        //     nichts darueber, WELCHE Aenderung und warum.
+        return run([
+            '```action:patch_file',
+            'path: src/index.ts',
+            '---',
+            '<<<SEARCH',
+            'diesen Text gibt es in der Datei nicht',
+            '>>>REPLACE',
+            'ersetzt',
+            '```'
+        ].join('\n'));
+    }).then(() => {
+        check('geworfener Fehler bekommt eine Zeile', rows.length === 1,
+            JSON.stringify(rows));
+        check('als Fehlschlag markiert', rows[0] && rows[0].meta.ok === false,
+            JSON.stringify(rows[0] && rows[0].meta));
+        check('mit dem Pfad als Ziel', rows[0] && rows[0].meta.target === 'src/index.ts',
+            JSON.stringify(rows[0] && rows[0].meta));
+        check('und der Grund steht in der Ausgabe',
+            rows[0] && /nicht gefunden|nicht enthalten|Suchtext|SEARCH/i.test(rows[0].output),
+            rows[0] && rows[0].output);
+
+        // 6. Und der Grundsatz: kein Aktionstyp bleibt stumm.
+        const mix = [
+            '```action:create_file',
+            'path: stumm/a.txt',
+            '---',
+            'x',
+            '```',
+            '```action:delete_file',
+            'path: stumm/a.txt',
+            '```',
+            '```action:glob',
+            'pattern: **/*.ts',
+            '```'
+        ].join('\n');
+        return run(mix);
+    }).then(actions => {
+        check('drei Aktionen, drei sichtbare Zeilen',
+            actions.length === 3 && rows.filter(r => !r.meta.running).length === 3,
+            `${actions.length} Aktionen, ${rows.length} Zeilen: `
+            + JSON.stringify(rows.map(r => r.meta && r.meta.tool)));
     });
 }
 

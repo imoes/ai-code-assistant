@@ -55,6 +55,15 @@ export type StreamCallback = (token: string, done: boolean) => void;
  * is and how fast the model operates.
  */
 export interface GenerationStats {
+    /**
+     * Name of the tool call currently being assembled, if there is one.
+     *
+     * With native tool calling the model writes nothing into `content`: it puts
+     * everything into `tool_calls`. In the window that looked like this – 2.1k
+     * tokens generated, and not one character in the chat. The counter was the
+     * only sign that anything was happening at all, and it does not say WHAT.
+     */
+    tool?: string;
     /** Ausgewertete Prompt-Tokens (Eingabe) */
     promptTokens: number;
     /** Prompt-Tokens pro Sekunde */
@@ -549,7 +558,12 @@ export class MCPClient {
 
                             // Kennzahlen weitergeben (llama.cpp liefert sie pro Chunk)
                             if (onStats && (evt.timings || evt.prompt_progress)) {
-                                onStats(this.readStats(evt));
+                                const stats = this.readStats(evt);
+                                // Whichever call is being assembled right now –
+                                // the last one with a name.
+                                const named = [...toolAcc.values()].filter(e => e.name);
+                                if (named.length > 0) stats.tool = named[named.length - 1].name;
+                                onStats(stats);
                             }
 
                             // DeepSeek R1: reasoning_content → als <think> Block streamen

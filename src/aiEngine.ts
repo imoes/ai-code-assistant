@@ -341,7 +341,7 @@ export class AIEngine {
         onIteration?: IterationCallback,
         onActionProgress?: ActionProgressCallback,
         onRound?: (round: number, total: number, note: string) => void
-    ): Promise<{ rounds: number; actions: number; stopped: string }> {
+    ): Promise<{ rounds: number; actions: number; stopped: string; log: ExecutedAction[] }> {
         const started = Date.now();
         const deadline = started + budget.minutes * 60_000;
         const goal = this.getGoal();
@@ -349,6 +349,10 @@ export class AIEngine {
         let rounds = 0;
         let actions = 0;
         let idleRounds = 0;
+        // Every action of every round, so that at the end there is a list of
+        // what was actually done. A single run gets that panel; the loop only
+        // reported "7 Runden, 23 Aktionen" and the detail scrolled away.
+        const log: ExecutedAction[] = [];
         let stopped = 'Budget aufgebraucht';
 
         this.loopActive = true;
@@ -381,6 +385,7 @@ export class AIEngine {
                     prompt, onStream, confirmFn, onIteration, 0, onActionProgress
                 );
                 actions += result.actions.length;
+                log.push(...result.actions);
 
                 if (this.cancelled) { stopped = 'abgebrochen'; break; }
 
@@ -405,7 +410,7 @@ export class AIEngine {
 
         this.logger.info(
             `Schleife beendet nach ${rounds} Runde(n), ${actions} Aktion(en): ${stopped}`);
-        return { rounds, actions, stopped };
+        return { rounds, actions, stopped, log };
     }
 
     /** Is a `/loop` loop currently running? */
@@ -999,6 +1004,31 @@ and append it as the last action:shell block.` : '';
                     `necessary steps right away (action blocks). ` +
                     `If the output already answers the task: write the answer now and finish ` +
                     `with action:done. Do NOT pick up a task from an earlier session.`
+            };
+        }
+
+        // ── 3b. The round was nothing but bookkeeping ─────────────────────────
+        // In the window run the assistant said "I am updating the plan and will
+        // now run the tests" – and sent nothing but a plan in which the test
+        // step was ticked off. Nobody ran anything. To the loop the round looked
+        // like progress, because the plan had moved, so it carried on and lost
+        // the test run silently.
+        //
+        // A plan is an announcement, not an execution. If a round is spent on
+        // nothing else, it is named here.
+        const onlyBookkeeping = actions.length > 0
+            && actions.every(a => a.type === 'plan' || (a.type === 'info' && !this.taskComplete));
+        if (onlyBookkeeping && agentLoop) {
+            return {
+                reason: 'Nur der Plan wurde bewegt – Schritt ausführen…',
+                prompt:
+                    `${task}THAT ROUND ONLY UPDATED BOOKKEEPING – no work was done.\n` +
+                    `A plan is an announcement, not an execution. Marking a step as done ` +
+                    `does not make it done.\n\n` +
+                    `Carry out the next open step NOW with a real action block ` +
+                    `(read_file, patch_file, create_file, shell, …). ` +
+                    `If a step says "run the tests", then run them with action:shell. ` +
+                    `If everything really is finished: action:done.`
             };
         }
 
@@ -1785,6 +1815,46 @@ and append it as the last action:shell block.` : '';
         return text;
     }
 
+    /**
+     * These actions already show themselves in the chat: the plan as a card with
+     * ticks, `done` as the answer text. A second row with the same output in a
+     * monospace box would not be more feedback, only more text.
+     */
+    static readonly HAS_OWN_DISPLAY = new Set(['plan', 'todo', 'done', 'finish']);
+
+    /** Tool name for the row in the chat – short, the way a terminal reads. */
+    static toolLabel(actionType: string): string {
+        const labels: Record<string, string> = {
+            read_file: 'Read', grep: 'Grep', glob: 'Glob', list_dir: 'List',
+            create_file: 'Write', edit_file: 'Write', patch_file: 'Patch',
+            replace_lines: 'Patch', delete_file: 'Delete',
+            shell: 'Bash', web_search: 'Search', web_fetch: 'Fetch',
+            plan: 'Plan', todo: 'Plan', done: 'Fertig', finish: 'Fertig',
+            remember: 'Gelernt', ask_user: 'Frage'
+        };
+        return labels[actionType] ?? actionType;
+    }
+
+    /**
+     * What an action was applied to, for the row in the chat: the path, the
+     * command, the question. Without it the row shows only the tool name.
+     */
+    static actionTarget(actionType: string, block: string, description: string): string {
+        // File actions carry the path in a header line.
+        const path = /^\s*path:\s*(.+)$/mi.exec(block);
+        if (path) return path[1].trim();
+
+        if (actionType === 'shell') {
+            const { command } = AIEngine.parseShellBlock(block);
+            return command.trim().split('\n')[0].slice(0, 80);
+        }
+
+        // Otherwise the part of the description after the colon –
+        // "Plan: 4/5 erledigt" becomes "4/5 erledigt".
+        const afterColon = /^[^:]{1,24}:\s*(.+)$/.exec(description);
+        return (afterColon?.[1] ?? description).trim().slice(0, 80);
+    }
+
     private async parseAndExecuteActions(response: string, confirm: ConfirmFn, onActionProgress?: ActionProgressCallback): Promise<ExecutedAction[]> {
         const executed: ExecutedAction[] = [];
 
@@ -1830,6 +1900,18 @@ and append it as the last action:shell block.` : '';
             }
             seenBlocks.add(blockKey);
 
+            // Does the handler report for itself? Then no second row is added.
+            // A handler's own reports are better labelled ("Read src/x.ts · 74
+            // Zeilen", a running state for long fetches), so they take
+            // precedence – the fallback below is only the safety net.
+            let reported = false;
+            const reportingProgress: ActionProgressCallback | undefined = onActionProgress
+                ? (description, output, meta) => {
+                    reported = true;
+                    onActionProgress(description, output, meta);
+                }
+                : undefined;
+
             // Plan mode: read-only and planning. Models occasionally attempt to write despite
             // a filtered tool catalog – here is
             // the hard limit, not in the prompt.
@@ -1862,25 +1944,25 @@ and append it as the last action:shell block.` : '';
                         executed.push(await this.handleDeleteAction(blockContent, confirm));
                         break;
                     case 'shell':
-                        executed.push(await this.handleShellAction(blockContent, confirm, onActionProgress));
+                        executed.push(await this.handleShellAction(blockContent, confirm, reportingProgress));
                         break;
                     case 'remember':
                         executed.push(this.handleRememberAction(blockContent));
                         break;
                     case 'ask_user':
-                        executed.push(await this.handleAskUserAction(blockContent, confirm, onActionProgress));
+                        executed.push(await this.handleAskUserAction(blockContent, confirm, reportingProgress));
                         break;
                     case 'web_search':
-                        executed.push(await this.handleWebSearchAction(blockContent, onActionProgress));
+                        executed.push(await this.handleWebSearchAction(blockContent, reportingProgress));
                         break;
                     case 'web_fetch':
-                        executed.push(await this.handleWebFetchAction(blockContent, onActionProgress));
+                        executed.push(await this.handleWebFetchAction(blockContent, reportingProgress));
                         break;
                     case 'read_file':
                     case 'grep':
                     case 'glob':
                     case 'list_dir':
-                        executed.push(this.handleAnalysisAction(actionType, blockContent, onActionProgress));
+                        executed.push(this.handleAnalysisAction(actionType, blockContent, reportingProgress));
                         break;
                     case 'plan':
                     case 'todo':
@@ -1900,6 +1982,23 @@ and append it as the last action:shell block.` : '';
                 if (last) {
                     if (actionType === 'shell') this.console.command(blockContent.trim());
                     this.console.action(last.description, last.output, last.success);
+
+                    // If the handler reported nothing itself, a row is added
+                    // here. Otherwise the action stays invisible in the chat:
+                    // the five writing handlers, the plan, `done` and
+                    // `remember` never called onActionProgress – the user saw
+                    // the announcement and then nothing, although a file had
+                    // been written.
+                    //
+                    // Centrally and not in every handler, so that a new action
+                    // CANNOT slip through unreported.
+                    if (!reported && !AIEngine.HAS_OWN_DISPLAY.has(actionType)) {
+                        onActionProgress?.(last.description, last.output ?? '', {
+                            tool: AIEngine.toolLabel(actionType),
+                            target: AIEngine.actionTarget(actionType, blockContent, last.description),
+                            ok: last.success
+                        });
+                    }
                 }
             } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
@@ -1911,6 +2010,20 @@ and append it as the last action:shell block.` : '';
                     output: errMsg
                 });
                 this.console.problem(`Aktion '${actionType}': ${errMsg}`);
+
+                // A thrown error needs its row too – this is the case that
+                // matters most. A patch whose search text does not match throws,
+                // and in the window run the chat showed the announcement
+                // "Tokenizer erweitern" and then, four lines later, "1 Änderung
+                // nicht angewendet" – without ever saying WHICH change or why.
+                if (!reported) {
+                    onActionProgress?.(`${actionType}: ${errMsg}`, errMsg, {
+                        tool: AIEngine.toolLabel(actionType),
+                        target: AIEngine.actionTarget(actionType, blockContent, errMsg),
+                        detail: 'fehlgeschlagen',
+                        ok: false
+                    });
+                }
             }
         }
         return executed;
@@ -1938,15 +2051,58 @@ and append it as the last action:shell block.` : '';
         return code;
     }
 
+    /** Header keys a writing action block may carry before its body. */
+    private static readonly BLOCK_HEADER_KEYS =
+        /^(path|start_line|end_line|shell|encoding|mode)[ \t]*:/i;
+
+    /**
+     * Split a writing action block into its header lines and its body.
+     *
+     * The documented form separates the two with a line of `---`. Models leave
+     * that line out all the time, and until now the block was simply rejected:
+     * in one window run SIX attempts in a row died on `Kein "---" Trenner
+     * gefunden` – patch_file three times, then replace_lines, edit_file and
+     * create_file – and the assistant only got anywhere by falling back to
+     * `sed` through the shell. Six rounds for one operator.
+     *
+     * The separator is redundant anyway: the header consists of known
+     * `key: value` lines, so the body starts at the first line that is not one.
+     * With an explicit `---` nothing changes – it stays authoritative, which
+     * matters for a file whose own first line looks like a header.
+     */
+    static splitHeaderAndBody(content: string): { header: string; body: string } {
+        // Accepts '---', '--- ', '---\r\n', '---\n', also without a trailing newline
+        const sep = content.match(/^---[ \t]*(\r?\n|$)/m);
+        if (sep && sep.index !== undefined) {
+            return {
+                header: content.slice(0, sep.index),
+                body: content.slice(sep.index + sep[0].length)
+            };
+        }
+
+        // No separator: read header lines from the top until one is not a header.
+        const lines = content.split('\n');
+        let i = 0;
+        while (i < lines.length) {
+            const line = lines[i];
+            if (line.trim() === '' || AIEngine.BLOCK_HEADER_KEYS.test(line)) { i++; continue; }
+            break;
+        }
+
+        // Nothing but header lines is not a block we can guess at – let the
+        // caller report the missing separator rather than write an empty file.
+        if (i === 0 || i >= lines.length) return { header: '', body: '' };
+
+        return { header: lines.slice(0, i).join('\n'), body: lines.slice(i).join('\n') };
+    }
+
     private async handleFileAction(type: 'create_file' | 'edit_file', content: string, confirm: ConfirmFn): Promise<ExecutedAction> {
-        // Separator search: accepts '---', '--- ', '---\r\n', '---\n', also without newline at the end
-        const sepMatch = content.match(/^---[ \t]*(\r?\n|$)/m);
-        if (!sepMatch || sepMatch.index === undefined) throw new Error('Kein "---" Trenner im Aktionsblock gefunden');
-        const pathMatch = content.slice(0, sepMatch.index).match(/^path:\s*(.+)$/m);
+        const { header, body } = AIEngine.splitHeaderAndBody(content);
+        if (!header) throw new Error('Kein "---" Trenner im Aktionsblock gefunden');
+        const pathMatch = header.match(/^path:\s*(.+)$/m);
         if (!pathMatch) throw new Error('Kein "path:" gefunden');
         const filePath = pathMatch[1].trim();
-        const fileContent = this.cleanCodeForWrite(
-            content.slice(sepMatch.index + sepMatch[0].length), `${type}`);
+        const fileContent = this.cleanCodeForWrite(body, `${type}`);
 
         // Smart-merge during edit_file: The AI often provides only a part of the file.
         // If the new version is significantly shorter → use smart-merge instead of a full replace.
@@ -1994,10 +2150,9 @@ and append it as the last action:shell block.` : '';
     }
 
     private async handleReplaceLinesAction(content: string, confirm: ConfirmFn): Promise<ExecutedAction> {
-        const sepMatch2 = content.match(/^---[ \t]*(\r?\n|$)/m);
-        if (!sepMatch2 || sepMatch2.index === undefined) throw new Error('Kein "---" Trenner gefunden');
+        const { header, body } = AIEngine.splitHeaderAndBody(content);
+        if (!header) throw new Error('Kein "---" Trenner gefunden');
 
-        const header = content.slice(0, sepMatch2.index);
         const pathMatch      = header.match(/^path:\s*(.+)$/m);
         const startLineMatch = header.match(/^start_line:\s*(\d+)$/m);
         const endLineMatch   = header.match(/^end_line:\s*(\d+)$/m);
@@ -2005,8 +2160,7 @@ and append it as the last action:shell block.` : '';
         if (!pathMatch) throw new Error('Kein "path:" gefunden');
 
         const filePath   = pathMatch[1].trim();
-        const newContent = this.cleanCodeForWrite(
-            content.slice(sepMatch2.index + sepMatch2[0].length), 'replace_lines');
+        const newContent = this.cleanCodeForWrite(body, 'replace_lines');
 
         // Fallback: file does not exist → create
         if (!this.fileManager.readFile(filePath)) {
@@ -2034,12 +2188,11 @@ and append it as the last action:shell block.` : '';
     }
 
     private async handlePatchAction(content: string, confirm: ConfirmFn): Promise<ExecutedAction> {
-        const sepMatch3 = content.match(/^---[ \t]*(\r?\n|$)/m);
-        if (!sepMatch3 || sepMatch3.index === undefined) throw new Error('Kein "---" Trenner gefunden');
-        const pathMatch = content.slice(0, sepMatch3.index).match(/^path:\s*(.+)$/m);
+        const { header, body: patchBody } = AIEngine.splitHeaderAndBody(content);
+        if (!header) throw new Error('Kein "---" Trenner gefunden');
+        const pathMatch = header.match(/^path:\s*(.+)$/m);
         if (!pathMatch) throw new Error('Kein "path:" gefunden');
         const filePath = pathMatch[1].trim();
-        const patchBody = content.slice(sepMatch3.index + sepMatch3[0].length);
 
         // Parsing SEARCH/REPLACE blocks: <<<SEARCH\n...\n>>>REPLACE\n...\n (end = next block or EOF)
         // Also accepts old format <<<SEARCH>>> for backward compatibility
@@ -2436,15 +2589,22 @@ and append it as the last action:shell block.` : '';
             tool: DISPLAY[type] ?? type,
             target: parsed?.[1]?.trim(),
             detail: parsed?.[2]?.trim(),
-            ok: true
+            ok: !result.error
         });
 
         return {
             type: 'analysis',
             description: result.description,
-            // Analyse gilt als erfolgreich, auch wenn nichts gefunden wurde –
-            // "keine Treffer" ist ein gültiges Ergebnis, kein Fehler.
-            success: true,
+            // „Keine Treffer" ist ein gültiges Ergebnis und zählt als Erfolg.
+            // Konnte die Analyse gar nicht laufen – Datei fehlt, Pfad außerhalb
+            // des Workspace –, ist es ein Fehlschlag und muss als solcher
+            // zurückgemeldet werden.
+            //
+            // Vorher stand hier fest `success: true`. Im Fenster-Lauf schrieb
+            // das Modell die Pfade mit führendem Schrägstrich, alle sieben
+            // Lesevorgänge wurden abgelehnt – und die Schleife hielt das für
+            // getane Arbeit. Es arbeitete eine ganze Runde blind.
+            success: !result.error,
             output: result.output
         };
     }

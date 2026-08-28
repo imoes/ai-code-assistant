@@ -2,6 +2,20 @@
 
 All notable changes to this project. Latest version at the top.
 
+## 0.11.8
+
+- **You see everything the assistant does.** Every action now leaves a line in the chat:
+  the shell command in full, the path it wrote, the output it got back, and the reason
+  when something failed. Before, five of the writing actions and every error that was
+  thrown reported nothing at all — a file was created, a patch did not apply, and the chat
+  showed the announcement and then silence. A `/loop` run closes with a summary of every
+  action across all its rounds, so you do not have to scroll back through eight of them.
+- **And you see that it is still working.** While the assistant writes a tool call there is
+  no text to show — with native tool calling the model puts everything into the call. The
+  status line now names what is being written ("Datei wird geschrieben… 2.1k Tok") instead
+  of leaving you with a number that does not say what it counts, and it no longer goes
+  quiet inside a loop after the first round.
+
 ## 0.11.0
 
 - **A goal that sticks: `/goal`.** The goal is not the task of one round; it is what all
