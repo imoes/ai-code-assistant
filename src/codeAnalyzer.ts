@@ -105,9 +105,16 @@ export class CodeAnalyzer {
             : '';
 
         this.logger.info(`read_file: ${relPath} (Zeile ${start}–${end} von ${lines.length})`);
+
+        // Die Ausgabe wiederholt den Pfad NICHT: die Anzeige hat ihn schon in
+        // der Kopfzeile, und im Chat las man ihn sonst zweimal. Die Gesamtzahl
+        // der Zeilen wandert in die Beschreibung, wo sie hingehört.
+        const range = end < lines.length || start > 1
+            ? `L${start}–${end} von ${lines.length}`
+            : `${lines.length} Zeilen`;
         return {
-            description: `read_file: ${relPath} (L${start}–${end})`,
-            output: `Datei ${relPath} (${lines.length} Zeilen gesamt):\n${body}${footer}`,
+            description: `read_file: ${relPath} (${range})`,
+            output: `${body}${footer}`,
             success: true
         };
     }

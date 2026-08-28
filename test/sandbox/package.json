@@ -1,0 +1,7 @@
+{
+  "name": "sandbox",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "echo ok"
+  }
+}

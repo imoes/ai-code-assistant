@@ -2,6 +2,29 @@
 
 Alle nennenswerten Änderungen an diesem Projekt. Neueste Version oben.
 
+## 0.8.0
+
+- **Antworten werden als Markdown dargestellt:** Aufzählungen, nummerierte Listen,
+  Überschriften, Zitate, Tabellen, Links und Code-Blöcke mit Sprachangabe. Vorher standen
+  Listen als nackte Bindestriche im Text.
+- **Jede Aktion ist eine kompakte Zeile** – Punkt, Werkzeugname, Ziel – wie in einem
+  Terminal. Die Ausgabe zeigt vier Zeilen, der Rest steckt hinter „+N weitere Zeilen".
+- **Neues Werkzeug „Seite abrufen" (`web_fetch`):** holt eine Webseite und gibt ihren Text
+  an den Assistenten. Eine Suchtrefferliste besteht nur aus Titeln und Adressen – damit
+  lässt sich keine Frage beantworten. Erst der Seiteninhalt hilft.
+- **Web-Suche über mehrere Anbieter:** Tavily, Brave, Google oder eine eigene
+  SearXNG-Instanz (jeweils mit Schlüssel bzw. Adresse), DuckDuckGo als letzter Ausweg.
+  Ohne Schlüssel bleibt nur DuckDuckGo, und das drosselt stark – liefert die Suche nichts,
+  sagt der Assistent das jetzt deutlich und greift zu `web_fetch`, statt dieselbe Suche
+  zu wiederholen.
+- **Suchtreffer enthalten wieder Textauszüge.** Die Auswertung der DuckDuckGo-Seite hatte
+  nur Titel und Links geliefert, weil mehrere verschachtelte Elemente denselben
+  Klassen-Präfix tragen.
+- **Seitenabruf folgt Weiterleitungen.** Fast jede Dokumentationsseite antwortet mit
+  301 oder 302; vorher kam ein leerer Rumpf zurück.
+- Der Modus in der Seitenleiste zeigt alle drei Modi statt „Automatisch / Manuell".
+- `npm test` führt die komplette Testsuite aus (381 Prüfungen), die CI-Pipeline ebenfalls.
+
 ## 0.7.3
 
 - **Kein endloses Warten mehr, wenn der Server verstummt.** Die Streaming-Anfrage hatte

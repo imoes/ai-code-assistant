@@ -55,7 +55,7 @@ export interface ToolCallLogger {
 export const KNOWN_ACTIONS = new Set([
     'read_file', 'grep', 'glob', 'list_dir',
     'create_file', 'edit_file', 'replace_lines', 'patch_file', 'delete_file',
-    'shell', 'web_search', 'plan', 'todo', 'done', 'finish'
+    'shell', 'web_search', 'web_fetch', 'plan', 'todo', 'done', 'finish'
 ]);
 
 /**
@@ -96,6 +96,8 @@ export const ACTION_ALIASES: Record<string, string> = {
     run_terminal_cmd: 'shell', shell_command: 'shell',
     // Web
     search_web: 'web_search', web: 'web_search', browse: 'web_search',
+    fetch: 'web_fetch', fetch_url: 'web_fetch', open_url: 'web_fetch',
+    read_url: 'web_fetch', webfetch: 'web_fetch', url_fetch: 'web_fetch',
     // Planung
     todo_write: 'plan', update_plan: 'plan', write_todos: 'plan',
     task_list: 'plan', todos: 'plan',
@@ -161,7 +163,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 offset: numProp('1-basierte Startzeile (optional, Standard 1)'),
                 limit: numProp('Maximale Zeilenanzahl (optional, Standard 400)')
             },
-            required: ['path']
+            required: ['absicht', 'path']
         }
     },
     {
@@ -177,7 +179,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 path: strProp('Auf diesen Unterordner beschränken (optional)'),
                 ignore_case: strProp('"true" um Groß-/Kleinschreibung zu ignorieren (optional)')
             },
-            required: ['pattern']
+            required: ['absicht', 'pattern']
         }
     },
     {
@@ -189,7 +191,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 pattern: strProp('Glob-Muster, z.B. **/*.test.js')
             },
-            required: ['pattern']
+            required: ['absicht', 'pattern']
         }
     },
     {
@@ -201,7 +203,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 path: strProp('Verzeichnis relativ zum Workspace, z.B. src')
             },
-            required: ['path']
+            required: ['absicht', 'path']
         }
     },
     {
@@ -215,7 +217,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 steps: strProp('Eine Zeile pro Schritt: "- [ ] offen", "- [>] in Arbeit", "- [x] erledigt"')
             },
-            required: ['steps']
+            required: ['absicht', 'steps']
         }
     },
     {
@@ -229,7 +231,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 patch: strProp('Ein oder mehrere Blöcke der Form: '
                     + '<<<SEARCH\\n<exakter bestehender Code>\\n>>>REPLACE\\n<neuer Code>')
             },
-            required: ['path', 'patch']
+            required: ['absicht', 'path', 'patch']
         }
     },
     {
@@ -244,7 +246,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 end_line: numProp('Letzte zu ersetzende Zeile (inklusiv)'),
                 content: strProp('Neuer Code für diesen Bereich')
             },
-            required: ['path', 'start_line', 'end_line', 'content']
+            required: ['absicht', 'path', 'start_line', 'end_line', 'content']
         }
     },
     {
@@ -257,7 +259,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 path: strProp('Pfad relativ zum Workspace'),
                 content: strProp('Vollständiger Dateiinhalt')
             },
-            required: ['path', 'content']
+            required: ['absicht', 'path', 'content']
         }
     },
     {
@@ -271,7 +273,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 path: strProp('Pfad relativ zum Workspace'),
                 content: strProp('Vollständiger neuer Dateiinhalt, alle Zeilen enthalten')
             },
-            required: ['path', 'content']
+            required: ['absicht', 'path', 'content']
         }
     },
     {
@@ -283,7 +285,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 path: strProp('Pfad relativ zum Workspace')
             },
-            required: ['path']
+            required: ['absicht', 'path']
         }
     },
     {
@@ -296,7 +298,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 command: strProp('Der Befehl, z.B. npm test')
             },
-            required: ['command']
+            required: ['absicht', 'command']
         }
     },
     {
@@ -308,7 +310,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 query: strProp('Suchbegriff')
             },
-            required: ['query']
+            required: ['absicht', 'query']
+        }
+    },
+    {
+        name: 'web_fetch',
+        description: 'Ruft eine Webseite ab und gibt ihren Text zurück. '
+            + 'Nutze das nach einer Suche: die Trefferliste enthält nur Titel und '
+            + 'Adressen, die Antwort steht auf der Seite selbst.',
+        parameters: {
+            type: 'object',
+            properties: {
+                absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
+                url: strProp('Vollständige http(s)-Adresse')
+            },
+            required: ['absicht', 'url']
         }
     },
     {
@@ -321,7 +337,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
                 absicht: strProp('EIN kurzer Satz in der Ich-Form: was du hier tust und warum. Wird dem Benutzer angezeigt.'),
                 zusammenfassung: strProp('Was erledigt wurde')
             },
-            required: ['zusammenfassung']
+            required: ['absicht', 'zusammenfassung']
         }
     }
 ];
@@ -333,7 +349,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
  * Aufgabe untersuchen und planen, aber nichts anfassen.
  */
 export const READ_ONLY_ACTIONS = new Set([
-    'read_file', 'grep', 'glob', 'list_dir', 'plan', 'web_search', 'done'
+    'read_file', 'grep', 'glob', 'list_dir', 'plan', 'web_search', 'web_fetch', 'done'
 ]);
 
 /** Werkzeugkatalog für einen Modus: im Plan-Modus nur die lesenden Werkzeuge. */

@@ -131,6 +131,33 @@ export class SettingsPanel {
             ]
         },
         {
+            title: '🌐 Web-Suche',
+            hint: 'Ohne API-Key bleibt nur DuckDuckGo – und das liefert unter Last oft keine '
+                + 'Treffer. Seiten direkt abrufen (web_fetch) funktioniert immer.',
+            fields: [
+                {
+                    key: 'searchProvider', label: 'Suchdienst', kind: 'select',
+                    options: [
+                        { value: 'auto', label: 'Automatisch (alles Verfügbare der Reihe nach)' },
+                        { value: 'tavily', label: 'Tavily – für KI gemacht, liefert Textauszüge' },
+                        { value: 'brave', label: 'Brave Search API' },
+                        { value: 'google', label: 'Google Programmable Search' },
+                        { value: 'searxng', label: 'SearXNG (eigene Instanz)' },
+                        { value: 'duckduckgo', label: 'DuckDuckGo (ohne Schlüssel, unzuverlässig)' }
+                    ]
+                },
+                {
+                    key: 'searchApiKey', label: 'API-Key des Suchdienstes', kind: 'password',
+                    hint: 'Tavily, Brave oder Google. Leer = nur DuckDuckGo.'
+                },
+                {
+                    key: 'searchEndpoint', label: 'Instanz-Adresse bzw. Such-ID', kind: 'text',
+                    hint: 'SearXNG: Adresse der Instanz (https://searx.example.org). '
+                        + 'Google: die Such-ID (cx) der Programmable Search Engine.'
+                }
+            ]
+        },
+        {
             title: '🔒 Sicherheit',
             fields: [
                 { key: 'allowShellCommands', label: 'Shell-Befehle erlauben (WSL)', kind: 'boolean' },

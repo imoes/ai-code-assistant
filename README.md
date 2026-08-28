@@ -23,6 +23,8 @@ in der Extension (kein WSL, keine Shell):
 | `grep` | Regex-Suche über das ganze Projekt (wie ripgrep), optional Glob-gefiltert |
 | `glob` | Dateien nach Muster finden, z.B. `**/*.test.ts` |
 | `list_dir` | Verzeichnis auflisten |
+| `web_search` | Im Internet suchen (Titel, Adresse, Textauszug) |
+| `web_fetch` | Eine Webseite abrufen und ihren Text lesen |
 
 **Planen.** Bei Aufgaben mit mehr als zwei Schritten legt der Assistent eine Todo-Liste an
 und arbeitet sie ab. Der Fortschritt erscheint im Chat als Checkliste mit Fortschrittsbalken.
@@ -130,6 +132,24 @@ Alternativ klassisch über `Strg+,` → `aiAssistant`:
 | `aiAssistant.temperature` | `0.2` | Kreativität (0 = deterministisch) |
 | `aiAssistant.contextWarningThreshold` | `6000` | Kontext-Warnung ab (Token) |
 | `aiAssistant.systemPrompt` | (Deutsch) | System-Prompt anpassen |
+
+### Web-Suche
+
+Schlüsselfreie Suche ist unzuverlässig: DuckDuckGo antwortet unter Last mit leeren
+Ergebnissen, öffentliche SearXNG-Instanzen mit `403` oder `429`. Für verlässliche Suche
+einen Anbieter eintragen:
+
+| Anbieter | Was nötig ist |
+|---|---|
+| **Tavily** (empfohlen) | `aiAssistant.searchApiKey` – liefert Textauszüge statt nur Links, kostenloses Kontingent |
+| **Brave Search** | `aiAssistant.searchApiKey` |
+| **Google Programmable Search** | `searchApiKey` + Such-ID (`cx`) in `aiAssistant.searchEndpoint` |
+| **SearXNG** (eigene Instanz) | Adresse in `aiAssistant.searchEndpoint`, kein Schlüssel |
+| **DuckDuckGo** | nichts – aber oft ohne Treffer |
+
+**`web_fetch` funktioniert immer** und braucht keinen Schlüssel: eine bekannte Adresse
+direkt abrufen und lesen. Findet die Suche nichts, sagt der Assistent das und greift
+darauf zurück, statt dieselbe Suche zu wiederholen.
 
 ### Cloud-Anbieter statt lokalem Server
 

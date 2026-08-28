@@ -7,3 +7,4 @@ src/**
 **/*.map
 node_modules/**
 out/**/*.d.ts
+test/**

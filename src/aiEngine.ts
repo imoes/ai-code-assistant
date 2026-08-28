@@ -70,11 +70,44 @@ export type PlanCallback = (steps: PlanStep[]) => void;
 /** Callback der pro Repair-Iteration aufgerufen wird */
 export type IterationCallback = (iteration: number, reason: string) => void;
 
+/**
+ * Beschreibt eine Aktion so, dass die Anzeige sie sauber darstellen kann.
+ *
+ * Vorher bekam die Oberfläche nur einen fertigen String mit Emoji darin und
+ * musste ihn zerlegen. Mit diesen Feldern kann sie eine kompakte Zeile
+ * bauen – Werkzeugname, Ziel, Zusatz – wie in einem Terminal.
+ */
+export interface ActionMeta {
+    /** Anzeigename des Werkzeugs: Read, Grep, Bash, … */
+    tool: string;
+    /** Worauf es angewendet wurde: Pfad, Suchmuster, Befehl */
+    target?: string;
+    /** Zusatz am Zeilenende, z.B. "L1–115" oder "12 Treffer" */
+    detail?: string;
+    /** Läuft der Vorgang noch? */
+    running?: boolean;
+    /** Ergebnis, sobald bekannt */
+    ok?: boolean;
+}
+
 /** Callback für laufende Aktionen (Shell-Output, Suche, …) */
-export type ActionProgressCallback = (description: string, output: string) => void;
+export type ActionProgressCallback = (
+    description: string,
+    output: string,
+    meta?: ActionMeta
+) => void;
 
 /** Callback für laufende Kennzahlen (Prompt-Fortschritt, Tokens, Tokens/s) */
 export type StatsProgressCallback = (stats: GenerationStats) => void;
+
+/**
+ * Callback für die Ansage des Assistenten – einmal pro Runde.
+ *
+ * Nötig, weil `process()` nur den Text der ERSTEN Runde zurückgibt: die
+ * Ansagen der Folgerunden gingen sonst verloren und im Chat stand ab Runde 2
+ * nur noch "nächster Schritt…" ohne zu sagen, was der Assistent vorhat.
+ */
+export type NarrationCallback = (text: string) => void;
 
 /**
  * AIEngine: Verarbeitet Prompts, führt Aktionen aus, schreibt History.
@@ -104,8 +137,17 @@ export class AIEngine {
     /** Callback für laufende Kennzahlen (Fortschritt, Tokens/Sekunde) */
     private onStats?: StatsProgressCallback;
 
+    /** Callback für die Ansage pro Runde (siehe NarrationCallback) */
+    private onNarration?: NarrationCallback;
+
     /** Von der KI gesetztes Signal, dass die Aufgabe abgeschlossen ist */
     private taskComplete = false;
+
+    /** Vom Benutzer gesetztes Abbruch-Signal – beendet auch die Schleife */
+    private cancelled = false;
+
+    /** Läuft gerade eine Aufgabe? Für "neue Aufgabe unterbricht die alte". */
+    private busy = false;
 
     /** Plan-Modus: nur lesen und planen, keine Änderungen */
     private planModeActive = false;
@@ -153,6 +195,11 @@ export class AIEngine {
         this.onStats = cb;
     }
 
+    /** Callback registrieren, über den die Ansage jeder Runde gemeldet wird. */
+    setNarrationCallback(cb: NarrationCallback | undefined): void {
+        this.onNarration = cb;
+    }
+
     /** Aktuellen Arbeitsplan abfragen. */
     getPlan(): PlanStep[] {
         return this.plan.map(s => ({ ...s }));
@@ -173,10 +220,22 @@ export class AIEngine {
         return removed;
     }
 
-    /** Laufende KI-Generierung abbrechen. */
+    /**
+     * Laufende Arbeit abbrechen – Anfrage UND Agenten-Schleife.
+     *
+     * Vorher wurde nur die HTTP-Anfrage beendet: die Schleife lief danach
+     * weiter, parste die halbe Antwort und startete die nächste Runde. Der
+     * Benutzer kam zwischen den Iterationen also nicht heraus.
+     */
     cancel(): void {
+        this.cancelled = true;
         this.mcpClient.cancel();
-        this.logger.info('KI-Generierung vom Benutzer abgebrochen.');
+        this.logger.info('Abbruch vom Benutzer: Anfrage und Agenten-Schleife werden beendet.');
+    }
+
+    /** Läuft gerade eine Aufgabe? */
+    isBusy(): boolean {
+        return this.busy;
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -212,8 +271,17 @@ export class AIEngine {
             ? autoConfirmFn
             : (confirmFn ?? autoConfirmFn);
 
+        // Abbruch prüfen, bevor eine neue Runde beginnt. Der Benutzer soll
+        // zwischen den Iterationen herauskommen, nicht erst am Schrittlimit.
+        if (this.cancelled) {
+            this.logger.info('Agenten-Schleife abgebrochen (Benutzer).');
+            return { text: '', actions: [], iterations: _depth };
+        }
+
         // Neue Benutzer-Aufgabe → Abschluss-Signal und alten Plan verwerfen
         if (_depth === 0) {
+            this.cancelled = false;
+            this.busy = true;
             this.taskComplete = false;
             this.plan = [];
             this.lastActionSignature = '';
@@ -403,6 +471,13 @@ und füge ihn als letzten action:shell Block an.` : '';
         const cleanText = prose || toolIntents.join('\n');
         this.console.narration(cleanText);
 
+        // Ab Runde 2 wird `cleanText` nicht mehr zurückgegeben (process() liefert
+        // nur den Text der ersten Runde). Ohne diese Meldung stand im Chat ab
+        // dem zweiten Schritt nur "nächster Schritt…" ohne zu sagen, was kommt.
+        if (_depth > 0 && cleanText.trim()) {
+            this.onNarration?.(cleanText);
+        }
+
         const actions = await this.parseAndExecuteActions(actionSource, confirm, onActionProgress);
         const thinkingBlock = this.extractThinkingBlock(rawResponse);
 
@@ -462,6 +537,7 @@ und füge ihn als letzten action:shell Block an.` : '';
                 onActionProgress
             );
 
+            if (_depth === 0) this.busy = false;
             return {
                 text: cleanText,
                 actions: [...actions, ...nextResult.actions],
@@ -470,6 +546,7 @@ und füge ihn als letzten action:shell Block an.` : '';
             };
         }
 
+        if (_depth === 0) this.busy = false;
         return { text: cleanText, actions, contextWarning, iterations: _depth };
     }
 
@@ -501,6 +578,12 @@ und füge ihn als letzten action:shell Block an.` : '';
         const maxSteps = agentLoop
             ? config.get<number>('maxAgentSteps', 12)
             : config.get<number>('autoFixIterations', 3);
+
+        // Benutzer hat abgebrochen – nicht weitermachen
+        if (this.cancelled) {
+            this.logger.info('Agenten-Schleife beendet: vom Benutzer abgebrochen.');
+            return null;
+        }
 
         // Die KI hat die Aufgabe selbst als fertig gemeldet
         if (this.taskComplete) {
@@ -772,7 +855,11 @@ und füge ihn als letzten action:shell Block an.` : '';
             `\`\`\`action:edit_file\npath: src/datei.ts\n---\n<VOLLSTÄNDIGER neuer Dateiinhalt>\n\`\`\`\n\n` +
             `Datei löschen:\n\`\`\`action:delete_file\npath: src/alt.ts\n\`\`\`\n\n` +
             `Shell-Befehl (WSL/Linux, für Build & Tests):\n\`\`\`action:shell\nnpm test\n\`\`\`\n\n` +
-            `Web-Suche:\n\`\`\`action:web_search\nquery: suchbegriff\n\`\`\`\n`
+            `Web-Suche (liefert Titel, Adresse und kurzen Auszug):\n` +
+            `\`\`\`action:web_search\nquery: suchbegriff\n\`\`\`\n\n` +
+            `Seite abrufen und lesen – nach einer Suche fast immer nötig, denn die\n` +
+            `Trefferliste allein beantwortet keine Frage:\n` +
+            `\`\`\`action:web_fetch\nurl: https://example.com/doku\n\`\`\`\n`
         );
 
         // ── Ansage vor jeder Aktion ──────────────────────────────────────────
@@ -1100,6 +1187,9 @@ und füge ihn als letzten action:shell Block an.` : '';
                     case 'web_search':
                         executed.push(await this.handleWebSearchAction(blockContent, onActionProgress));
                         break;
+                    case 'web_fetch':
+                        executed.push(await this.handleWebFetchAction(blockContent, onActionProgress));
+                        break;
                     case 'read_file':
                     case 'grep':
                     case 'glob':
@@ -1394,15 +1484,22 @@ und füge ihn als letzten action:shell Block an.` : '';
         try { workDir = this.fileManager.getWorkspaceRoot(); }
         catch { return { type: 'shell', description: 'Kein Workspace', success: false }; }
 
-        onActionProgress?.(`⚙ Shell: \`${commandToRun.slice(0, 80)}\``, 'Wird ausgeführt…');
+        // Beim Start als "läuft" melden, danach mit Ergebnis überschreiben –
+        // dieselbe Karte, damit man den Befehl nicht zweimal liest.
+        onActionProgress?.(`Shell: ${commandToRun}`, '', {
+            tool: 'Bash', target: commandToRun, running: true
+        });
+
         const result = await this.shellRunner.run(commandToRun, workDir, 120_000, confirm);
         const output = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, 4000);
+        const ok = result.exitCode === 0;
 
-        const icon = result.exitCode === 0 ? '✅' : '❌';
-        onActionProgress?.(
-            `${icon} Shell: \`${commandToRun.slice(0, 80)}\``,
-            output || '(keine Ausgabe)'
-        );
+        onActionProgress?.(`Shell: ${commandToRun}`, output || '(keine Ausgabe)', {
+            tool: 'Bash',
+            target: commandToRun,
+            detail: ok ? undefined : `Exit ${result.exitCode}`,
+            ok
+        });
 
         return {
             type: 'shell',
@@ -1470,7 +1567,20 @@ und füge ihn als letzten action:shell Block an.` : '';
             }
         }
 
-        onActionProgress?.(`🔎 ${result.description}`, result.output.slice(0, 2000));
+        // Kompakte Anzeige: Werkzeugname, Ziel, Zusatz – getrennt, damit die
+        // Oberfläche eine Terminalzeile daraus bauen kann.
+        const DISPLAY: Record<string, string> = {
+            read_file: 'Read', grep: 'Grep', glob: 'Glob', list_dir: 'List'
+        };
+        // description hat die Form "read_file: src/a.ts (L1–115)"
+        const parsed = /^[\w_]+:\s*(.+?)(?:\s*[(→]\s*(.+?)\)?)?$/.exec(result.description);
+        onActionProgress?.(result.description, result.output.slice(0, 4000), {
+            tool: DISPLAY[type] ?? type,
+            target: parsed?.[1]?.trim(),
+            detail: parsed?.[2]?.trim(),
+            ok: true
+        });
+
         return {
             type: 'analysis',
             description: result.description,
@@ -1540,17 +1650,68 @@ und füge ihn als letzten action:shell Block an.` : '';
         };
     }
 
+    /**
+     * Seite abrufen und ihren Text an die KI geben.
+     *
+     * Ohne dieses Werkzeug bekommt das Modell aus einer Suche nur Titel und
+     * Adressen – damit kann es keine Frage beantworten. Erst der Seiteninhalt
+     * hilft. Deshalb hat auch Claude Code neben der Suche ein Abrufwerkzeug.
+     */
+    private async handleWebFetchAction(
+        content: string,
+        onActionProgress?: ActionProgressCallback
+    ): Promise<ExecutedAction> {
+        const urlMatch = content.match(/^url:\s*(\S+)$/m)
+            ?? content.match(/(https?:\/\/\S+)/);
+        if (!urlMatch) throw new Error('Keine URL im web_fetch Block gefunden');
+        const url = urlMatch[1].trim().replace(/[).,]+$/, '');
+
+        onActionProgress?.(`Fetch: ${url}`, '', { tool: 'Fetch', target: url, running: true });
+
+        try {
+            const page = await WebSearcher.getInstance().fetchPage(url);
+            const header = page.title ? `# ${page.title}\n(${page.url})\n\n` : `(${page.url})\n\n`;
+            const body = header + page.text;
+
+            onActionProgress?.(`Fetch: ${url}`, page.text.slice(0, 4000), {
+                tool: 'Fetch', target: url,
+                detail: `${page.text.length} Zeichen`, ok: true
+            });
+
+            return {
+                type: 'web_search',
+                description: `Seite gelesen: ${page.title || url}`,
+                success: page.text.length > 0,
+                output: body
+            };
+        } catch (err) {
+            const msg = (err as Error).message;
+            onActionProgress?.(`Fetch: ${url}`, msg, {
+                tool: 'Fetch', target: url, ok: false
+            });
+            return {
+                type: 'web_search',
+                description: `Seite nicht abrufbar: ${url}`,
+                success: false,
+                output: `${msg}\n\nPrüfe die Adresse oder nutze web_search, um eine andere Quelle zu finden.`
+            };
+        }
+    }
+
     private async handleWebSearchAction(content: string, onActionProgress?: ActionProgressCallback): Promise<ExecutedAction> {
         const queryMatch = content.match(/^query:\s*(.+)$/m);
         if (!queryMatch) throw new Error('Kein "query:" in web_search Block gefunden');
         const query = queryMatch[1].trim();
 
-        onActionProgress?.('🔍 Web-Suche läuft…', query);
+        onActionProgress?.(`Web-Suche: ${query}`, '', { tool: 'Search', target: query, running: true });
         const searcher = WebSearcher.getInstance();
         const searchResult = await searcher.search(query, 5);
         const formatted = searcher.formatForAI(searchResult);
 
-        onActionProgress?.('🔍 Web-Suche abgeschlossen', `${searchResult.results.length} Ergebnis(se)`);
+        onActionProgress?.(`Web-Suche: ${query}`, formatted.slice(0, 4000), {
+            tool: 'Search', target: query,
+            detail: `${searchResult.results.length} Ergebnis(se)`, ok: true
+        });
         this.logger.info(`web_search: "${query}" → ${searchResult.results.length} Ergebnis(se)`);
 
         return {

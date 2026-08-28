@@ -29,6 +29,9 @@ compile:
     - npm ci
     - npm run compile
     - npm run lint
+    # Die Tests brauchen kein Netz und keinen Modellserver: sie fahren die
+    # Engine gegen einen vscode-Stub und lokale Testserver.
+    - npm test
   artifacts:
     # Kompilat an den package-Job weiterreichen, damit er nicht neu baut
     paths:

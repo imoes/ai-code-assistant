@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
-import { AIEngine, ExecutedAction, PlanStep, AssistantMode, getAssistantMode } from './aiEngine';
+import {
+    AIEngine, ExecutedAction, PlanStep, AssistantMode, ActionMeta, getAssistantMode
+} from './aiEngine';
 import { SettingsPanel } from './settingsPanel';
 import { ActionHistory } from './actionHistory';
 import { MCPClient, GenerationStats } from './mcpClient';
@@ -59,6 +61,8 @@ export class ChatPanel {
     private pendingConfirmations = new Map<string, (choice: string) => void>();
     /** Diff-Daten pro requestId für den "In Editor öffnen"-Button */
     private pendingDiffs = new Map<string, DiffMeta>();
+    /** Läuft gerade eine Aufgabe? Wird für "neue Aufgabe unterbricht" gebraucht. */
+    private runningTask: Promise<void> | null = null;
     private disposables: vscode.Disposable[] = [];
 
     private constructor(
@@ -158,6 +162,21 @@ export class ChatPanel {
         switch (msg.type) {
             case 'sendMessage':
                 if (msg.text?.trim()) {
+                    // Läuft noch eine Aufgabe? Dann diese abbrechen und die
+                    // neue starten. Vorher war das Eingabefeld gesperrt und man
+                    // kam zwischen den Iterationen nicht dazwischen.
+                    if (this.runningTask) {
+                        this.postSystem('⏹ Laufende Aufgabe abgebrochen – neue Aufgabe wird gestartet.');
+                        this.aiEngine.cancel();
+                        for (const [, resolve] of this.pendingConfirmations) {
+                            resolve('Ablehnen');
+                        }
+                        this.pendingConfirmations.clear();
+                        this.pendingDiffs.clear();
+                        // Auf das Auslaufen der alten Schleife warten, sonst
+                        // schreiben zwei Läufe gleichzeitig in den Verlauf.
+                        try { await this.runningTask; } catch { /* egal */ }
+                    }
                     await this.handleUserMessage(msg.text.trim());
                 }
                 break;
@@ -249,6 +268,17 @@ export class ChatPanel {
     }
 
     private async handleUserMessage(userText: string): Promise<void> {
+        // Den Lauf festhalten, damit eine neue Aufgabe darauf warten kann
+        const task = this.runUserMessage(userText);
+        this.runningTask = task;
+        try {
+            await task;
+        } finally {
+            if (this.runningTask === task) this.runningTask = null;
+        }
+    }
+
+    private async runUserMessage(userText: string): Promise<void> {
         this.post({ type: 'userMessage', text: userText });
         this.post({ type: 'thinking', value: true });
 
@@ -272,6 +302,15 @@ export class ChatPanel {
         // ob überhaupt etwas passiert.
         this.aiEngine.setStatsCallback((stats: GenerationStats) => {
             this.post({ type: 'stats', stats });
+        });
+
+        // Ansage jeder Runde im Chat zeigen. process() gibt nur den Text der
+        // ersten Runde zurück – ohne diesen Weg stand ab Schritt 2 nur
+        // "nächster Schritt…" da, ohne zu sagen, was der Assistent vorhat.
+        // Eigener Nachrichtentyp, nicht 'assistantMessage': der gibt das
+        // Eingabefeld wieder frei, und der Assistent arbeitet ja noch.
+        this.aiEngine.setNarrationCallback((text: string) => {
+            this.post({ type: 'narration', text });
         });
 
         try {
@@ -298,10 +337,12 @@ export class ChatPanel {
                     this.post({ type: 'thinking', value: true });
                 },
                 0,
-                (description: string, output: string) => {
-                    // Shell/Suche: Live-Output im Chat anzeigen
+                (description: string, output: string, meta?: ActionMeta) => {
+                    // Aktion samt Ausgabe im Chat anzeigen. `meta` trägt
+                    // Werkzeugname, Ziel und Zustand – ohne das steht in der
+                    // Zeile nur "Aktion" und die ganze Beschreibung als Ziel.
                     this.post({ type: 'thinking', value: false });
-                    this.post({ type: 'actionProgress', description, output });
+                    this.post({ type: 'actionProgress', description, output, meta });
                     this.post({ type: 'thinking', value: true });
                 }
             );
@@ -586,6 +627,79 @@ export class ChatPanel {
       color: #fc0;
       font-size: 12px;
     }
+    /* ── Werkzeugzeile: eine Zeile pro Vorgang, Ausgabe darunter ── */
+    .tool-row {
+      border-left: 2px solid var(--border);
+      padding: 2px 0 2px 10px;
+      margin: 1px 0;
+      font-size: 12px;
+    }
+    .tool-running { border-left-color: #d9a13b; }
+    .tool-ok      { border-left-color: #5aa85a; }
+    .tool-fail    { border-left-color: #d05a5a; }
+
+    .tool-head {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      line-height: 1.5;
+    }
+    .tool-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      align-self: center;
+      background: var(--fg-muted);
+    }
+    .tool-running .tool-dot { background: #d9a13b; }
+    .tool-ok      .tool-dot { background: #5aa85a; }
+    .tool-fail    .tool-dot { background: #d05a5a; }
+
+    .tool-name {
+      font-weight: 600;
+      color: var(--fg);
+      flex-shrink: 0;
+    }
+    .tool-target {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--fg-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .tool-detail {
+      margin-left: auto;
+      font-size: 10px;
+      color: var(--fg-muted);
+      flex-shrink: 0;
+      opacity: .8;
+    }
+    .tool-output { margin: 3px 0 4px 14px; }
+    pre.tool-out {
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--fg-muted);
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+    .tool-more {
+      background: none;
+      border: none;
+      padding: 2px 0 0;
+      margin: 0;
+      font-family: var(--font);
+      font-size: 10px;
+      color: var(--fg-muted);
+      cursor: pointer;
+    }
+    .tool-more:hover { color: var(--fg); }
+
     .msg-progress {
       background: rgba(80,180,80,.08);
       border: 1px solid rgba(80,180,80,.25);
@@ -616,6 +730,84 @@ export class ChatPanel {
       font-size: 12px;
       font-style: italic;
     }
+
+    /* ── Markdown im Antworttext ── */
+    .msg-assistant p { margin: 0 0 8px; line-height: 1.55; }
+    .msg-assistant p:last-child { margin-bottom: 0; }
+    .msg-assistant ul, .msg-assistant ol {
+      margin: 4px 0 10px;
+      padding-left: 22px;
+      line-height: 1.55;
+    }
+    .msg-assistant li { margin: 2px 0; }
+    .msg-assistant li::marker { color: var(--fg-muted); }
+    .msg-assistant .md-h {
+      margin: 12px 0 6px;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+    .msg-assistant h3.md-h { font-size: 1.15em; }
+    .msg-assistant h4.md-h { font-size: 1.05em; }
+    .msg-assistant h5.md-h,
+    .msg-assistant h6.md-h { font-size: 1em; color: var(--fg-muted); }
+    .msg-assistant blockquote {
+      margin: 6px 0;
+      padding: 2px 0 2px 10px;
+      border-left: 3px solid var(--border);
+      color: var(--fg-muted);
+    }
+    .msg-assistant hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 10px 0;
+    }
+    .msg-assistant pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 9px 11px;
+      margin: 6px 0 10px;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.45;
+      position: relative;
+    }
+    /* Sprachangabe des Code-Blocks als kleine Marke oben rechts */
+    .msg-assistant pre[data-lang]::before {
+      content: attr(data-lang);
+      position: absolute;
+      top: 2px; right: 7px;
+      font-size: 9px;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--fg-muted);
+      opacity: .7;
+    }
+    .msg-assistant pre code {
+      background: none;
+      padding: 0;
+      white-space: pre;
+    }
+    .msg-assistant .md-table {
+      border-collapse: collapse;
+      margin: 6px 0 10px;
+      font-size: 12px;
+      display: block;
+      overflow-x: auto;
+      max-width: 100%;
+    }
+    .msg-assistant .md-table td {
+      border: 1px solid var(--border);
+      padding: 4px 9px;
+      vertical-align: top;
+    }
+    /* Erste Zeile als Kopfzeile lesen */
+    .msg-assistant .md-table tr:first-child td {
+      font-weight: 600;
+      background: rgba(255,255,255,.04);
+    }
+    .msg-assistant a { color: var(--vscode-textLink-foreground, #4daafc); }
 
     /* ── Kennzahlen unter der Eingabe ──
        Bewusst NICHT in der Denk-Leiste: die wird zwischen den Schritten der
@@ -1021,6 +1213,7 @@ const promptInput   = document.getElementById('prompt-input');
 const sendBtn       = document.getElementById('send-btn');
 const thinking      = document.getElementById('thinking');
 const pendingBanner = document.getElementById('pending-banner');
+const hintEl        = document.getElementById('hint');
 const modeSelect    = document.getElementById('mode-select');
 
 const MODE_HINTS = {
@@ -1062,6 +1255,7 @@ window.addEventListener('message', (ev) => {
   switch (msg.type) {
     case 'userMessage':       resetPlan(); resetStats(); append(makeUserMsg(msg.text)); break;
     case 'plan':             renderPlan(msg.steps); break;
+    case 'narration':        appendNarration(msg.text); break;
     case 'clearChat':        chat.innerHTML = ''; resetPlan(); resetStats(); break;
     case 'assistantMessage':
       append(makeAssistantMsg(msg.text));
@@ -1089,7 +1283,7 @@ window.addEventListener('message', (ev) => {
     case 'iterationMessage':
       append(makeIterationMsg(msg.iteration, msg.reason)); break;
     case 'actionProgress':
-      appendOrUpdateProgress(msg.description, msg.output); break;
+      appendOrUpdateProgress(msg.description, msg.output, msg.meta); break;
     case 'contextWarning':
       append(makeWarningMsg(msg.text)); break;
     case 'modeChanged':    setMode(msg.mode); break;
@@ -1230,11 +1424,12 @@ function updateBanner() {
 // ── Senden ───────────────────────────────────────────────────────────────────
 function submitPrompt() {
   const text = promptInput.value.trim();
-  if (!text || isBusy) return;
-  promptInput.value = '';
+  // isBusy blockiert NICHT mehr: eine neue Aufgabe darf die laufende
+  // unterbrechen. Das Abbrechen macht der Extension-Host.
+  if (!text) return;
+  promptInput.value = "";
   autoResize();
-  vscode.postMessage({ type: 'sendMessage', text });
-  setInputEnabled(false);
+  vscode.postMessage({ type: "sendMessage", text });
 }
 
 sendBtn.addEventListener('click', submitPrompt);
@@ -1359,45 +1554,131 @@ function progressKey(description) {
   return String(description).replace(/^[^A-Za-z0-9\\x60]+/, '').trim();
 }
 
-function appendOrUpdateProgress(description, output) {
-  const key = progressKey(description);
+/**
+ * Ansage des Assistenten fuer eine Zwischenrunde.
+ *
+ * Bewusst nicht als 'assistantMessage': die gibt das Eingabefeld wieder frei,
+ * und der Assistent arbeitet ja noch. Ausserdem beendet sie die laufende
+ * Werkzeugzeile, damit die naechste Aktion eine neue bekommt.
+ */
+function appendNarration(text) {
+  if (!text || !String(text).trim()) return;
+  finalizeProgress();
+  append(makeAssistantMsg(text));
+}
 
-  // Nur dieselbe Aktion aktualisiert ihre Karte
+/** Wie viele Zeilen Ausgabe ohne Aufklappen zu sehen sind. */
+const OUTPUT_PREVIEW_LINES = 4;
+
+/**
+ * Ausgabe einer Aktion einsetzen: die ersten Zeilen sichtbar, der Rest hinter
+ * einem Schalter. Ohne Kuerzung schiebt eine Testausgabe alles andere weg.
+ */
+function fillOutput(box, text) {
+  box.innerHTML = '';
+  const clean = String(text == null ? '' : text).replace(/\\s+$/, '');
+  if (!clean) { box.style.display = 'none'; return; }
+  box.style.display = '';
+
+  const lines = clean.split('\\n');
+  const pre = document.createElement('pre');
+  pre.className = 'tool-out';
+  pre.textContent = lines.slice(0, OUTPUT_PREVIEW_LINES).join('\\n');
+  box.appendChild(pre);
+
+  if (lines.length <= OUTPUT_PREVIEW_LINES) return;
+
+  const rest = lines.length - OUTPUT_PREVIEW_LINES;
+  const more = document.createElement('button');
+  more.className = 'tool-more';
+  more.textContent = '▸ ' + rest + ' weitere Zeilen';
+  let open = false;
+  more.addEventListener('click', () => {
+    open = !open;
+    pre.textContent = open ? clean : lines.slice(0, OUTPUT_PREVIEW_LINES).join('\\n');
+    more.textContent = (open ? '▾ ' : '▸ ') + rest + ' weitere Zeilen';
+    scrollBottom();
+  });
+  box.appendChild(more);
+}
+
+/**
+ * Eine Werkzeugzeile bauen: Punkt, Werkzeugname, Ziel, Zusatz.
+ * Bewusst wie eine Terminalzeile – eine Zeile pro Vorgang, Ausgabe darunter.
+ */
+function buildToolRow(meta, description) {
+  const row = document.createElement('div');
+  row.className = 'tool-row';
+
+  const head = document.createElement('div');
+  head.className = 'tool-head';
+
+  const dot = document.createElement('span');
+  dot.className = 'tool-dot';
+  head.appendChild(dot);
+
+  const name = document.createElement('span');
+  name.className = 'tool-name';
+  name.textContent = (meta && meta.tool) || 'Aktion';
+  head.appendChild(name);
+
+  const target = document.createElement('span');
+  target.className = 'tool-target';
+  target.textContent = (meta && meta.target) || description || '';
+  head.appendChild(target);
+
+  const detail = document.createElement('span');
+  detail.className = 'tool-detail';
+  head.appendChild(detail);
+
+  row.appendChild(head);
+
+  const box = document.createElement('div');
+  box.className = 'tool-output';
+  box.style.display = 'none';
+  row.appendChild(box);
+
+  return row;
+}
+
+/** Zustand einer Werkzeugzeile setzen: läuft / erfolgreich / fehlgeschlagen. */
+function styleToolRow(row, meta) {
+  const state = !meta ? 'ok'
+    : meta.running ? 'running'
+    : meta.ok === false ? 'fail' : 'ok';
+  row.className = 'tool-row tool-' + state;
+
+  const detail = row.querySelector('.tool-detail');
+  if (detail) {
+    detail.textContent = (meta && meta.detail) ? meta.detail
+      : (meta && meta.running) ? 'läuft…' : '';
+  }
+}
+
+function appendOrUpdateProgress(description, output, meta) {
+  const key = progressKey((meta && meta.tool ? meta.tool + ' ' : '') + description);
+
+  // Nur derselbe Vorgang aktualisiert seine Zeile. Vorher ueberschrieb jede
+  // Meldung die vorherige, sodass am Ende nur eine einzige Zeile dastand.
   if (lastProgressEl && lastProgressEl.dataset.active === '1'
       && lastProgressEl.dataset.key === key) {
-    lastProgressEl.querySelector('.msg-progress-title').innerHTML = renderMdBasic(description);
-    if (output) {
-      let out = lastProgressEl.querySelector('.msg-progress-output');
-      if (!out) {
-        out = document.createElement('div');
-        out.className = 'msg-progress-output';
-        lastProgressEl.appendChild(out);
-      }
-      out.textContent = output;
-    }
+    styleToolRow(lastProgressEl, meta);
+    fillOutput(lastProgressEl.querySelector('.tool-output'), output);
     scrollBottom();
     return;
   }
 
-  // Neue Aktion → vorherige Karte abschließen, damit sie stehen bleibt
+  // Neuer Vorgang → vorherige Zeile abschließen, damit sie stehen bleibt
   if (lastProgressEl) lastProgressEl.dataset.active = '0';
 
-  const d = document.createElement('div');
-  d.className = 'msg-progress';
-  d.dataset.active = '1';
-  d.dataset.key = key;
-  const title = document.createElement('div');
-  title.className = 'msg-progress-title';
-  title.innerHTML = renderMdBasic(description);
-  d.appendChild(title);
-  if (output) {
-    const out = document.createElement('div');
-    out.className = 'msg-progress-output';
-    out.textContent = output;
-    d.appendChild(out);
-  }
-  lastProgressEl = d;
-  append(d);
+  const row = buildToolRow(meta, description);
+  row.dataset.active = '1';
+  row.dataset.key = key;
+  styleToolRow(row, meta);
+  fillOutput(row.querySelector('.tool-output'), output);
+
+  lastProgressEl = row;
+  append(row);
 }
 
 // ── Angewandte Dateiänderung mit farbigem Diff ──────────────────────────────
@@ -1505,21 +1786,159 @@ function makeActionsPanel(actions, title) {
 
 function append(el) { chat.appendChild(el); scrollBottom(); return el; }
 function scrollBottom() { requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; }); }
-function setThinking(v) { isBusy = v; thinking.classList.toggle('visible', v); if(v) scrollBottom(); }
-function setInputEnabled(v) { isBusy = !v; promptInput.disabled = !v; sendBtn.disabled = !v; }
+// Der Denk-Zustand SPERRT die Eingabe nicht mehr: der Benutzer soll zwischen
+// den Iterationen eine neue Aufgabe schicken koennen. Enter unterbricht die
+// laufende Aufgabe dann und startet die neue.
+function setThinking(v) {
+  isBusy = v;
+  thinking.classList.toggle("visible", v);
+  if (hintEl) hintEl.textContent = v
+    ? "Enter unterbricht die laufende Aufgabe und startet die neue"
+    : "Enter zum Senden 00b7 Shift+Enter fuer Zeilenumbruch";
+  if (v) scrollBottom();
+}
+function setInputEnabled(v) {
+  // Eingabe und Senden bleiben immer bedienbar
+  promptInput.disabled = false;
+  sendBtn.disabled = false;
+  if (v) isBusy = false;
+}
 
 // ── Markdown + Reasoning-Blöcke ─────────────────────────────────────────────
 
 /** Basis-Markdown ohne <think>-Handling */
 function renderMdBasic(text) {
   if (!text) return '';
-  let h = esc(text);
-  h = h.replace(/\`\`\`(\\w*)\\n([\\s\\S]*?)\`\`\`/g, (_, _l, c) => '<pre><code>' + c + '</code></pre>');
-  h = h.replace(/\`([^\`]+)\`/g, '<code>$1</code>');
-  h = h.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
-  h = h.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
-  h = h.replace(/\\n/g, '<br>');
-  return h;
+
+  // Code-Bloecke zuerst herausnehmen und durch Platzhalter ersetzen.
+  // Sonst wuerde die Zeilenverarbeitung darin Listen und Ueberschriften sehen.
+  const blocks = [];
+  let src = String(text).replace(/\\u0060\\u0060\\u0060([\\w+-]*)[ \\t]*\\r?\\n([\\s\\S]*?)\\u0060\\u0060\\u0060/g,
+    (_m, lang, code) => {
+      const i = blocks.length;
+      blocks.push({ lang: lang || '', code: code });
+      return '\\u0000BLOCK' + i + '\\u0000';
+    });
+
+  // Unvollstaendiger Block (Streaming laeuft noch): Rest als Code zeigen,
+  // damit der Text nicht als Markdown zerfaellt und dann umspringt.
+  const openFence = src.indexOf('\\u0060\\u0060\\u0060');
+  if (openFence !== -1) {
+    const head = src.slice(0, openFence);
+    const rest = src.slice(openFence + 3);
+    const nl = rest.indexOf('\\n');
+    const lang = nl === -1 ? rest.trim() : rest.slice(0, nl).trim();
+    const code = nl === -1 ? '' : rest.slice(nl + 1);
+    const i = blocks.length;
+    blocks.push({ lang: lang, code: code });
+    src = head + '\\u0000BLOCK' + i + '\\u0000';
+  }
+
+  const out = [];
+  let listType = null;   // 'ul' | 'ol' | null
+  // Eine Leerzeile beendet den Absatz. Ohne dieses Merkmal wuerden zwei durch
+  // eine Leerzeile getrennte Absaetze zu einem verschmelzen.
+  let paragraphOpen = false;
+
+  const closeList = () => {
+    if (listType) { out.push('</' + listType + '>'); listType = null; }
+  };
+
+  /** Zeichenformatierung innerhalb einer Zeile. */
+  const inline = (s) => {
+    let h = esc(s);
+    h = h.replace(/\\u0060([^\\u0060]+)\\u0060/g, '<code>$1</code>');
+    h = h.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
+    h = h.replace(/(^|[^*])\\*([^*]+)\\*/g, '$1<em>$2</em>');
+    // Markdown-Links; nur http(s), damit kein javascript: durchkommt
+    h = h.replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^)\\s]+)\\)/g,
+      '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+    return h;
+  };
+
+  const lines = src.split('\\n');
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const t = line.trim();
+
+    // Platzhalter fuer einen Code-Block
+    const ph = /^\\u0000BLOCK(\\d+)\\u0000$/.exec(t);
+    if (ph) {
+      closeList();
+      const b = blocks[Number(ph[1])];
+      out.push('<pre' + (b.lang ? ' data-lang="' + esc(b.lang) + '"' : '') +
+        '><code>' + esc(b.code.replace(/\\s+$/, '')) + '</code></pre>');
+      continue;
+    }
+
+    if (t === '') { closeList(); paragraphOpen = false; continue; }
+
+    // Waagerechte Linie
+    if (/^([-*_])\\1{2,}$/.test(t)) { closeList(); out.push('<hr>'); continue; }
+
+    // Ueberschrift
+    const head = /^(#{1,6})\\s+(.*)$/.exec(t);
+    if (head) {
+      closeList();
+      const lvl = Math.min(6, head[1].length + 2);   // ## -> h4, damit es in den Chat passt
+      out.push('<h' + lvl + ' class="md-h">' + inline(head[2]) + '</h' + lvl + '>');
+      continue;
+    }
+
+    // Zitat
+    const quote = /^>\\s?(.*)$/.exec(t);
+    if (quote) {
+      closeList();
+      out.push('<blockquote>' + inline(quote[1]) + '</blockquote>');
+      continue;
+    }
+
+    // Aufzaehlung
+    const ul = /^[-*+]\\s+(.*)$/.exec(t);
+    if (ul) {
+      if (listType !== 'ul') { closeList(); out.push('<ul>'); listType = 'ul'; }
+      out.push('<li>' + inline(ul[1]) + '</li>');
+      continue;
+    }
+
+    // Nummerierte Liste
+    const ol = /^(\\d+)[.)]\\s+(.*)$/.exec(t);
+    if (ol) {
+      if (listType !== 'ol') { closeList(); out.push('<ol>'); listType = 'ol'; }
+      out.push('<li>' + inline(ol[2]) + '</li>');
+      continue;
+    }
+
+    // Tabellenzeile
+    if (/^\\|.*\\|$/.test(t)) {
+      // Trennzeile (|---|---|) gehoert zur Tabelle, wird aber nicht gezeigt
+      if (/^\\|[\\s:|-]+\\|$/.test(t)) continue;
+      closeList();
+      const cells = t.slice(1, -1).split('|').map(c => '<td>' + inline(c.trim()) + '</td>');
+      const prevIsTable = out.length > 0 && out[out.length - 1].startsWith('<table');
+      if (prevIsTable) {
+        out[out.length - 1] = out[out.length - 1].replace(/<\\/table>$/, '') +
+          '<tr>' + cells.join('') + '</tr></table>';
+      } else {
+        out.push('<table class="md-table"><tr>' + cells.join('') + '</tr></table>');
+      }
+      continue;
+    }
+
+    // Normaler Absatz. Aufeinanderfolgende Zeilen bleiben ein Absatz.
+    const prev = out[out.length - 1];
+    if (paragraphOpen && !listType && prev && prev.endsWith('</p>')) {
+      out[out.length - 1] = prev.slice(0, -4) + '<br>' + inline(line) + '</p>';
+    } else {
+      closeList();
+      out.push('<p>' + inline(line) + '</p>');
+      paragraphOpen = true;
+    }
+  }
+
+  closeList();
+  return out.join('');
 }
 
 /**

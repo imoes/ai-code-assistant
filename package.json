@@ -2,7 +2,7 @@
   "name": "ai-code-assistant",
   "displayName": "AI Code Assistant (llama.cpp MCP)",
   "description": "Autonomer AI Code Assistant basierend auf llama.cpp MCP – erstellt, bearbeitet und testet Code direkt im Workspace.",
-  "version": "0.7.4",
+  "version": "0.8.1",
   "repository": {
     "type": "git",
     "url": "https://gitlab.ippen.media/mutkluge/ai-code-assistant"
@@ -211,6 +211,30 @@
           "maximum": 3600,
           "description": "Abbrechen, wenn der Server so lange nichts mehr sendet. Gemessen wird die Pause zwischen zwei Antwortteilen, nicht die Gesamtdauer – eine lange Antwort ist also in Ordnung. Bei einem ausgelasteten Server höher setzen."
         },
+        "aiAssistant.searchProvider": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "tavily", "brave", "google", "searxng", "duckduckgo"],
+          "enumDescriptions": [
+            "Automatisch – der Reihe nach alles Verfügbare (Anbieter mit API-Key zuerst, DuckDuckGo zuletzt).",
+            "Tavily – für KI-Nutzung gemacht, liefert Textauszüge statt nur Links. API-Key nötig, kostenloses Kontingent.",
+            "Brave Search API – API-Key nötig, kostenloses Kontingent.",
+            "Google Programmable Search – API-Key und Such-ID (cx) in searchEndpoint nötig.",
+            "SearXNG – kein Schlüssel nötig, aber nur mit eigener Instanz brauchbar (Adresse in searchEndpoint).",
+            "DuckDuckGo – ohne Schlüssel, drosselt aber stark und liefert oft nichts."
+          ],
+          "markdownDescription": "Suchdienst für `web_search`.\n\nOhne API-Key bleibt nur DuckDuckGo, und das liefert unter Last regelmäßig keine Treffer. Für verlässliche Suche einen Anbieter mit Schlüssel eintragen.\n\nUnabhängig davon funktioniert `web_fetch` immer: eine bekannte Adresse direkt abrufen und lesen."
+        },
+        "aiAssistant.searchApiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "API-Key des Suchdienstes (Tavily, Brave oder Google). Leer = nur DuckDuckGo."
+        },
+        "aiAssistant.searchEndpoint": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Zusatzangabe je Anbieter:\n\n- **SearXNG**: Adresse der Instanz, z.B. `https://searx.example.org`\n- **Google**: die Such-ID (`cx`) der Programmable Search Engine"
+        },
         "aiAssistant.showConsole": {
           "type": "boolean",
           "default": true,
@@ -269,7 +293,9 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package --baseContentUrl https://gitlab.ippen.media/mutkluge/ai-code-assistant/-/raw/main --baseImagesUrl https://gitlab.ippen.media/mutkluge/ai-code-assistant/-/raw/main",
-    "lint": "eslint src --ext ts"
+    "lint": "eslint src --ext ts",
+    "test": "node test/run-all.js",
+    "pretest": "npm run compile"
   },
   "overrides": {
     "undici": "5"
