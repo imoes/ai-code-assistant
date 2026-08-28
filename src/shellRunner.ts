@@ -26,16 +26,16 @@ const DANGEROUS_PATTERNS = [
 ];
 
 /**
- * Welche Shell einen Befehl ausführt.
+ * Which shell executes a command.
  *
- * `auto` folgt der Einstellung `aiAssistant.shell`; das Modell kann pro Befehl
- * davon abweichen, weil manche Aufgaben nur in einer der beiden gehen: `npm
- * test` gehört unter WSL, ein `Get-Service` oder das Ansprechen eines
- * Windows-Programms nur in die PowerShell.
+ * `auto` follows the `aiAssistant.shell` setting; the model can per command
+ * deviate from this, because some tasks only work in one of the two: `npm
+ * test` belongs under WSL, a `Get-Service` or the addressing of a
+ * Windows program only into the PowerShell.
  */
 export type ShellKind = 'auto' | 'wsl' | 'powershell' | 'bash';
 
-/** Gefährliche PowerShell-Muster – das Gegenstück zu DANGEROUS_PATTERNS. */
+/** Dangerous PowerShell patterns – the counterpart to DANGEROUS_PATTERNS. */
 const DANGEROUS_PS_PATTERNS = [
     /Remove-Item\s+.*-Recurse.*-Force/i,
     /Format-Volume/i,
@@ -49,8 +49,8 @@ const DANGEROUS_PS_PATTERNS = [
 ];
 
 /**
- * ShellRunner: Führt Shell-Befehle sicher aus – über WSL/bash oder PowerShell.
- * Bestätigungen werden über ConfirmFn als In-Chat-Karte angezeigt.
+ * ShellRunner: Executes shell commands securely – via WSL/bash or PowerShell.
+ * Confirmations are displayed as in-chat cards via ConfirmFn.
  */
 export class ShellRunner {
     private static instance: ShellRunner;
@@ -66,7 +66,7 @@ export class ShellRunner {
         return ShellRunner.instance;
     }
 
-    /** Konvertiert WSL-Pfad (/mnt/d/foo) zurück zu Windows-Pfad (D:\foo) */
+    /** Converts WSL path (/mnt/d/foo) back to Windows path (D:\foo) */
     static wslPathToWindows(wslPath: string): string {
         return wslPath
             .replace(/^\/mnt\/([a-z])\//, (_, drive) => `${drive.toUpperCase()}:\\`)
@@ -81,11 +81,11 @@ export class ShellRunner {
     }
 
     /**
-     * Konvertiert Windows-Pfade (d:\foo\bar) im Befehlsstring zu WSL-Pfaden (/mnt/d/foo/bar).
-     * Nötig weil bash Backslashes als Escape-Zeichen behandelt: \D → D, \f → f usw.
+     * Converts Windows paths (d:\foo\bar) in the command line to WSL paths (/mnt/d/foo/bar).
+     * Necessary because bash treats backslashes as escape characters: \D → D, \f → f, etc.
      */
     static convertWindowsPathsInCommand(command: string): string {
-        // Matcht Laufwerksbuchstabe:\Pfad\mit\Backslashes (unquoted oder in Anführungszeichen)
+        // Matches drive letter:\path\with\backslashes (unquoted or in quotes)
         return command.replace(/([A-Za-z]):\\([^\s"'`|&;<>()\[\]{}!?*\n]+)/g, (_, drive, rest) => {
             const wslRest = rest.replace(/\\/g, '/').replace(/\/$/, '');
             return `/mnt/${drive.toLowerCase()}/${wslRest}`;
@@ -93,8 +93,8 @@ export class ShellRunner {
     }
 
     /**
-     * Shell-Befehl über WSL ausführen.
-     * @param confirmFn  In-Chat-Bestätigung (undefined = autoApply)
+     * Execute shell command via WSL.
+     * @param confirmFn  In-Chat confirmation (undefined = autoApply)
      */
     async run(
         command: string,
@@ -124,8 +124,8 @@ export class ShellRunner {
             };
         }
 
-        // cat/head/tail abfangen: direkt einlesen statt einen Prozess zu starten.
-        // Gilt für beide Shells – die Datei liest Node ohnehin schneller.
+        // Catch cat/head/tail: read directly instead of starting a process.
+        // Applies to both shells – Node reads the file faster anyway.
         const fileReadResult = ShellRunner.interceptFileReadCommand(command, workDir, this.logger);
         if (fileReadResult) {
             return fileReadResult;
@@ -135,7 +135,7 @@ export class ShellRunner {
         const isDangerous = patterns.some(p => p.test(command));
         const confirmDangerous = config.get<boolean>('confirmDangerousOps', true);
 
-        // Gefährliche Befehle immer bestätigen lassen
+        // Always confirm dangerous commands
         if (isDangerous && confirmDangerous && confirmFn) {
             const choice = await confirmFn(
                 `⚠ Potenziell gefährlicher Befehl erkannt:\n\`${command}\``,
@@ -151,18 +151,18 @@ export class ShellRunner {
 
         const useWsl = shell === 'wsl';
 
-        // In der PowerShell bleibt der Windows-Pfad, wie er ist – die
-        // WSL-Umschreibung würde ihn dort unbrauchbar machen.
+        // In PowerShell, the Windows path remains as is – the
+        // WSL conversion would render it unusable there.
         const shellWorkDir = useWsl ? ShellRunner.windowsToWslPath(workDir) : workDir;
-        // Windows-Pfade im Befehl selbst konvertieren (z.B. cd d:\foo → cd /mnt/d/foo)
+        // Convert Windows paths in the command itself (e.g., cd d:\foo → cd /mnt/d/foo)
         const convertedCommand = useWsl
             ? ShellRunner.convertWindowsPathsInCommand(command)
             : command;
 
         const fullCommand = shell === 'powershell'
-            // Set-Location statt cd, und der Befehl folgt nach `;`: PowerShell 5.1
-            // kennt kein `&&`. Ein `if ($?)` wäre falsch, denn ein fehlgeschlagenes
-            // Set-Location soll den Job abbrechen – das erledigt -ErrorAction Stop.
+            // Use Set-Location instead of cd, and the command follows after `;`: PowerShell 5.1
+            // does not know `&&`. An `if ($?)` would be wrong, because a failed
+            // Set-Location should abort the job – that is handled by -ErrorAction Stop.
             ? `Set-Location -LiteralPath ${ShellRunner.escapePsArg(shellWorkDir)} -ErrorAction Stop; ${convertedCommand}`
             : `cd ${ShellRunner.escapeShellArg(shellWorkDir)} && ${convertedCommand}`;
 
@@ -236,26 +236,26 @@ export class ShellRunner {
         if (preferred === 'powershell') return onWindows ? 'powershell' : 'bash';
         if (preferred === 'wsl' || preferred === 'bash') return onWindows ? 'wsl' : 'bash';
 
-        // auto: unter Windows WSL, weil Build- und Testbefehle dort hingehören
+        // auto: under Windows WSL, because that's where build and test commands belong
         return onWindows ? 'wsl' : 'bash';
     }
 
-    /** Programm und Argumente für die gewählte Shell. */
+    /** Program and arguments for the selected shell. */
     static spawnArgs(
         shell: 'wsl' | 'powershell' | 'bash',
         fullCommand: string
     ): [string, string[]] {
         if (shell === 'wsl') return ['wsl', ['bash', '-c', fullCommand]];
         if (shell === 'bash') return ['bash', ['-c', fullCommand]];
-        // -NonInteractive, damit ein Read-Host nicht wartet, bis der Timeout greift.
-        // -NoProfile, damit das Profil des Benutzers das Ergebnis nicht verfälscht.
+        // -NonInteractive, so that a Read-Host does not wait until the timeout triggers.
+        // -NoProfile, so that the user's profile does not distort the result.
         return ['powershell.exe', [
             '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
             '-Command', fullCommand
         ]];
     }
 
-    /** Argument für die PowerShell quoten: einfache Anführungszeichen verdoppeln. */
+    /** Arguments for the PowerShell quotes: double single quotes. */
     static escapePsArg(arg: string): string {
         return `'${arg.replace(/'/g, "''")}'`;
     }
@@ -280,11 +280,11 @@ export class ShellRunner {
     }
 
     /**
-     * Fängt Dateilese-Befehle ab (cat, head, tail) und liest die Datei direkt
-     * über Node.js ein — kein WSL-Prozess nötig, keine Pfadprobleme.
-     * Gibt null zurück wenn der Befehl kein Dateilese-Befehl ist.
+     * Intercepts file read commands (cat, head, tail) and reads the file directly
+     * via Node.js — no WSL process needed, no path issues.
+     * Returns null if the command is not a file read command.
      *
-     * Public static damit aiEngine.ts es vor dem Confirm-Dialog aufrufen kann.
+     * Public static so that aiEngine.ts can be called before the Confirm dialog.
      */
     static interceptFileReadCommand(command: string, workDir: string, logger?: Logger): ShellResult | null {
         const trimmed = command.trim();
@@ -295,7 +295,7 @@ export class ShellRunner {
         const [, cmd, linesArg, rawPath] = match;
         const filePath = rawPath.trim();
 
-        // Pfad auflösen: WSL, absolut oder relativ zum workDir
+        // Resolve path: WSL, absolute or relative to workDir
         let absPath: string;
         if (filePath.startsWith('/mnt/')) {
             absPath = ShellRunner.wslPathToWindows(filePath);

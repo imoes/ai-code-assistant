@@ -8,3 +8,6 @@ src/**
 node_modules/**
 out/**/*.d.ts
 test/**
+.github/**
+.gitlab-ci.yml
+.ai-assistant/**

@@ -1,172 +1,218 @@
 # Changelog
 
-Alle nennenswerten Änderungen an diesem Projekt. Neueste Version oben.
+All notable changes to this project. Latest version at the top.
+
+## 0.11.0
+
+- **A goal that sticks: `/goal`.** The goal is not the task of one round; it is what all
+  tasks work towards. It goes into every request, sits as a bar above the chat and outlives
+  the session and a window restart — "Verlauf löschen" clears the conversation, not the
+  intention. `/goal` on its own shows it, `/goal löschen` removes it.
+- **Work towards it repeatedly: `/loop 15m <task>`.** After each round the assistant checks
+  what is still missing for the goal and carries on. Budget as time (`5m`, `2h`) or rounds
+  (`3x`), capped at two hours. The loop ends when the goal is reached, the budget is spent,
+  you cancel — or two rounds pass without anything happening. That last one matters most:
+  otherwise the budget runs dry while the assistant explains every round anew that surely
+  everything is done already.
+- **Type without interrupting.** An instruction typed during work is queued and comes up
+  after the current step — before the step the assistant would have planned itself. It
+  appears in the chat straight away, marked "eingereiht". Previously a new instruction
+  aborted the running work and left half-finished changes behind: file changed, tests not
+  run. To stop at once, click **Abbrechen** as before.
+- **The assistant learns from its successes.** What verifiably worked is written as a rule
+  to `.ai-assistant/PRACTICES.md`, and next time it knows again — how this project is
+  tested, which pitfall cost a round, which convention only became apparent from the code.
+  The file is plain Markdown and may be edited by hand: a rule that is wrong can simply be
+  deleted. Only verified insights are recorded, at most one rule per task — no diary
+  entries.
+- The project is licensed under **Apache-2.0**.
+
+## 0.10.0
+
+- **Answers appear as Markdown, not as raw text.** Lists, emphasis and code blocks are
+  rendered, and the tool markup disappears from the display. Until now you would read
+  `>>>REPLACE` and source code in the middle of an answer: while writing, the chat showed
+  the unprocessed model output. The closing summary is now an answer too, no longer an
+  output box, and the block at the end of a run no longer repeats every action — it states
+  the balance and what failed.
+- **The assistant can run Windows commands, not just WSL.** Services, registry, drivers,
+  WinGet, Windows programs — for those it picks PowerShell, while build and tests stay
+  under WSL. Switch it off with `aiAssistant.allowPowerShell`, set the default with
+  `aiAssistant.shell`.
+- **The assistant asks when the decision is yours.** When the choice is between two
+  defensible routes — a library, a naming scheme, whether to touch a file at all — a card
+  appears with two to four options, each with an explanation, plus a field for something
+  else. It deliberately does not ask about things it can read in the code, and not for
+  permission to keep working.
+- **The instructions to the model are now English — the answer stays German.** Models
+  follow English instructions more reliably and the prompt gets shorter. Nothing changes
+  for you: asked in German means answered in German, including the announcements, the plan
+  items and the closing text.
 
 ## 0.9.0
 
-- **Die Web-Suche findet ohne Schlüssel wieder etwas.** Statt einer Quelle werden jetzt
-  mehrere unabhängige gleichzeitig gefragt und die Treffer zusammengeführt: DuckDuckGo
-  (bei Sperre die Lite-Oberfläche), Stack Overflow über die offizielle API und Wikipedia.
-  Fällt eine aus, tragen die anderen — im Testlauf war DuckDuckGo von dieser Leitung
-  komplett gesperrt, und vier von fünf Fragen lieferten trotzdem Treffer.
+- **The web search finds something again without a key.** Instead of one source, several
+  independent ones are now queried at the same time and their hits merged: DuckDuckGo (the
+  Lite interface when blocked), Stack Overflow through the official API, and Wikipedia. If
+  one fails the others carry it — in the test run DuckDuckGo was blocked outright for this
+  connection, and four out of five questions still returned hits.
 
-  Der Hintergrund: es gibt keine kostenlose, unbegrenzte Websuche. Die Bing-Such-API ist
-  seit August 2025 abgeschaltet, Brave seit Februar 2026 kostenpflichtig, und eine eigene
-  SearXNG-Instanz verlagert das Problem nur — sie befragt Google und Bing für dich, deren
-  Sperren gelten weiter. Unbegrenzt ist nur „Seite abrufen" (`web_fetch`), und für
-  Dokumentation ist das ohnehin der kürzere Weg.
-- **Der Assistent prüft seine Änderung selbst.** Vorher endete die Arbeit nach der ersten
-  erfolgreichen Dateiänderung: bei einem Auftrag mit fünf Punkten wurde der erste umgesetzt
-  und nie getestet. Jetzt laufen die Tests, und es geht weiter, bis alle Punkte erledigt
-  und die Tests grün sind. Ebenso sieht der Assistent die Ausgabe eines Testlaufs jetzt
-  auch dann, wenn er im selben Zug eine Datei geändert hat — der übliche Fall.
-- **Abbrechen wirkt zwischen den Iterationen, und eine neue Aufgabe unterbricht die
-  laufende.** Das Eingabefeld bleibt während eines Laufs bedienbar; Enter stoppt die alte
-  Aufgabe und startet die neue. Vorher beendete „Abbrechen" nur die aktuelle Anfrage und
-  die Schleife lief weiter.
-- **Der Assistent sagt in jeder Runde, was er vorhat**, nicht nur am Anfang. Und er nimmt
-  keine Aufgabe aus einer früheren Sitzung mehr auf: die letzte Sitzung kommt als kurze,
-  klar als abgeschlossen markierte Notiz statt als nachgespieltes Gespräch.
-- **Rohes Werkzeug-Markup verschwindet aus den Antworten.** `action:done`, `>>>REPLACE`
-  und abgeschnittene Blöcke standen bisher als Text im Chat, wenn das Modell einen
-  Backtick-Zaun wegließ.
+  The background: there is no free, unlimited web search. The Bing Search API was shut
+  down in August 2025, Brave has been paid since February 2026, and running your own
+  SearXNG only moves the problem — it queries Google and Bing on your behalf, and their
+  blocks still apply. Only "fetch page" (`web_fetch`) is unlimited, and for documentation
+  that is the shorter route anyway.
+- **The assistant verifies its own change.** Previously the work ended after the first
+  successful file change: given a task with five points, the first was implemented and
+  never tested. Now the tests run, and it carries on until every point is done and the
+  tests are green. The assistant also sees the output of a test run when it changed a file
+  in the same round — which is the usual case.
+- **Cancel works between the iterations, and a new task interrupts the running one.** The
+  input field stays usable during a run; Enter stops the old task and starts the new one.
+  Previously "Abbrechen" only ended the current request while the loop kept going.
+- **The assistant says what it intends to do in every round**, not just at the start. And
+  it no longer picks up a task from an earlier session: the last session arrives as a
+  short note, clearly marked as finished, instead of a replayed conversation.
+- **Raw tool markup disappears from the answers.** `action:done`, `>>>REPLACE` and
+  truncated blocks used to stand in the chat as text whenever the model left out a
+  backtick fence.
 
 ## 0.8.0
 
-- **Antworten werden als Markdown dargestellt:** Aufzählungen, nummerierte Listen,
-  Überschriften, Zitate, Tabellen, Links und Code-Blöcke mit Sprachangabe. Vorher standen
-  Listen als nackte Bindestriche im Text.
-- **Jede Aktion ist eine kompakte Zeile** – Punkt, Werkzeugname, Ziel – wie in einem
-  Terminal. Die Ausgabe zeigt vier Zeilen, der Rest steckt hinter „+N weitere Zeilen".
-- **Neues Werkzeug „Seite abrufen" (`web_fetch`):** holt eine Webseite und gibt ihren Text
-  an den Assistenten. Eine Suchtrefferliste besteht nur aus Titeln und Adressen – damit
-  lässt sich keine Frage beantworten. Erst der Seiteninhalt hilft.
-- **Web-Suche über mehrere Anbieter:** Tavily, Brave, Google oder eine eigene
-  SearXNG-Instanz (jeweils mit Schlüssel bzw. Adresse), DuckDuckGo als letzter Ausweg.
-  Ohne Schlüssel bleibt nur DuckDuckGo, und das drosselt stark – liefert die Suche nichts,
-  sagt der Assistent das jetzt deutlich und greift zu `web_fetch`, statt dieselbe Suche
-  zu wiederholen.
-- **Suchtreffer enthalten wieder Textauszüge.** Die Auswertung der DuckDuckGo-Seite hatte
-  nur Titel und Links geliefert, weil mehrere verschachtelte Elemente denselben
-  Klassen-Präfix tragen.
-- **Seitenabruf folgt Weiterleitungen.** Fast jede Dokumentationsseite antwortet mit
-  301 oder 302; vorher kam ein leerer Rumpf zurück.
-- Der Modus in der Seitenleiste zeigt alle drei Modi statt „Automatisch / Manuell".
-- `npm test` führt die komplette Testsuite aus (381 Prüfungen), die CI-Pipeline ebenfalls.
+- **Answers are displayed as Markdown:** bullet lists, numbered lists,
+  Headings, blockquotes, tables, links, and code blocks with language specification. Previously,
+  Lists as bare hyphens in the text.
+- **Every action is a compact line** – period, tool name, target – as in a
+  Terminal. The output shows four lines; the rest is hidden behind “+N more lines”.
+- **New tool "Fetch Webpage" (`web_fetch`):** fetches a webpage and returns its text
+  to the assistant. A search results list consists only of titles and addresses – with
+  cannot answer a question. Only the page content helps.
+- **Web search across multiple providers:** Tavily, Brave, Google, or a custom one
+  SearXNG instance (each with key or address), DuckDuckGo as a last resort.
+  Without a key, only DuckDuckGo remains, and it throttles heavily – if the search yields nothing,
+  the assistant now says so clearly and falls back to `web_fetch` instead of repeating
+  the same search.
+- **Search results include text excerpts.** The evaluation of the DuckDuckGo page had
+  only title and links provided because several nested elements have the same
+  Carry class prefix.
+- **Page view follows redirects.** Almost every documentation page responds with
+  301 or 302; previously, an empty body was returned.
+- The mode in the sidebar shows all three modes instead of "Automatic / Manual".
+- `npm test` runs the complete test suite (381 checks), as does the CI pipeline.
 
 ## 0.7.3
 
-- **Kein endloses Warten mehr, wenn der Server verstummt.** Die Streaming-Anfrage hatte
-  gar kein Zeitlimit: brach die Verbindung mitten in der Antwort ab (VPN weg, Server
-  überlastet), wartete der Assistent unbegrenzt – ohne Meldung, ohne Ausweg außer
-  „Abbrechen". Jetzt bricht er nach 180 Sekunden Stille ab und sagt, was los ist.
-  Gemessen wird die Pause zwischen zwei Antwortteilen, nicht die Gesamtdauer – eine
-  lange Antwort bleibt also erlaubt. Einstellbar über `aiAssistant.streamIdleTimeoutSeconds`.
+- **No more endless waiting when the server goes silent.** The streaming request had
+  no time limit at all: the connection dropped in the middle of the answer (VPN disconnected, server
+  overloaded), the assistant waited indefinitely – without notification, without any way out except
+  "Cancel". Now, after 180 seconds of silence, it cancels and says what's going on.
+  The pause between two response parts is measured, not the total duration – a
+  Long responses remain permitted. Configurable via `aiAssistant.streamIdleTimeoutSeconds`.
 
 ## 0.7.1
 
-- **Shell-Befehle laufen jetzt auch unter Linux und macOS.** `wsl` war fest verdrahtet,
-  dadurch scheiterte dort jeder Befehl – auch `echo test`. Unter Windows läuft weiterhin
-  alles über WSL. Ohne funktionierende Shell kann der Assistent seine Änderungen nicht
-  testen und findet eigene Fehler nicht.
+- **Shell commands now also run on Linux and macOS.** `wsl` was hardcoded,
+  as a result, every command failed there – including `echo test`. Under Windows, it continues to run
+  all about WSL. Without a working shell, the assistant cannot apply its changes
+  test and does not find its own errors.
 
 ## 0.7.0
 
-- **Der Assistent sagt bei jedem Schritt an, was er tut** – nicht nur beim ersten.
-  Jedes Werkzeug hat dafür ein Feld `absicht`, das das Modell mit dem Aufruf füllt.
-  Vorher hing die Ansage an der Prosa des Modells, und die bleibt bei
-  Werkzeugaufrufen meist leer (`content: null`) – man sah nur eine Liste von Aktionen.
-- **Die Denk-Leiste sagt, was gerade passiert:** „Eingabe wird ausgewertet… 45 %"
-  während der Prompt-Auswertung, danach „Antwort wird erzeugt… 240 Tok".
-  Bei großen Kontexten dauert allein die Eingabe Minuten – vorher stand da nur „KI denkt…".
-- **Serialisierungs-Reste landen nicht mehr im Quellcode.** Ein Modell hatte eine Zeile
-  `</arg_value>` mitten in eine Datei geschrieben und sie damit unbrauchbar gemacht.
-  Solche Zeilen werden vor dem Schreiben entfernt und im Protokoll gemeldet.
+- **The assistant announces what it is doing at each step** – not just at the first one.
+  Each tool has an `intent` field that the model populates with the call.
+  Previously, the announcement depended on the model's prose, and that remains the case
+  Tool invocations are mostly empty (`content: null`) – you only saw a list of actions.
+- **The thinking bar indicates what is currently happening:** "Evaluating input... 45 %"
+  during prompt evaluation, then "Response is being generated… 240 tokens".
+  For large contexts, input alone takes minutes – previously, only “AI is thinking…” was displayed.
+- **Serialization residues no longer end up in the source code.** A model had a line
+  `</arg_value>` written into a file, rendering it unusable.
+  Such lines are removed before writing and reported in the log.
 
 ## 0.6.1
 
-- **Arbeitsprotokoll im Terminal** „AI Assistant": jeder Schritt mit Begründung, jeder
-  Befehl mit `$`-Prompt, jede Ausgabe, jede Änderung mit Zeilenbilanz – farbig und
-  mitlaufend. Vorher war nicht nachvollziehbar, was der Assistent zwischen den Schritten tut.
-  (Es wird dort nichts ausgeführt, nur angezeigt.)
-- **Der Assistent sagt an, was er tut**, bevor er es tut – ein Satz in der Ich-Form vor
-  jedem Werkzeugaufruf, und höchstens drei Aktionen pro Runde.
-- **Keine Endlosschleifen mehr.** Scheiterte eine Änderung, erfuhr der Assistent das nicht
-  und wiederholte sie – in einem Testlauf 18-mal denselben Patch. Jetzt gilt:
-  fehlgeschlagene Änderungen werden mit Begründung zurückgemeldet, nur erfolgreiche
-  zählen als getane Arbeit, und dieselbe Runde dreimal in Folge beendet die Schleife.
-- **Verständliche Patch-Fehler:** der Assistent erfährt jetzt, ob die Änderung schon
-  vorhanden ist, ob nur die erste Zeile passt (mit Zeilennummern) oder ob die Datei
-  anders aussieht als angenommen – statt nur „Suchtext nicht gefunden".
-- Die Token-Statistik bleibt während der ganzen Aufgabe stehen (saß vorher in der
-  Denk-Leiste und verschwand bei jedem Schritt).
-- Der Reasoning-Block startet zugeklappt und bleibt so, wie man ihn stellt – vorher
-  klappte er beim Fertigwerden automatisch wieder zu.
+- **Working log in the terminal** "AI Assistant": every step with justification, every
+  Command with `$` prompt, every output, every change with line count – colored and
+  running. Previously, it was not clear what the assistant was doing between the steps.
+  (Nothing is executed there, only displayed.)
+- **The assistant states what it is doing** before it does it – a sentence in the first person
+  each tool call, and at most three actions per round.
+- **No more infinite loops.** If a change failed, the assistant did not know
+  and repeated it – applying the same patch 18 times in a test run. Now it is:
+  Failed changes are reported back with a reason, only successful
+  count as completed work, and ending the same round three times in a row terminates the loop.
+- **Understandable patch errors:** The assistant now learns whether the change has already
+  is present, whether only the first line fits (with line numbers) or whether the file
+  looks different than expected – instead of just "Search text not found".
+- The token statistics remain constant throughout the entire task (previously located in the
+  Thinking bar and disappeared at each step).
+- The reasoning block starts collapsed and remains as you set it – before
+  it would automatically close again upon completion.
 
 ## 0.5.0
 
-- **Drei Arbeitsmodi** als Listbox in der Chat-Toolbar: **Ask** (jede Änderung wird
-  bestätigt), **Auto** (arbeitet ohne Rückfragen durch) und **Plan** (darf nur lesen und
-  planen – Dateiänderungen und Shell-Befehle sind gesperrt, auch wenn das Modell es versucht).
-- **Diffs auch im Auto-Modus:** jede angewandte Änderung erscheint im Chat als farbige
-  Diff-Karte mit Pfad und Zeilenbilanz. Vorher sah man im Auto-Modus überhaupt nicht,
-  was geändert wurde.
-- **Live-Kennzahlen** in der Denk-Leiste: Fortschritt der Eingabe-Auswertung in Prozent
-  sowie Tokens und Tokens/Sekunde für Ein- und Ausgabe. Bei großen Kontexten weiß man
+- **Three work modes** as a listbox in the chat toolbar: **Ask** (every change is
+  confirmed), **Auto** (proceeds without asking questions) and **Plan** (is allowed to read only and
+  plan – file changes and shell commands are blocked, even if the model attempts them).
+- **Diffs even in auto mode:** every applied change appears in the chat as a colored
+  Diff map with path and line balance. Previously, in auto mode,
+  what has been changed.
+- **Live metrics** in the thinking bar: progress of input evaluation in percent
+  as well as tokens and tokens/second for input and output. With large contexts, one knows
   jetzt, ob etwas passiert.
-- **Verlauf wird automatisch zusammengefasst**, wenn er 89 % des Modell-Kontexts erreicht
-  (Schwelle einstellbar). Die Kontextgröße wird beim Server erfragt statt geraten.
-  Lange Agenten-Läufe brechen dadurch nicht mehr ab.
-- **Verlauf löschen**-Button in der Chat-Toolbar.
-- Jede Aktion bekommt im Chat ihre eigene Fortschritts-Karte. Vorher überschrieben sich
-  alle Meldungen gegenseitig, sodass Test- und Suchausgaben unsichtbar blieben.
-- Änderungen mit `patch_file` sind zuverlässig: Abschluss-Marker der Modelle (`>>>`,
-  `>>>>>>> REPLACE`, `=======`) landen nicht mehr im Quellcode. Die git-Konflikt-Schreibweise
-  wird zusätzlich akzeptiert.
+- **Conversation history is automatically summarized** when it reaches 89% of the model context
+  (Threshold adjustable). The context size is queried from the server instead of being guessed.
+  Long agent runs no longer terminate as a result.
+- **Clear History** button in the chat toolbar.
+- Each action gets its own progress card in the chat. Previously, they
+  all messages mutually, so that test and search outputs remained invisible.
+- Changes with `patch_file` are reliable: model end markers (`>>>`,
+  `>>>>>>> REPLACE`, `=======`) no longer appear in the source code. The git conflict notation
+  is also accepted.
 
 ## 0.3.0
 
-- Der Assistent funktioniert jetzt mit **allen** gängigen Modellen – Qwen, Gemma, Kimi,
-  laguna, DeepSeek, Mistral, Llama. Die Werkzeuge werden im OpenAI-Schema an den Server
-  gesendet, der das modellspezifische Format selbst erzeugt und zurückübersetzt.
-  Vorher blieb der Assistent bei Modellen mit eigenem Tool-Format stumm: er beschrieb,
-  was er tun würde, führte aber nichts aus.
-- Für Server ohne Werkzeug-Unterstützung gibt es einen Rückfall, der die Aufrufe aus dem
-  Antworttext liest – auch dort werden alle verbreiteten Formate erkannt.
-- Neue Einstellung **Werkzeuge über die Server-API** (an by default; bei llama.cpp ist
-  dafür `--jinja` nötig).
-- Werkzeugnamen anderer Assistenten (`write_file`, `bash`, `str_replace_editor`, …) werden
-  akzeptiert – ein Modell, das auf ein anderes Harness trainiert wurde, funktioniert hier trotzdem.
+- The assistant now works with **all** common models – Qwen, Gemma, Kimi,
+  laguna, DeepSeek, Mistral, Llama. The tools are sent to the server in the OpenAI schema
+  sent, which generates the model-specific format and translates it back.
+  Previously, the assistant remained silent for models with its own tool format: it described,
+  what he would do, but did not carry out anything.
+- For servers without tool support, there is a fallback that uses the calls from the
+  Response text reads – all common formats are recognized there as well.
+- New setting **Tools via the Server API** (on by default; with llama.cpp is
+  for `--jinja` necessary).
+- Tool names of other assistants (`write_file`, `bash`, `str_replace_editor`, …) are
+  accepted – a model that was trained on a different harness still works here.
 
 ## 0.2.2
 
-- Der Chat funktioniert wieder: ein Fehler im Panel-Skript hatte die gesamte
-  Chat-Oberfläche lahmgelegt (kein Verlauf, kein Modus-Badge, keine Reaktion auf Eingaben).
-- Beim Öffnen einer Chat-Session liegt der Tastaturfokus jetzt im Eingabefeld – man kann
-  sofort tippen, auch wenn der Chat über die Befehlspalette geöffnet wurde.
+- The chat is working again: an error in the panel script had the entire
+  Chat interface disabled (no history, no mode badge, no response to inputs).
+- When opening a chat session, the keyboard focus is now in the input field – you can
+  tap immediately, even if the chat was opened via the command palette.
 
 ## 0.2.1
 
-- Beim Analysieren angezeigte Dateipfade sind jetzt kurz und projektrelativ statt absolut.
+- File paths displayed during analysis are now short and project-relative instead of absolute.
 
 ## 0.2.0
 
-- Der Assistent analysiert den bestehenden Code jetzt selbst: er durchsucht das Projekt
-  per Regex, findet Dateien nach Muster und liest sie abschnittsweise – bevor er etwas ändert.
-- Mehrschrittige Aufgaben werden als Plan angelegt und Schritt für Schritt abgearbeitet;
-  der Fortschritt erscheint im Chat als Checkliste.
-- Der Assistent arbeitet selbständig weiter, bis die Aufgabe erledigt ist: analysieren →
-  planen → ändern → testen → korrigieren. Schrittzahl über `aiAssistant.maxAgentSteps` begrenzbar.
-- Eigenes Einstellungs-Panel mit **Speichern**-Button (⚙ in der Chat-Toolbar oder
-  `Strg+S` im Panel), inklusive Verbindungstest und ausblendbarem API-Key-Feld.
-- Cloud-Anbieter nutzbar: optionaler API-Key (`aiAssistant.apiKey`) für OpenRouter,
-  OpenAI, Groq und Together – statt eines lokalen llama.cpp-Servers.
-- Der Auto-Modus lässt sich per Klick auf den Modus-Badge in der Chat-Toolbar umschalten.
-- Projektregeln aus `AGENTS.md`, `CLAUDE.md`, `command.md` und
-  `.github/copilot-instructions.md` werden bei jeder Anfrage berücksichtigt.
+- The assistant now analyzes the existing code itself: it searches the project
+  via regex, finds files by pattern and reads them in sections – before making any changes.
+- Multi-step tasks are created as a plan and processed step by step;
+  The progress appears in the chat as a checklist.
+- The assistant continues to work independently until the task is completed: analyze →
+  plan → change → test → correct. Step count can be limited via `aiAssistant.maxAgentSteps`.
+- Own settings panel with **Save** button (⚙ in the chat toolbar or
+  `Ctrl+S` in the panel), including a connection test and a hideable API key field.
+- Cloud provider usable: optional API key (`aiAssistant.apiKey`) for OpenRouter,
+  OpenAI, Groq, and Together – instead of a local llama.cpp server.
+- The auto mode can be toggled by clicking the mode badge in the chat toolbar.
+- Project rules from `AGENTS.md`, `CLAUDE.md`, `command.md`, and
+  `.github/copilot-instructions.md` are considered with every request.
 
 ## 0.1.0
 
-- Erste Version: Chat-Panel als Editor-Tab, Dateien erstellen/bearbeiten/löschen mit
-  Diff-Bestätigung, Shell-Befehle über WSL, Undo für alle KI-Aktionen, Web-Suche,
-  automatische Fehlerkorrektur anhand von Shell-Ausgaben.
+- First version: Chat panel as editor tab, create/edit/delete files with
+  Diff confirmation, shell commands via WSL, undo for all AI actions, web search,
+  automatic error correction based on shell output.

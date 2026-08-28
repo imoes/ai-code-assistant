@@ -14,17 +14,17 @@ export interface SearchResponse {
     results: SearchResult[];
     abstract?: string;    // Instant Answer falls vorhanden
     answer?: string;      // Direkte Antwort (z.B. Währungsrechner)
-    /** Warum kein Anbieter Treffer lieferte – für eine verwertbare Meldung */
+    /** Why no provider delivered a hit – for a usable report */
     problems?: string[];
 }
 
 /**
  * WebSearcher: DuckDuckGo Instant Answer API + HTML-Fallback.
  *
- * Primär: https://api.duckduckgo.com/?q=<query>&format=json
+ * Primary: https://api.duckduckgo.com/?q=<query>&format=json
  *   → Liefert Abstract, Answer, RelatedTopics
  * Fallback: https://html.duckduckgo.com/html/ POST
- *   → Parsed result__title / result__snippet aus HTML
+ * → Parsed result__title / result__snippet from HTML
  */
 export class WebSearcher {
     private static instance: WebSearcher;
@@ -38,18 +38,18 @@ export class WebSearcher {
     }
 
     /**
-     * Suche über eine Kette von Anbietern.
+     * Search through a chain of providers.
      *
-     * Warum eine Kette und nicht ein Anbieter: schlüsselfreie Suche ist nicht
-     * verlässlich. Die DuckDuckGo-Instant-Answer-API antwortet unter Last mit
-     * HTTP 202 und leeren Feldern, der HTML-Endpunkt liefert nach einigen
-     * Anfragen nichts mehr, und öffentliche SearXNG-Instanzen antworten mit
-     * 403 oder 429. Deshalb: ein konfigurierter Anbieter mit Schlüssel zuerst
-     * (verlässlich), die schlüsselfreien Wege danach (besser als nichts).
+     * Why a chain and not a provider: keyless search is not
+     * reliably. The DuckDuckGo Instant Answer API responds under load with
+     * HTTP 202 and empty fields, the HTML endpoint returns after a few
+     * Requests no longer, and public SearXNG instances respond with
+     * 403 or 429. Therefore: a configured provider with a key first
+     * (reliable), the keyless paths after that (better than nothing).
      *
-     * Führt kein Weg zu Treffern, sagt das Ergebnis deutlich, dass der Assistent
-     * stattdessen `web_fetch` mit einer konkreten Adresse nutzen soll – eine
-     * leere Trefferliste ohne Hinweis lässt das Modell nur raten.
+     * Leads to no hits, the result clearly indicates that the assistant
+     * instead, you should use `web_fetch` with a specific address – a
+     * An empty result list without a hint leaves the model to only guess.
      */
     async search(query: string, maxResults = 5): Promise<SearchResponse> {
         const config = vscode.workspace.getConfiguration('aiAssistant');
@@ -59,8 +59,8 @@ export class WebSearcher {
 
         this.logger.info(`Web-Suche: "${query}" (Anbieter: ${provider})`);
 
-        // Reihenfolge festlegen: ausdrücklich gewählter Anbieter allein,
-        // sonst alles Verfügbare der Verlässlichkeit nach.
+        // Set the order: explicitly chosen provider alone,
+        // otherwise all available in order of reliability.
         const chain: string[] = provider !== 'auto'
             ? [provider]
             : [
@@ -78,9 +78,9 @@ export class WebSearcher {
                     this.logger.info(`Web-Suche (${name}): ${result.results.length} Ergebnis(se)`);
                     return result;
                 }
-                // Die Begründungen der Unterquellen durchreichen. Sonst steht
-                // außen nur „keyless: keine Treffer", und weder Benutzer noch
-                // Modell erfahren, ob gesperrt, gedrosselt oder wirklich leer.
+                // Pass through the justifications of the sub-queries. Otherwise, it stands
+                // outside only "keyless: no hits", and neither user nor
+                // Model experienced, whether blocked, throttled, or truly empty.
                 if (result?.problems?.length) problems.push(...result.problems);
                 else problems.push(`${name}: keine Treffer`);
                 this.logger.warn(`Web-Suche (${name}): keine Treffer`);
@@ -94,7 +94,7 @@ export class WebSearcher {
         return { query, results: [], problems };
     }
 
-    /** Einen einzelnen Anbieter befragen. */
+    /** Query a single provider. */
     private async runProvider(
         name: string,
         query: string,
@@ -117,8 +117,8 @@ export class WebSearcher {
                 if (!endpoint) throw new Error('keine Instanz-Adresse in searchEndpoint');
                 return this.searchSearxng(query, maxResults, endpoint);
             case 'duckduckgo': {
-                // Erst die Instant-Answer-API (liefert manchmal eine direkte
-                // Antwort), dann die HTML-Seite.
+                // First the instant-answer API (sometimes provides a direct
+                // answer), then the HTML page.
                 try {
                     const instant = await this.searchInstantAnswer(query, maxResults);
                     if (instant.results.length > 0 || instant.abstract || instant.answer) return instant;
@@ -139,8 +139,8 @@ export class WebSearcher {
     }
 
     /**
-     * Tavily – auf KI-Nutzung ausgelegt: liefert Textauszüge statt nur Links.
-     * Kostenloses Kontingent, Schlüssel erforderlich.
+     * Tavily – designed for AI usage: provides text excerpts instead of just links.
+     * Free quota, key required.
      */
     private async searchTavily(query: string, maxResults: number, apiKey: string): Promise<SearchResponse> {
         const raw = await this.httpPostJson('https://api.tavily.com/search', {
@@ -164,7 +164,7 @@ export class WebSearcher {
         };
     }
 
-    /** Brave Search API – Schlüssel erforderlich, kostenloses Kontingent. */
+    /** Brave Search API – Key required, free quota. */
     private async searchBrave(query: string, maxResults: number, apiKey: string): Promise<SearchResponse> {
         const url = `https://api.search.brave.com/res/v1/web/search`
             + `?q=${encodeURIComponent(query)}&count=${maxResults}`;
@@ -185,7 +185,7 @@ export class WebSearcher {
         };
     }
 
-    /** Google Programmable Search – Schlüssel und Such-ID (cx) erforderlich. */
+    /** Google Programmable Search – Key and Search ID (cx) required. */
     private async searchGoogle(
         query: string, maxResults: number, apiKey: string, cx: string
     ): Promise<SearchResponse> {
@@ -207,29 +207,29 @@ export class WebSearcher {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // Schlüsselfreie Suche: mehrere unabhängige Quellen gleichzeitig
+    // Keyless search: multiple independent sources simultaneously
     // ──────────────────────────────────────────────────────────────────────
 
     /**
-     * Suche ohne Schlüssel – über mehrere Quellen parallel.
+     * Search without key – across multiple sources in parallel.
      *
-     * Es gibt keine kostenlose, unbegrenzte, allgemeine Websuche. Jeder Weg ist
-     * entweder ein Anbieter mit Kontingent, oder er kratzt eine HTML-Seite ab
-     * und wird ab einem gewissen Volumen gesperrt. Ein eigener SearXNG hilft
-     * dabei nicht: er verlagert das Abkratzen nur, die Sperren der befragten
-     * Suchmaschinen gelten weiter. Und die Bing-Such-API ist seit dem
+     * There is no free, unlimited, general web search. Every path is
+     * either a provider with a quota, or he scrapes an HTML page
+     * and is blocked from a certain volume. A separate SearXNG helps
+     * not included: it merely shifts the scraping, the locks of the surveyed
+     * Search engines are still considered. And the Bing Search API has been since the
      * 11. August 2025 abgeschaltet.
      *
-     * Was hilft, ist Unabhängigkeit der Quellen. Gefragt werden gleichzeitig:
+     * What helps is the independence of the sources. The following are asked simultaneously:
      *
-     * - DuckDuckGo HTML und DuckDuckGo Lite – zwei getrennte Oberflächen
-     * - Stack Exchange – offizielle API, ohne Schlüssel 300 Anfragen/Tag pro IP
-     * - Wikipedia (MediaWiki) – offizielle API, ohne Schlüssel, hohe Grenzen
+     * - DuckDuckGo HTML and DuckDuckGo Lite – two separate interfaces
+     * - Stack Exchange – official API, no key required, 300 requests/day per IP
+     * - Wikipedia (MediaWiki) – official API, no key required, high limits
      *
-     * Fällt eine Quelle aus, tragen die anderen. Die Treffer werden über die
-     * Adresse zusammengeführt, damit dieselbe Seite nicht doppelt erscheint.
-     * Für eine bekannte Adresse bleibt `web_fetch` der verlässliche Weg – der
-     * hat gar kein Kontingent.
+     * If one source fails, the others take over. The results are passed through the
+     * Addresses merged to prevent the same page from appearing twice.
+     * For a known address, `web_fetch` remains the reliable method – the
+     * has no quota at all.
      */
     private async searchKeyless(query: string, maxResults: number): Promise<SearchResponse> {
         type Attempt = { name: string; response: SearchResponse | null; error: string };
@@ -246,10 +246,10 @@ export class WebSearcher {
             }
         };
 
-        // DuckDuckGo zählt als EINE Quelle: erst /html/, nur bei Fehlschlag die
-        // Lite-Seite. Beide gleichzeitig zu fragen verdoppelt die Last auf
-        // demselben Dienst und führt schneller zur Sperre – im Probelauf war
-        // DuckDuckGo nach der fünften Anfrage in Folge stumm.
+        // DuckDuckGo counts as ONE source: first /html/, only on failure the
+        // Lite page. Asking both simultaneously doubles the load on
+        // the same service and leads to a ban faster – in the test run
+        // DuckDuckGo went silent after the fifth consecutive request.
         const duckduckgo = async (): Promise<Attempt> => {
             const html = await attempt('duckduckgo', () => this.searchHtml(query, maxResults));
             if (html.response && html.response.results.length > 0) return html;
@@ -284,9 +284,9 @@ export class WebSearcher {
 
         let { results, problems, answer } = merge(first);
 
-        // Wikipedia erst, wenn sonst nichts kam. Für „typescript satisfies
-        // operator" lieferte sie im Probelauf den Artikel „Modulo" – als
-        // Ergänzung ist das Rauschen, als letzter Ausweg besser als nichts.
+        // Wikipedia only if nothing else came. For "typescript satisfies
+        // operator" it provided the article "Modulo" in the test run – as
+        // supplement it is noise, as last resort better than nothing.
         if (results.length === 0) {
             const fallback = await attempt('wikipedia', () => this.searchWikipedia(query, maxResults));
             const second = merge([fallback]);
@@ -304,12 +304,12 @@ export class WebSearcher {
     }
 
     /**
-     * DuckDuckGo Lite – dieselbe Suche, andere Oberfläche.
+     * DuckDuckGo Lite – the same search, different interface.
      *
-     * Eine zweite, unabhängige Adresse mit eigener Auszeichnung: sperrt oder
-     * leert die eine Oberfläche, liefert die andere oft noch. Die Lite-Seite
-     * ist eine Tabelle mit `result-link` und `result-snippet`, jeweils in
-     * einfachen Anführungszeichen – nicht dieselbe Auszeichnung wie /html/.
+     * A second, independent address with its own designation: locks or
+     * empties one interface, the other often still does. The Lite page
+     * is a table with `result-link` and `result-snippet`, each in
+     * simple quotes – not the same markup as /html/.
      */
     private async searchDuckDuckGoLite(query: string, maxResults: number): Promise<SearchResponse> {
         const raw = await this.httpPost(
@@ -319,7 +319,7 @@ export class WebSearcher {
         return { query, results: this.parseDuckDuckGoLiteHtml(raw, maxResults) };
     }
 
-    /** Treffer aus der Lite-Seite lesen – getrennt vom Netzaufruf, damit prüfbar. */
+    /** Read hits from the Lite page – separate from the network call, so it can be verified. */
     private parseDuckDuckGoLiteHtml(raw: string, maxResults: number): SearchResult[] {
         type Hit = { pos: number; url: string; title: string };
         const titles: Hit[] = [];
@@ -336,8 +336,8 @@ export class WebSearcher {
             snippets.push({ pos: m.index, text: this.stripHtml(m[1]) });
         }
 
-        // Auf der Lite-Seite steht der Auszug VOR dem nächsten Titel, aber nach
-        // dem eigenen – gepaart wird über die Position, wie bei /html/.
+        // On the Lite page, the excerpt appears BEFORE the next title, but after
+        // the own one – pairing is done based on position, as with /html/.
         const results: SearchResult[] = [];
         for (let i = 0; i < titles.length && results.length < maxResults; i++) {
             const t = titles[i];
@@ -352,14 +352,14 @@ export class WebSearcher {
     }
 
     /**
-     * Stack Exchange – offizielle API, ohne Schlüssel nutzbar.
+     * Stack Exchange – official API, usable without a key.
      *
-     * Ohne Schlüssel gelten 300 Anfragen pro Tag und IP; das ist für einen
-     * Assistenten mit einer Handvoll Suchen pro Aufgabe reichlich. Und es ist
-     * eine echte API: keine HTML-Auszeichnung, die sich morgen ändert.
+     * Without a key, 300 requests per day per IP apply; this is for a
+     * Plenty of assistants with a handful of searches per task. And it is
+     * a real API: no HTML markup that changes tomorrow.
      *
-     * Für Programmierfragen ist das oft die bessere Quelle als eine allgemeine
-     * Suchmaschine – Titel und Punktestand sagen mehr als ein Textauszug.
+     * For programming questions, this is often the better source than a general
+     * Search engine – title and score say more than a text snippet.
      */
     private async searchStackExchange(query: string, maxResults: number): Promise<SearchResponse> {
         const url = 'https://api.stackexchange.com/2.3/search/advanced'
@@ -369,7 +369,7 @@ export class WebSearcher {
         return { query, results: this.mapStackExchange(JSON.parse(raw), maxResults) };
     }
 
-    /** Antwort der Stack-Exchange-API in Treffer übersetzen. */
+    /** Translate the Stack Exchange API response into hits. */
     private mapStackExchange(data: {
         error_message?: string;
         items?: {
@@ -385,9 +385,9 @@ export class WebSearcher {
         }) => ({
             title: this.stripHtml(it.title ?? ''),
             url: it.link ?? '',
-            // Der Textauszug wird gebaut: die API liefert ohne Filter keinen
-            // Fragetext, aber Punktestand und Antwortzahl sagen genug darüber,
-            // ob sich das Öffnen lohnt.
+            // The text excerpt is being built: the API returns nothing without a filter
+            // Question text, but the score and answer count say enough about it,
+            // whether opening it is worthwhile.
             snippet: `Stack Overflow · ${it.score ?? 0} Punkte · `
                 + `${it.answer_count ?? 0} Antwort(en)`
                 + `${it.is_answered ? ', akzeptiert' : ''}`
@@ -396,17 +396,17 @@ export class WebSearcher {
     }
 
     /**
-     * Wikipedia über die MediaWiki-API – schlüssellos und offiziell.
+     * Wikipedia on the MediaWiki API – keyless and official.
      *
-     * Für Begriffe und Verfahren („Was ist ein Recursive-Descent-Parser") die
-     * verlässlichste schlüsselfreie Quelle überhaupt. Für Programmierdetails
-     * taugt sie nicht, deshalb steht sie in der Zusammenführung hinten.
+     * For terms and procedures ("What is a recursive-descent parser") that
+     * most reliable keyless source ever. For programming details
+     * it is not suitable, therefore it is placed at the end in the merge.
      */
     /**
-     * Wikipedia-Sprachausgabe zur Suchanfrage wählen.
+     * Select the Wikipedia language output for the search query.
      *
-     * Umlaute und deutsche Funktionswörter entscheiden. Ein Großbuchstabe taugt
-     * nicht als Merkmal: „Typescript satisfies operator" landete damit auf
+     * Decide on umlauts and German function words. An uppercase letter is
+     * not as a feature: "Typescript satisfies operator" ended up on
      * de.wikipedia.org.
      */
     private wikipediaLanguage(query: string): 'de' | 'en' {
@@ -419,9 +419,9 @@ export class WebSearcher {
     private async searchWikipedia(query: string, maxResults: number): Promise<SearchResponse> {
         const lang = this.wikipediaLanguage(query);
 
-        // Frageformeln entfernen: „wie funktioniert ein recursive descent
-        // parser" findet in der Volltextsuche nichts, „recursive descent
-        // parser" schon.
+        // Remove question formulas: "how does a recursive descent
+        // parser" finds nothing in full-text search, "recursive descent
+        // parser" does.
         const terms = query
             .replace(/^\s*(?:wie|was|wer|wo|warum|wieso|weshalb|welche[srn]?)\b/i, '')
             .replace(/\b(?:funktioniert|funktionieren|bedeutet|macht|ist|sind|man|ein|eine|einen|der|die|das|und|von|mit|für|how|does|do|is|are|the|a|an|what)\b/gi, ' ')
@@ -447,13 +447,13 @@ export class WebSearcher {
     }
 
     /**
-     * SearXNG – nur mit eigener Instanz brauchbar: öffentliche Instanzen
-     * antworten mit 403 oder 429.
+     * SearXNG – only usable with your own instance: public instances
+     * respond with 403 or 429.
      *
-     * Wichtig: eine frische Instanz gibt kein JSON heraus. In `settings.yml`
-     * muss `search.formats` auch `json` enthalten, sonst antwortet sie mit 403.
-     * Und Unbegrenztheit bringt die eigene Instanz nicht: SearXNG befragt
-     * Google, Bing und DuckDuckGo für dich – deren Sperren gelten weiter.
+     * Important: a fresh instance does not output JSON. In `settings.yml`
+     * `search.formats` must also contain `json`, otherwise it responds with 403.
+     * And unboundedness does not bring its own instance: SearXNG queries
+     * Google, Bing, and DuckDuckGo for you – their restrictions still apply.
      */
     private async searchSearxng(
         query: string, maxResults: number, base: string
@@ -462,9 +462,9 @@ export class WebSearcher {
         const url = `${root}/search?q=${encodeURIComponent(query)}&format=json`;
         const raw = await this.httpGet(url, 5, { 'Accept': 'application/json' });
 
-        // Eine frische Instanz gibt kein JSON heraus und antwortet mit der
-        // HTML-Seite. Die Meldung muss sagen, was zu tun ist – sonst sucht man
-        // den Fehler im Client statt in settings.yml.
+        // A fresh instance does not output JSON and responds with the
+        // HTML page. The message must indicate what to do – otherwise one looks
+        // for the error in the client instead of in settings.yml.
         let data: {
             answers?: string[];
             results?: { title?: string; url?: string; content?: string }[];
@@ -564,16 +564,16 @@ export class WebSearcher {
     }
 
     /**
-     * Treffer aus der HTML-Antwort lesen.
+     * Read matches from the HTML response.
      *
-     * Nicht über Blöcke: die Seite verschachtelt mehrere Elemente, deren
-     * Klassennamen alle mit "result" beginnen (`result__extras`, `result__body`).
-     * Ein Blockmuster zerschneidet damit jeden Treffer in Stücke, und die
-     * Textauszüge landeten im falschen Teil – die KI bekam nur Titel und Links,
-     * mit denen sie nichts anfangen kann.
+     * Do not cross blocks: the page nests multiple elements, whose
+     * All class names start with "result" (`result__extras`, `result__body`).
+     * A block pattern thus cuts every hit into pieces, and the
+     * Excerpts ended up in the wrong part – the AI only received titles and links,
+     * with which it cannot do anything.
      *
-     * Stattdessen: Titel-Links und Auszüge einzeln in Dokumentreihenfolge
-     * einsammeln und über ihre Position paaren.
+     * Instead: Title links and excerpts individually in document order
+     * collect and pair them based on their position.
      */
     private parseDuckDuckGoHtml(raw: string, maxResults: number): SearchResult[] {
         type Hit = { pos: number; url: string; title: string };
@@ -594,9 +594,9 @@ export class WebSearcher {
             if (text) snippets.push({ pos: m.index, text });
         }
 
-        // Jedem Titel den nächsten Auszug NACH ihm zuordnen, aber vor dem
-        // nächsten Titel – so bleibt die Zuordnung auch dann richtig, wenn
-        // ein Treffer keinen Auszug hat.
+        // Assign the next excerpt to each title that follows it, but before the
+        // next title – this way the assignment remains correct even if
+        // a hit has no excerpt.
         const out: SearchResult[] = [];
         for (let i = 0; i < titles.length && out.length < maxResults; i++) {
             const start = titles[i].pos;
@@ -612,19 +612,19 @@ export class WebSearcher {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // Seite abrufen und lesbar machen
+    // Retrieve page and make it readable
     // ──────────────────────────────────────────────────────────────────────
 
     /**
-     * Eine Seite abrufen und als Text zurückgeben.
+     * Fetch a page and return it as text.
      *
-     * Das ist das eigentliche Arbeitspferd: eine Suchtrefferliste besteht aus
-     * Titeln und Links, mit denen ein Modell nichts anfangen kann. Erst der
-     * Seiteninhalt beantwortet die Frage. Deshalb hat Claude Code neben der
-     * Suche ein Werkzeug, das eine URL holt – hier dasselbe.
+     * This is the actual workhorse: a search result list consists of
+     * Titles and links that a model cannot make sense of. Only the
+     * The page content answers the question. Therefore, Claude Code, in addition to the
+     * Find a tool that fetches a URL – here the same one.
      *
      * @param url        http/https-Adresse
-     * @param maxChars   Obergrenze für den zurückgegebenen Text
+     * @param maxChars   Upper limit for the returned text
      */
     async fetchPage(url: string, maxChars = 20_000): Promise<{ url: string; title: string; text: string }> {
         if (!/^https?:\/\//i.test(url)) {
@@ -649,20 +649,20 @@ export class WebSearcher {
     /**
      * HTML in lesbaren Text wandeln.
      *
-     * Skripte, Stile, Navigation und Kommentare fliegen raus; Blockelemente
-     * werden zu Zeilenumbrüchen. Das Ergebnis soll gelesen werden können, nicht
-     * schön aussehen.
+     * Scripts, styles, navigation, and comments are removed; block elements
+     * will result in line breaks. The output should be readable, not
+     * look nice.
      */
     private htmlToText(html: string): string {
         return html
-            // Nicht-Inhalt komplett entfernen
+            // Completely remove non-content
             .replace(/<!--[\s\S]*?-->/g, '')
             .replace(/<(script|style|noscript|svg|iframe|template)[\s\S]*?<\/\1>/gi, '')
             .replace(/<(nav|header|footer|aside)[\s\S]*?<\/\1>/gi, '')
-            // Überschriften und Listenpunkte kenntlich machen
+            // Identify headings and list items
             .replace(/<h[1-6][^>]*>/gi, '\n\n## ')
             .replace(/<li[^>]*>/gi, '\n- ')
-            // Blockelemente zu Zeilenumbrüchen
+            // Block elements to line breaks
             .replace(/<\/(p|div|section|article|tr|h[1-6]|li|ul|ol|table|pre|blockquote)>/gi, '\n')
             .replace(/<br\s*\/?>/gi, '\n')
             // Restliche Tags weg
@@ -675,9 +675,9 @@ export class WebSearcher {
             .replace(/&quot;/g, '"')
             .replace(/&#39;|&apos;/g, "'")
             .replace(/&#(\d+);/g, (_m, d) => String.fromCharCode(Number(d)))
-            // Leerraum aufräumen und leere Gerüstzeilen entfernen.
-            // Navigationslisten hinterlassen sonst dutzende nackte "-" am
-            // Anfang jeder Seite, bevor der eigentliche Inhalt beginnt.
+            // Clean up whitespace and remove empty scaffold lines.
+            // Navigation lists otherwise leave dozens of bare "-" at
+            // the beginning of each page before the actual content starts.
             .split('\n')
             .map(l => l.replace(/[ \t]+/g, ' ').trim())
             .filter(l => l !== '-' && l !== '##' && l !== '#')
@@ -693,9 +693,9 @@ export class WebSearcher {
     /** Formatiert Suchergebnisse als lesbaren KI-Kontext */
     formatForAI(response: SearchResponse): string {
         if (response.results.length === 0 && !response.abstract && !response.answer) {
-            // Handlungsleitend antworten. "Keine Ergebnisse" allein lässt das
-            // Modell dieselbe Suche wiederholen; es muss wissen, dass die Suche
-            // selbst nicht verfügbar ist und welcher Weg stattdessen bleibt.
+            // Answer with guiding actions. "No results" alone causes the
+            // model to repeat the same search; it must know that the search
+            // itself is unavailable and which alternative path remains.
             const why = response.problems?.length
                 ? `\nReason: ${response.problems.join('; ')}`
                 : '';
@@ -762,11 +762,11 @@ export class WebSearcher {
     }
 
     /**
-     * Seite oder JSON abrufen.
+     * Fetch the page or JSON.
      *
-     * Folgt Weiterleitungen: fast jede Dokumentationsseite antwortet mit 301
-     * oder 302 (http→https, mit/ohne www, Sprachweiche). Ohne das kam nur ein
-     * leerer Rumpf zurück und `web_fetch` wäre nutzlos.
+     * Follows redirects: almost every documentation page responds with 301
+     * or 302 (http→https, with/without www, language switch). Without this, only a
+     * empty body returned and `web_fetch` would be useless.
      */
     private httpGet(
         url: string,
@@ -793,7 +793,7 @@ export class WebSearcher {
                         reject(new Error(`Zu viele Weiterleitungen (${url})`));
                         return;
                     }
-                    // Relative Location auf die Ausgangsadresse beziehen
+                    // Refer to the relative location to the base address
                     const next = new URL(location, url).toString();
                     this.logger.info(`Weiterleitung ${status}: ${url} → ${next}`);
                     this.httpGet(next, redirectsLeft - 1, extraHeaders).then(resolve, reject);
@@ -819,7 +819,7 @@ export class WebSearcher {
         });
     }
 
-    /** JSON per POST senden – für Such-APIs, die einen Rumpf erwarten. */
+    /** Send JSON via POST – for search APIs that expect a body. */
     private httpPostJson(url: string, payload: Record<string, unknown>): Promise<string> {
         return new Promise((resolve, reject) => {
             const parsed = new URL(url);

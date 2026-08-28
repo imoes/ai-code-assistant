@@ -14,25 +14,25 @@ export interface CompletionOptions {
     temperature?: number;
     stream?: boolean;
     stopSequences?: string[];
-    /** Werkzeuge im OpenAI-Schema. Der Server erzeugt und parst das
-     *  modellspezifische Format dann selbst (llama.cpp mit --jinja). */
+    /** Tools in the OpenAI schema. The server then generates and parses the
+     *  model-specific format itself (llama.cpp with --jinja). */
     tools?: ToolSchema[];
-    /** Callback für laufende Kennzahlen während des Streamings */
+    /** Callback for running metrics during streaming */
     onStats?: StatsCallback;
 }
 
-/** Werkzeugdefinition im OpenAI-Schema. */
+/** Tool definition in the OpenAI schema. */
 export interface ToolSchema {
     name: string;
     description: string;
     parameters: Record<string, unknown>;
 }
 
-/** Ein vom Server geparster Werkzeugaufruf. */
+/** A tool call parsed by the server. */
 export interface ToolCallResult {
     id?: string;
     name: string;
-    /** Argumente als JSON-String, so wie die OpenAI-API sie liefert */
+    /** Arguments as a JSON string, as provided by the OpenAI API */
     arguments: string;
 }
 
@@ -40,32 +40,32 @@ export interface CompletionResult {
     content: string;
     tokenCount?: number;
     finishReason?: string;
-    /** Vom Server geparste Werkzeugaufrufe (leer/undefined wenn keine) */
+    /** Tool calls parsed by the server (empty/undefined if none) */
     toolCalls?: ToolCallResult[];
 }
 
-// Callback-Typ für Streaming-Tokens
+// Callback type for streaming tokens
 export type StreamCallback = (token: string, done: boolean) => void;
 
 /**
- * Laufende Kennzahlen der Generierung, so wie llama.cpp sie meldet.
+ * Current generation metrics, as reported by llama.cpp.
  *
- * Der Server schickt sie bei `timings_per_token` bzw. `return_progress`
- * mit jedem Chunk – damit lässt sich anzeigen, wie weit die Prompt-Auswertung
- * ist und wie schnell das Modell arbeitet.
+ * The server sends them with `timings_per_token` or `return_progress`
+ * with each chunk – this allows displaying how far the prompt evaluation
+ * is and how fast the model operates.
  */
 export interface GenerationStats {
     /** Ausgewertete Prompt-Tokens (Eingabe) */
     promptTokens: number;
     /** Prompt-Tokens pro Sekunde */
     promptPerSecond: number;
-    /** Aus dem Cache übernommene Prompt-Tokens (mussten nicht gerechnet werden) */
+    /** Prompt tokens taken from the cache (did not need to be calculated) */
     cachedTokens: number;
     /** Erzeugte Tokens (Ausgabe) */
     predictedTokens: number;
     /** Erzeugte Tokens pro Sekunde */
     predictedPerSecond: number;
-    /** Fortschritt der Prompt-Auswertung, falls der Server ihn meldet */
+    /** Progress of prompt evaluation, if the server reports it */
     promptProgress?: {
         processed: number;
         total: number;
@@ -74,17 +74,17 @@ export interface GenerationStats {
     };
 }
 
-/** Callback für laufende Kennzahlen (Fortschritt, Tokens, Tokens/Sekunde). */
+/** Callback for running metrics (progress, tokens, tokens/second). */
 export type StatsCallback = (stats: GenerationStats) => void;
 
 /**
- * MCPClient: Kommuniziert mit dem llama.cpp Server.
+ * MCPClient: Communicates with the llama.cpp server.
  *
- * Unterstützt zwei Modi:
+ * Supports two modes:
  *  1. OpenAI-kompatible REST API  (/v1/chat/completions)  — Standard
  *  2. llama.cpp natives MCP-Protokoll  (/mcp)            — optional
  *
- * Der Endpunkt ist vollständig konfigurierbar über
+ * The endpoint is fully configurable via
  * aiAssistant.serverUrl (Standard: http://localhost:8080).
  */
 export class MCPClient {
@@ -111,7 +111,7 @@ export class MCPClient {
         return MCPClient.instance;
     }
 
-    /** Aktuelle Server-URL aus VSCode-Einstellungen */
+    /** Current server URL from VSCode settings */
     private getServerUrl(): string {
         return vscode.workspace
             .getConfiguration('aiAssistant')
@@ -145,7 +145,7 @@ export class MCPClient {
 
     /**
      * Optionaler API-Key (z.B. OpenRouter, Together, Groq, OpenAI).
-     * Leer lassen für lokale llama.cpp-Server – die brauchen keinen Key.
+     * Leave blank for local llama.cpp servers – they don't need a key.
      */
     private getApiKey(): string {
         return vscode.workspace
@@ -155,8 +155,8 @@ export class MCPClient {
     }
 
     /**
-     * Auth-/Provider-Header für die aktuelle Konfiguration.
-     * OpenRouter verlangt zusätzlich HTTP-Referer und X-Title.
+     * Auth/Provider header for the current configuration.
+     * OpenRouter additionally requires HTTP Referer and X-Title.
      */
     private buildAuthHeaders(): Record<string, string> {
         const headers: Record<string, string> = {};
@@ -172,16 +172,16 @@ export class MCPClient {
         return headers;
     }
 
-    /** Zwischengespeicherte Kontextgröße pro Server-URL */
+    /** Cached context size per server URL */
     private ctxCache = new Map<string, number>();
 
     /**
-     * Kontextgröße des Modells in Tokens.
+     * Model context size in tokens.
      *
-     * llama.cpp meldet sie unter /v1/models als `meta.n_ctx` – das ist die
-     * echte Grenze, nicht geschätzt. Antwortet der Server nicht oder kennt das
-     * Feld nicht (Cloud-Anbieter), gibt die Methode undefined zurück; der
-     * Aufrufer nutzt dann den konfigurierten Schwellenwert.
+     * llama.cpp reports it as `meta.n_ctx` under /v1/models – this is the
+     * actual limit, not estimated. If the server does not respond or does not know the
+     * Field not (cloud provider), the method returns undefined; the
+     * The caller then uses the configured threshold.
      */
     async getContextSize(): Promise<number | undefined> {
         const baseUrl = this.getServerUrl();
@@ -209,8 +209,8 @@ export class MCPClient {
     }
 
     /**
-     * Zeigt die URL auf einen Cloud-Anbieter statt auf einen lokalen Server?
-     * Erkennungsmerkmal: kein localhost/127.0.0.1 und ein API-Key ist gesetzt.
+     * Does the URL point to a cloud provider instead of a local server?
+     * Characteristic: no localhost/127.0.0.1 and an API key is set.
      */
     private isCloudEndpoint(): boolean {
         const url = this.getServerUrl();
@@ -219,15 +219,15 @@ export class MCPClient {
     }
 
     /**
-     * Verbindung zum llama.cpp Server testen.
-     * Gibt Model-Infos zurück oder wirft einen Fehler.
+     * Test the connection to the llama.cpp server.
+     * Returns model information or throws an error.
      */
     async testConnection(): Promise<{ success: boolean; info: string }> {
         const baseUrl = this.getServerUrl();
         const auth = this.getApiKey() ? ' (mit API-Key)' : '';
 
-        // ── /v1/models: funktioniert bei llama.cpp UND bei Cloud-Providern ────
-        // Bei OpenRouter liefert das >300 Modelle – deshalb nur die ersten paar.
+        // ── /v1/models: works with llama.cpp AND with cloud providers ────
+        // OpenRouter provides >300 models – hence only the first few.
         let modelInfo = '';
         let modelsOk = false;
         try {
@@ -244,14 +244,14 @@ export class MCPClient {
             modelInfo = ` | /v1/models: ${(err as Error).message.slice(0, 120)}`;
         }
 
-        // ── /health: nur llama.cpp, bei Cloud-Providern erwartet fehlend ──────
+        // ── /health: only llama.cpp, missing expected at cloud providers ──────
         try {
             const health = await this.httpGet(`${baseUrl}/health`);
             const healthObj = JSON.parse(health);
             return { success: true, info: `Status: ${healthObj.status ?? 'ok'}${auth}${modelInfo}` };
         } catch (err) {
             if (modelsOk) {
-                // Kein /health-Endpunkt (normal bei OpenRouter/OpenAI) – trotzdem erreichbar
+                // No /health endpoint (normal for OpenRouter/OpenAI) – still reachable
                 return { success: true, info: `Erreichbar${auth}${modelInfo}` };
             }
             return { success: false, info: `${(err as Error).message}${modelInfo}` };
@@ -260,19 +260,19 @@ export class MCPClient {
 
     /**
      * Hauptmethode: Chat-Completion anfragen.
-     * Wählt automatisch MCP oder OpenAI-API je nach Konfiguration.
+     * Automatically selects MCP or OpenAI API based on configuration.
      *
      * @param messages  Nachrichtenverlauf (system + user + assistant)
      * @param options   Optionale Override-Parameter
-     * @param onStream  Callback für Token-Streaming (optional)
+     * @param onStream  Callback for token streaming (optional)
      */
     async complete(
         messages: ChatMessage[],
         options: CompletionOptions = {},
         onStream?: StreamCallback
     ): Promise<CompletionResult> {
-        // Cloud-Provider (OpenRouter & Co.) sprechen kein llama.cpp-MCP.
-        // Der /mcp-Versuch würde nur eine 404-Runde kosten → direkt OpenAI-API.
+        // Cloud providers (OpenRouter & Co.) do not speak llama.cpp-MCP.
+        // The /mcp attempt would only cost a 404 round → directly use the OpenAI API.
         if (this.isMCPEnabled() && !this.isCloudEndpoint()) {
             return this.completeMCP(messages, options, onStream);
         }
@@ -303,10 +303,10 @@ export class MCPClient {
         if (model) body.model = model;
         if (options.stopSequences?.length) body.stop = options.stopSequences;
 
-        // Werkzeuge im OpenAI-Schema mitsenden. llama.cpp (mit --jinja) rendert
-        // sie ins Format des jeweiligen Modells und parst die Antwort zurück –
-        // dadurch funktioniert dieselbe Anfrage mit Qwen, Gemma, Kimi, laguna,
-        // DeepSeek und allem, was der Server künftig unterstützt.
+        // Send tools in the OpenAI schema. llama.cpp (with --jinja) renders
+        // them into the format of the respective model and parses the response back –
+        // thereby the same request works with Qwen, Gemma, Kimi, laguna,
+        // DeepSeek and everything the server will support in the future.
         if (options.tools?.length) {
             body.tools = options.tools.map(t => ({
                 type: 'function',
@@ -315,9 +315,9 @@ export class MCPClient {
             body.tool_choice = 'auto';
         }
 
-        // Kennzahlen mitschicken lassen: Fortschritt der Prompt-Auswertung und
-        // Tokens/Sekunde. Nur llama.cpp kennt diese Felder; andere Server
-        // ignorieren unbekannte Body-Felder.
+        // Allow sending metrics: progress of prompt evaluation and
+        // tokens/second. Only llama.cpp knows these fields; other servers
+        // ignore unknown body fields.
         if (stream && options.onStats) {
             body.timings_per_token = true;
             body.return_progress = true;
@@ -342,8 +342,8 @@ export class MCPClient {
         const finishReason: string =
             parsed.choices?.[0]?.finish_reason ?? 'unknown';
 
-        // Reasoning-Modelle liefern den Denkteil separat – als <think> anhängen,
-        // damit die Anzeige ihn wie beim Streaming einklappen kann.
+        // Reasoning models provide the reasoning part separately – append it as <think>,
+        // so that the display can collapse it like during streaming.
         const reasoning: string = message.reasoning_content ?? '';
         const fullContent = reasoning ? `<think>${reasoning}</think>${content}` : content;
 
@@ -356,10 +356,10 @@ export class MCPClient {
     }
 
     /**
-     * Kennzahlen aus einem llama.cpp-Chunk lesen.
+     * Read metrics from a llama.cpp chunk.
      *
-     * `timings` sind kumulativ, `prompt_progress` beschreibt den aktuellen Stand
-     * der Prompt-Auswertung. Fehlt eines von beiden, bleibt der Rest gültig.
+     * `timings` are cumulative, `prompt_progress` describes the current status
+     * the prompt evaluation. If either of these is missing, the rest remains valid.
      */
     private readStats(evt: Record<string, unknown>): GenerationStats {
         const t = (evt.timings ?? {}) as Record<string, number>;
@@ -386,7 +386,7 @@ export class MCPClient {
         return stats;
     }
 
-    /** tool_calls aus einer OpenAI-Antwort in unsere Form bringen. */
+    /** tool_calls from an OpenAI response into our format. */
     private extractToolCalls(raw: unknown): ToolCallResult[] | undefined {
         if (!Array.isArray(raw) || raw.length === 0) return undefined;
 
@@ -404,7 +404,7 @@ export class MCPClient {
         return calls.length > 0 ? calls : undefined;
     }
 
-    /** Server-Sent-Events Streaming für /v1/chat/completions */
+    /** Server-Sent-Events Streaming for /v1/chat/completions */
     private streamOpenAI(
         url: string,
         body: Record<string, unknown>,
@@ -433,15 +433,15 @@ export class MCPClient {
             this.abortFlag = false;
             let fullContent = '';
 
-            // Untätigkeits-Timeout.
+            // Inactivity timeout.
             //
-            // Die Streaming-Anfrage hatte bisher gar keinen: blieb der Server
-            // mitten im Stream stehen, wartete der Assistent unbegrenzt – ohne
-            // Meldung und ohne Ausweg außer "Abbrechen". Beobachtet bei einem
-            // ausgelasteten llama.cpp-Server: 50 Minuten Stille.
+            // The streaming request previously had none: if the server
+            // stopped in the middle of the stream, the assistant waited indefinitely – without
+            // message and without escape other than "Cancel". Observed on a
+            // loaded llama.cpp server: 50 minutes of silence.
             //
-            // Gemessen wird die Pause ZWISCHEN zwei Chunks, nicht die
-            // Gesamtdauer: eine lange Antwort ist in Ordnung, Stillstand nicht.
+            // The pause is measured BETWEEN two chunks, not the
+            // total duration: a long response is fine, a standstill is not.
             const idleMs = Math.max(30, vscode.workspace
                 .getConfiguration('aiAssistant')
                 .get<number>('streamIdleTimeoutSeconds', 180)) * 1000;
@@ -463,9 +463,9 @@ export class MCPClient {
                 }, idleMs);
             };
 
-            // tool_calls kommen im Stream stückweise: der Name im ersten Chunk,
-            // die Argumente über mehrere verteilt. Gesammelt wird nach dem
-            // index-Feld, das die OpenAI-API pro Aufruf mitschickt.
+            // tool_calls arrive in the stream in pieces: the name in the first chunk,
+            // the arguments distributed across multiple chunks. They are collected based on the
+            // index field, which the OpenAI API sends with each call.
             const toolAcc = new Map<number, { id?: string; name: string; args: string }>();
 
             const applyToolDeltas = (deltas: unknown) => {
@@ -497,7 +497,7 @@ export class MCPClient {
                 res.setEncoding('utf-8');
                 let buffer = '';
 
-                // Ab jetzt zählt die Stille zwischen den Chunks
+                // From now on, the silence between the chunks counts
                 armIdle(() => {
                     res.destroy();
                     req.destroy();
@@ -509,7 +509,7 @@ export class MCPClient {
                 });
 
                 res.on('data', (chunk: string) => {
-                    // Es kommt etwas – Uhr zurücksetzen
+                    // Something is coming – reset the clock
                     if (!settled) {
                         armIdle(() => {
                             res.destroy();
@@ -544,7 +544,7 @@ export class MCPClient {
                             const evt = JSON.parse(data);
                             const delta = evt.choices?.[0]?.delta ?? {};
 
-                            // Werkzeugaufrufe sammeln (kommen über mehrere Chunks verteilt)
+                            // Collect tool calls (distributed across multiple chunks)
                             applyToolDeltas(delta.tool_calls);
 
                             // Kennzahlen weitergeben (llama.cpp liefert sie pro Chunk)
@@ -555,7 +555,7 @@ export class MCPClient {
                             // DeepSeek R1: reasoning_content → als <think> Block streamen
                             const reasoning: string = delta.reasoning_content ?? '';
                             if (reasoning) {
-                                // Öffnendes Tag einmalig einfügen
+                                // Insert opening tag once
                                 if (!fullContent.includes('<think>')) {
                                     fullContent += '<think>';
                                     onStream('<think>', false);
@@ -566,7 +566,7 @@ export class MCPClient {
 
                             const token: string = delta.content ?? '';
                             if (token) {
-                                // Schließendes Tag einfügen wenn vorher reasoning kam
+                                // Insert closing tag if reasoning came before
                                 if (fullContent.includes('<think>') && !fullContent.includes('</think>')) {
                                     fullContent += '</think>';
                                     onStream('</think>', false);
@@ -575,7 +575,7 @@ export class MCPClient {
                                 onStream(token, false);
                             }
                         } catch {
-                            // Ungültiges JSON-Fragment → überspringen
+                            // Invalid JSON fragment → skip
                         }
                     }
                 });
@@ -611,9 +611,9 @@ export class MCPClient {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // llama.cpp MCP-Protokoll (/mcp)
-    // llama.cpp startet MCP-Server wenn mit --mcp-server Flag gestartet.
-    // Kommunikation: JSON-RPC 2.0 über HTTP POST an /mcp
+    // llama.cpp MCP Protocol (/mcp)
+    // llama.cpp starts the MCP server when launched with the --mcp-server flag.
+    // Communication: JSON-RPC 2.0 over HTTP POST to /mcp
     // ──────────────────────────────────────────────────────────────────────────
 
     private async completeMCP(
@@ -655,7 +655,7 @@ export class MCPClient {
                 result?.content?.text ?? result?.message?.content?.text ?? '';
 
             if (onStream) {
-                // Simuliertes Streaming für MCP (blockiert, dann alles auf einmal)
+                // Simulated streaming for MCP (blocks, then all at once)
                 onStream(content, false);
                 onStream('', true);
             }
@@ -665,7 +665,7 @@ export class MCPClient {
                 finishReason: result?.stopReason ?? 'endTurn'
             };
         } catch (err) {
-            // Fallback: MCP nicht erreichbar → OpenAI-API versuchen
+            // Fallback: MCP not reachable → try OpenAI API
             this.logger.warn(`MCP nicht erreichbar (${(err as Error).message}), Fallback auf OpenAI-API...`);
             return this.completeOpenAI(messages, options, onStream);
         }

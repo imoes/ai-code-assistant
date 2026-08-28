@@ -8,6 +8,7 @@ import { MCPClient, GenerationStats } from './mcpClient';
 import { FileManager } from './fileManager';
 import { Logger } from './logger';
 import { ConfirmFn, DiffMeta, AppliedChange } from './confirm';
+import { parseCommand, parseBudget, LoopBudget, HELP_TEXT } from './commands';
 
 interface WebviewMessage {
     type:
@@ -33,10 +34,10 @@ interface WebviewMessage {
 }
 
 /**
- * ChatPanel – öffnet den AI-Chat als Editor-Tab (WebviewPanel).
+ * ChatPanel – opens the AI chat as an editor tab (WebviewPanel).
  *
- * Jede Instanz ist eine eigene Session mit eigenem Konversationsverlauf.
- * Mehrere Tabs können gleichzeitig geöffnet sein.
+ * Each instance is its own session with its own conversation history.
+ * Multiple tabs can be open at the same time.
  */
 export class ChatPanel {
     public static readonly viewType = 'aiAssistant.chatPanel';
@@ -45,7 +46,7 @@ export class ChatPanel {
     private static panels = new Map<string, ChatPanel>();
     private static nextId = 1;
 
-    /** Modus-Änderung an alle offenen Tabs senden */
+    /** Send mode change to all open tabs */
     static broadcastModeChange(mode: AssistantMode): void {
         for (const p of ChatPanel.panels.values()) {
             p.post({ type: 'modeChanged', mode });
@@ -60,9 +61,9 @@ export class ChatPanel {
     private readonly logger = Logger.getInstance();
     private readonly fileManager = FileManager.getInstance();
     private pendingConfirmations = new Map<string, (choice: string) => void>();
-    /** Diff-Daten pro requestId für den "In Editor öffnen"-Button */
+    /** Diff data per requestId for the "Open in Editor" button */
     private pendingDiffs = new Map<string, DiffMeta>();
-    /** Läuft gerade eine Aufgabe? Wird für "neue Aufgabe unterbricht" gebraucht. */
+    /** Is a task currently running? Used for "new task interrupts". */
     private runningTask: Promise<void> | null = null;
     private disposables: vscode.Disposable[] = [];
 
@@ -91,19 +92,19 @@ export class ChatPanel {
         // Tab-Icon
         this.panel.iconPath = new vscode.ThemeIcon('robot');
 
-        // Nachrichten vom WebView
+        // Messages from the WebView
         this.panel.webview.onDidReceiveMessage(
             (msg: WebviewMessage) => this.handleMessage(msg),
             null,
             this.disposables
         );
 
-        // Tab geschlossen → aufräumen
+        // Tab closed → clean up
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
 
         this.postSystem(`AI Chat Session #${sessionId} bereit.`);
 
-        // Workspace scannen und Ergebnis im Chat anzeigen
+        // Scan the workspace and display the result in the chat
         try {
             const root = this.fileManager.getWorkspaceRoot();
             const files = this.fileManager.listFiles();
@@ -112,15 +113,20 @@ export class ChatPanel {
             this.postSystem('⚠ Kein Workspace geöffnet. Bitte einen Ordner öffnen.');
         }
 
-        // Log-Kanal sofort einblenden (preserveFocus=true → Fokus bleibt im Editor)
+        // A set goal extends beyond the session – therefore, it belongs in the
+        // Open visibly, otherwise one wonders about the answers.
+        const goal = this.aiEngine.getGoal();
+        if (goal) this.post({ type: 'goalChanged', goal });
+
+        // Immediately show the log channel (preserveFocus=true → focus remains in the editor)
         this.logger.show();
 
-        // Tastaturfokus in das Panel holen.
-        // Wird der Chat über die Befehlspalette geöffnet, gibt VS Code den Fokus
-        // danach an die zuvor aktive Ansicht zurück (Explorer, andere Seitenleiste) –
-        // man tippt dann ins Leere. reveal(preserveFocus=false) korrigiert das,
-        // das Eingabefeld selbst fokussiert sich im WebView-Skript.
-        // Verzögert, weil logger.show() das Panel-Layout noch umbaut.
+        // Bring the keyboard focus into the panel.
+        // If the chat is opened via the command palette, VS Code returns the focus
+        // to the previously active view (Explorer, other sidebar) afterwards –
+        // you then type into empty space. reveal(preserveFocus=false) corrects this,
+        // the input field itself focuses in the WebView script.
+        // Delayed because logger.show() still rebuilds the panel layout.
         setTimeout(() => {
             if (ChatPanel.panels.has(this.sessionId)) {
                 this.panel.reveal(column, false);
@@ -129,11 +135,11 @@ export class ChatPanel {
     }
 
     /**
-     * Neuen Chat-Tab öffnen oder bestehenden fokussieren.
+     * Open a new chat tab or focus an existing one.
      * @param forceNew  true = immer neuen Tab erstellen
      */
     static open(extensionUri: vscode.Uri, forceNew = false): ChatPanel {
-        // Letzten aktiven Tab wiederverwenden wenn nicht forceNew
+        // Reuse the last active tab if not forceNew
         if (!forceNew && ChatPanel.panels.size > 0) {
             const last = [...ChatPanel.panels.values()].at(-1)!;
             last.panel.reveal(vscode.ViewColumn.One, false);
@@ -163,28 +169,30 @@ export class ChatPanel {
         switch (msg.type) {
             case 'sendMessage':
                 if (msg.text?.trim()) {
-                    // Läuft noch eine Aufgabe? Dann diese abbrechen und die
-                    // neue starten. Vorher war das Eingabefeld gesperrt und man
-                    // kam zwischen den Iterationen nicht dazwischen.
+                    const text = msg.text.trim();
+
+                    // Commands like /goal and /loop do NOT go to the model –
+                    // it would describe a loop instead of executing one.
+                    if (await this.handleSlashCommand(text)) break;
+
+                    // Is a task still running? Then the instruction
+                    // is QUEUED, not interrupted: the current step
+                    // is completed first, then it will be executed. An interruption
+                    // in the middle of a step would leave half-finished work –
+                    // a file modified, but tests not run. If you really
+                    // want to stop immediately, use "Cancel".
                     if (this.runningTask) {
-                        this.postSystem('⏹ Laufende Aufgabe abgebrochen – neue Aufgabe wird gestartet.');
-                        this.aiEngine.cancel();
-                        for (const [, resolve] of this.pendingConfirmations) {
-                            resolve('Ablehnen');
-                        }
-                        this.pendingConfirmations.clear();
-                        this.pendingDiffs.clear();
-                        // Auf das Auslaufen der alten Schleife warten, sonst
-                        // schreiben zwei Läufe gleichzeitig in den Verlauf.
-                        try { await this.runningTask; } catch { /* egal */ }
+                        const n = this.aiEngine.queueUserInput(text);
+                        this.post({ type: 'queuedMessage', text, count: n });
+                        break;
                     }
-                    await this.handleUserMessage(msg.text.trim());
+                    await this.handleUserMessage(text);
                 }
                 break;
 
             case 'confirmResponse':
-            // Der Entscheidungs-Dialog nutzt dieselbe Warteschlange: eine
-            // Antwort ist eine Antwort, gleich aus welcher Karte sie kommt.
+            // The decision dialog uses the same queue:
+            // a response is a response, regardless of which card it comes from.
             case 'decisionResponse': {
                 const handler = this.pendingConfirmations.get(msg.requestId ?? '');
                 if (handler) {
@@ -225,7 +233,7 @@ export class ChatPanel {
                 break;
 
             case 'clearHistory': {
-                // Löscht die persistierte Historie – irreversibel, daher fragen.
+                // Deletes the persisted history – irreversible, therefore ask.
                 const answer = await vscode.window.showWarningMessage(
                     'Gesamten Chat-Verlauf löschen?\n'
                     + 'Alle gespeicherten Sessions in ai-code-assistant.json werden entfernt. '
@@ -272,7 +280,7 @@ export class ChatPanel {
     }
 
     private async handleUserMessage(userText: string): Promise<void> {
-        // Den Lauf festhalten, damit eine neue Aufgabe darauf warten kann
+        // Record the run so that a new task can wait for it
         const task = this.runUserMessage(userText);
         this.runningTask = task;
         try {
@@ -288,22 +296,22 @@ export class ChatPanel {
 
         const confirmFn = this.buildConfirmFn();
 
-        // Planänderungen der KI live als Checkliste im Chat anzeigen
+        // Display AI plan changes live as a checklist in the chat
         this.aiEngine.setPlanCallback((steps: PlanStep[]) => {
             this.post({ type: 'plan', steps });
         });
 
-        // Jede angewandte Dateiänderung mit farbigem Diff zeigen.
-        // Im Auto-Modus ist das der EINZIGE Weg, Änderungen zu sehen – dort
-        // erscheint keine Bestätigungskarte.
+        // Show every applied file change with a colored diff.
+        // In auto-mode, this is the ONLY way to see changes – no confirmation
+        // card appears there.
         this.fileManager.setDiffReporter((change: AppliedChange) => {
             this.post({ type: 'fileDiff', change });
         });
 
-        // Laufende Kennzahlen: Fortschritt der Prompt-Auswertung und Tokens/Sekunde.
-        // Bei großen Kontexten dauert allein die Eingabe-Auswertung Minuten –
-        // ohne diese Anzeige sieht der Benutzer nur "KI denkt…" und weiß nicht,
-        // ob überhaupt etwas passiert.
+        // Running metrics: progress of prompt evaluation and tokens/second.
+        // With large contexts, input evaluation alone takes minutes –
+        // without this display, the user only sees "AI is thinking…" and doesn't know
+        // if anything is happening at all.
         this.aiEngine.setStatsCallback((stats: GenerationStats) => {
             this.post({ type: 'stats', stats });
         });
@@ -317,9 +325,9 @@ export class ChatPanel {
             this.post({ type: 'narration', text });
         });
 
-        // Entscheidungsfrage als Karte im Chat – wie der Frage-Dialog im
-        // Claude-Code-Plugin: Optionen mit Beschriftung und Erklärung,
-        // Einfach- oder Mehrfachauswahl, plus Freitext für „etwas anderes".
+        // Decision question as a card in the chat – like the question dialog in the
+        // Claude-Code plugin: options with label and explanation,
+        // single or multiple selection, plus free text for "something else".
         this.aiEngine.setAskCallback((request: AskRequest) => this.requestDecision(request));
 
         try {
@@ -347,9 +355,9 @@ export class ChatPanel {
                 },
                 0,
                 (description: string, output: string, meta?: ActionMeta) => {
-                    // Aktion samt Ausgabe im Chat anzeigen. `meta` trägt
-                    // Werkzeugname, Ziel und Zustand – ohne das steht in der
-                    // Zeile nur "Aktion" und die ganze Beschreibung als Ziel.
+                    // Display the action along with its output in the chat. `meta` carries
+                    // the tool name, target, and state – without it, the line
+                    // only shows "Action" and the entire description as the target.
                     this.post({ type: 'thinking', value: false });
                     this.post({ type: 'actionProgress', description, output, meta });
                     this.post({ type: 'thinking', value: true });
@@ -373,7 +381,7 @@ export class ChatPanel {
                 this.post({ type: 'contextWarning', text: result.contextWarning });
             }
 
-            // Immer am Ende sicherstellen dass Thinking aus und Input aktiv ist
+            // Always ensure at the end that Thinking is off and Input is active
             this.post({ type: 'thinking', value: false });
             this.post({ type: 'inputEnabled', value: true });
 
@@ -418,7 +426,7 @@ export class ChatPanel {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // In-Chat Bestätigung
+    // In-Chat Confirmation
     // ──────────────────────────────────────────────────────────────────────────
 
     private requestConfirmation(message: string, choices: string[], diff?: DiffMeta): Promise<string> {
@@ -445,13 +453,139 @@ export class ChatPanel {
             this.requestConfirmation(message, choices, diff);
     }
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // Slash-Befehle
+    // ──────────────────────────────────────────────────────────────────────────
+
     /**
-     * Entscheidungsfrage als Karte im Chat stellen und auf die Antwort warten.
+     * `/goal`, `/loop` und `/help` behandeln.
      *
-     * Nutzt dieselbe Warteschlange wie die Bestätigung; nur die Karte im
-     * Webview ist eine andere (Radio- bzw. Kästchen-Optionen mit Erklärung und
-     * einem Freitextfeld). Die Antwort ist die Beschriftung der Auswahl, bei
-     * Mehrfachauswahl mit `", "` verbunden – so hält es auch Claude Code.
+     * @returns true, wenn es ein Befehl war und die Nachricht damit erledigt ist
+     */
+    private async handleSlashCommand(text: string): Promise<boolean> {
+        const cmd = parseCommand(text);
+        if (!cmd) return false;
+
+        this.post({ type: 'userMessage', text });
+
+        if (cmd.name === 'help') {
+            this.post({ type: 'assistantMessage', text: HELP_TEXT });
+            return true;
+        }
+
+        if (cmd.name === 'goal') {
+            if (!cmd.rest) {
+                const goal = this.aiEngine.getGoal();
+                this.post({
+                    type: 'assistantMessage',
+                    text: goal
+                        ? `**Aktuelles Ziel**\n\n${goal}`
+                        : 'Kein Ziel gesetzt. `/goal <Text>` setzt eins.'
+                });
+                return true;
+            }
+            if (/^(l[öo]schen|clear|weg|none|aus)$/i.test(cmd.rest)) {
+                this.aiEngine.setGoal('');
+                this.post({ type: 'goalChanged', goal: '' });
+                this.post({ type: 'assistantMessage', text: 'Ziel gelöscht.' });
+                return true;
+            }
+            this.aiEngine.setGoal(cmd.rest);
+            this.post({ type: 'goalChanged', goal: cmd.rest });
+            this.post({
+                type: 'assistantMessage',
+                text: `**Ziel gesetzt**\n\n${cmd.rest}\n\n`
+                    + 'Es geht ab jetzt in jede Anfrage ein und überlebt die Sitzung. '
+                    + 'Mit `/loop <Budget>` arbeite ich wiederholt darauf hin.'
+            });
+            return true;
+        }
+
+        // ── /loop ────────────────────────────────────────────────────────────
+        const { budget, task } = parseBudget(cmd.rest);
+        const goal = this.aiEngine.getGoal();
+
+        if (!task && !goal) {
+            this.post({
+                type: 'assistantMessage',
+                text: 'Für `/loop` brauche ich ein Ziel oder eine Aufgabe.\n\n'
+                    + 'Entweder `/goal <Text>` setzen, oder direkt '
+                    + '`/loop 15m <was zu tun ist>`.'
+            });
+            return true;
+        }
+
+        // A running loop is not duplicated – the new statement
+        // is inserted.
+        if (this.runningTask) {
+            const n = this.aiEngine.queueUserInput(text);
+            this.post({ type: 'queuedMessage', text, count: n });
+            return true;
+        }
+
+        this.runningTask = this.runLoopTask(task || goal, budget);
+        try { await this.runningTask; } finally { this.runningTask = null; }
+        return true;
+    }
+
+    /** Drive the loop and show the progress in the chat. */
+    private async runLoopTask(task: string, budget: LoopBudget): Promise<void> {
+        const goal = this.aiEngine.getGoal();
+        this.post({
+            type: 'assistantMessage',
+            text: `**Schleife gestartet** – Budget ${budget.label}, höchstens `
+                + `${budget.rounds} Runde(n).\n\n`
+                + (goal ? `Ziel: ${goal}\n\n` : '')
+                + `Aufgabe: ${task}\n\n`
+                + 'Sie endet, wenn das Ziel erreicht ist, das Budget aufgebraucht ist '
+                + 'oder du auf **Abbrechen** klickst. Tippen kannst du jederzeit – '
+                + 'die Anweisung kommt nach dem laufenden Schritt dran.'
+        });
+        this.post({ type: 'thinking', value: true });
+
+        this.aiEngine.setNarrationCallback((t: string) => this.post({ type: 'narration', text: t }));
+        this.aiEngine.setAskCallback((r: AskRequest) => this.requestDecision(r));
+
+        try {
+            const result = await this.aiEngine.runLoop(
+                task,
+                budget,
+                () => { /* Der Rundentext kommt über die Ansage, nicht als Stream */ },
+                this.buildConfirmFn(),
+                (iteration: number, reason: string) => {
+                    this.post({ type: 'iterationMessage', iteration, reason });
+                },
+                (description: string, output: string, meta?: ActionMeta) => {
+                    this.post({ type: 'actionProgress', description, output, meta });
+                },
+                (round: number, total: number, note: string) => {
+                    this.post({ type: 'loopRound', round, total, note });
+                }
+            );
+
+            this.post({
+                type: 'assistantMessage',
+                text: `**Schleife beendet** – ${result.rounds} Runde(n), `
+                    + `${result.actions} Aktion(en). Grund: ${result.stopped}.`
+            });
+        } catch (err) {
+            this.post({
+                type: 'errorMessage',
+                text: `Schleife abgebrochen: ${(err as Error).message}`
+            });
+        } finally {
+            this.post({ type: 'thinking', value: false });
+            this.post({ type: 'inputEnabled', value: true });
+        }
+    }
+
+    /**
+     * Pose the decision question as a card in the chat and wait for the answer.
+     *
+     * Uses the same queue as the confirmation; only the card in
+     * Webview is a different (radio or checkbox options with explanation and
+     * a free-text field). The answer is the label of the selection, at
+     * Multiple selection connected with `", "` – this is how Claude Code also handles it.
      */
     private requestDecision(request: AskRequest): Promise<string> {
         const requestId = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -487,7 +621,7 @@ export class ChatPanel {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // HTML (Editor-Tab optimiert: volle Breite, kein Sidebar-Rahmen)
+    // HTML (Editor tab optimized: full width, no sidebar frame)
     // ──────────────────────────────────────────────────────────────────────────
 
     private buildHtml(webview: vscode.Webview): string {
@@ -579,7 +713,7 @@ export class ChatPanel {
       max-width: 230px;
     }
     #mode-select:focus { outline: 1px solid var(--accent); }
-    /* Der aktive Modus soll auf einen Blick erkennbar sein */
+    /* The active mode should be recognizable at a glance */
     #mode-select.mode-auto { color: #fc0; border-color: rgba(255,180,0,.55); }
     #mode-select.mode-ask  { color: #8bf; border-color: rgba(100,180,255,.45); }
     #mode-select.mode-plan { color: #b39dff; border-color: rgba(150,120,255,.55); }
@@ -659,7 +793,7 @@ export class ChatPanel {
       color: #fc0;
       font-size: 12px;
     }
-    /* ── Werkzeugzeile: eine Zeile pro Vorgang, Ausgabe darunter ── */
+    /* ── Toolbar: one line per operation, output below ── */
     .tool-row {
       border-left: 2px solid var(--border);
       padding: 2px 0 2px 10px;
@@ -763,7 +897,7 @@ export class ChatPanel {
       font-style: italic;
     }
 
-    /* ── Markdown im Antworttext ── */
+    /* ── Markdown in the response text ── */
     .msg-assistant p { margin: 0 0 8px; line-height: 1.55; }
     .msg-assistant p:last-child { margin-bottom: 0; }
     .msg-assistant ul, .msg-assistant ol {
@@ -805,7 +939,7 @@ export class ChatPanel {
       line-height: 1.45;
       position: relative;
     }
-    /* Sprachangabe des Code-Blocks als kleine Marke oben rechts */
+    /* Language specification of the code block as a small mark in the upper right corner */
     .msg-assistant pre[data-lang]::before {
       content: attr(data-lang);
       position: absolute;
@@ -841,10 +975,10 @@ export class ChatPanel {
     }
     .msg-assistant a { color: var(--vscode-textLink-foreground, #4daafc); }
 
-    /* ── Kennzahlen unter der Eingabe ──
+    /* ── Metrics below the input ──
        Bewusst NICHT in der Denk-Leiste: die wird zwischen den Schritten der
        Agenten-Schleife aus- und wieder eingeschaltet, die Zahlen wären dann
-       ständig weg. Hier bleiben sie über die ganze Aufgabe stehen. */
+constantly away. Here they remain standing over the entire task. */
     #input-footer {
       display: flex;
       align-items: center;
@@ -879,7 +1013,7 @@ export class ChatPanel {
       transition: width .2s linear;
     }
 
-    /* ── Angewandte Änderung mit Diff ── */
+    /* ── Applied change with diff ── */
     .diff-card {
       background: var(--bg-msg);
       border: 1px solid var(--border);
@@ -961,7 +1095,7 @@ export class ChatPanel {
     }
     .msg-assistant pre code { background: none; padding: 0; }
 
-    /* ── Bestätigungs-Karte ── */
+    /* ── Confirmation Card ── */
     .confirm-card {
       border-radius: var(--radius);
       padding: 12px 16px;
@@ -1108,9 +1242,34 @@ export class ChatPanel {
       color: var(--fg-muted);
       margin-bottom: 8px;
     }
+    /* Target bar: always visible as long as a target is set. A target that
+       man nicht sieht, vergisst man - und wundert sich dann ueber die
+       Antworten. */
+    #goal-bar {
+      display: none;
+      padding: 6px 14px;
+      font-size: 11px;
+      color: var(--accent, #4a9eff);
+      border-bottom: 1px solid var(--border);
+      background: var(--code-bg);
+    }
+    #goal-bar.visible { display: block; }
+
+    /* Enqueued instruction: like a user message, but fainter. */
+    .msg-queued { opacity: .65; }
+    .queued-note {
+      margin-top: 4px;
+      font-size: 10px;
+      opacity: .85;
+    }
+    .msg-loop {
+      color: var(--accent, #4a9eff);
+      font-weight: 500;
+    }
+
     /* ── Entscheidungs-Karte ──────────────────────────────────────────────
        Nachgebaut nach dem Frage-Dialog im Claude-Code-Plugin. Sie soll
-       auffallen: der Assistent wartet an dieser Stelle auf den Benutzer. */
+stand out: the assistant waits for the user at this point. */
     .decision-card {
       background: var(--card-bg, rgba(127,127,127,.06));
       border: 1px solid var(--accent, #4a9eff);
@@ -1184,8 +1343,8 @@ export class ChatPanel {
     .decision-ok:disabled { opacity: .45; cursor: default; }
     .decision-answer { font-size: 12px; color: var(--accent, #4a9eff); }
 
-    /* Bilanz-Fusszeile: unauffaellig, damit die Antwort darueber die Hauptsache
-       bleibt. Kein Kasten, keine Monospace-Ausgaben. */
+    /* Balance footer: inconspicuous, so that the answer above remains the main thing.
+       No box, no monospace output. */
     .actions-summary {
       background: none;
       border: none;
@@ -1304,6 +1463,8 @@ export class ChatPanel {
   <button id="btn-settings" class="tb-btn">⚙</button>
 </div>
 
+<div id="goal-bar"></div>
+
 <div id="pending-banner"></div>
 
 <div id="chat"></div>
@@ -1333,6 +1494,7 @@ export class ChatPanel {
 <script nonce="${nonce}">
 const vscode        = acquireVsCodeApi();
 const chat          = document.getElementById('chat');
+const goalBar       = document.getElementById('goal-bar');
 const promptInput   = document.getElementById('prompt-input');
 const sendBtn       = document.getElementById('send-btn');
 const thinking      = document.getElementById('thinking');
@@ -1354,14 +1516,14 @@ function setMode(mode) {
   modeSelect.title = MODE_HINTS[value];
 }
 
-// Aktueller Modus, beim Rendern eingesetzt
+// Current mode, used during rendering
 setMode('${getAssistantMode()}');
 
 let isBusy = false;
 let currentAssistantEl = null;
 let pendingCount = 0;
 
-// ── Toolbar (addEventListener – onclick-Attribute werden von CSP blockiert) ──
+// ── Toolbar (addEventListener – onclick attributes are blocked by CSP) ──
 document.getElementById('btn-test')    .addEventListener('click', () => vscode.postMessage({type:'testConnection'}));
 document.getElementById('btn-reset')   .addEventListener('click', () => vscode.postMessage({type:'resetConversation'}));
 document.getElementById('btn-clear')   .addEventListener('click', () => vscode.postMessage({type:'clearHistory'}));
@@ -1373,9 +1535,9 @@ document.getElementById('btn-abort')   .addEventListener('click', () => vscode.p
 modeSelect.addEventListener('change', () =>
   vscode.postMessage({type:'setMode', mode: modeSelect.value}));
 
-// ── Nachrichten vom Extension-Host ──────────────────────────────────────────
-// Als benannte Funktion, damit der Testlauf (test/webview-rows.js) genau diesen
-// Weg fahren kann statt die Handler einzeln aufzurufen.
+// ── Messages from the Extension Host ──────────────────────────────────────────
+// As a named function, so that the test run (test/webview-rows.js) can take
+// exactly this path instead of calling the handlers individually.
 window.addEventListener('message', (ev) => handleHostMessage(ev.data));
 
 function handleHostMessage(msg) {
@@ -1418,6 +1580,9 @@ function handleHostMessage(msg) {
     case 'fileDiff':       renderFileDiff(msg.change); break;
     case 'stats':          renderStats(msg.stats); break;
     case 'inputEnabled':   setThinking(false); setInputEnabled(msg.value); finalizeProgress(); resetStats(); break;
+    case 'queuedMessage':   append(makeQueuedMsg(msg.text, msg.count)); break;
+    case 'loopRound':       append(makeLoopRoundMsg(msg.round, msg.total, msg.note)); break;
+    case 'goalChanged':     setGoalBar(msg.goal); break;
     case 'decisionRequest':
       append(makeDecisionCard(msg.requestId, msg.header, msg.question, msg.options, msg.multi));
       pendingCount++;
@@ -1435,15 +1600,15 @@ function handleHostMessage(msg) {
   }
 }
 
-// ── Bestätigungs-Karte mit farbigem Diff ────────────────────────────────────
+// ── Confirmation card with colored diff ─────────────────────────────────────
 /**
- * Entscheidungs-Karte: eine Frage, 2-4 Optionen, ein Freitextfeld.
+ * Decision card: a question, 2-4 options, a free-text field.
  *
- * Nachgebaut nach dem Frage-Dialog im Claude-Code-Plugin: ein Etikett fuer die
- * Entscheidung, die Frage in groesserer Schrift, dann die Optionen als Radio
- * (Einfachauswahl) oder Kaestchen (Mehrfachauswahl), jede mit Beschriftung und
- * Erklaerung. Auswahl per Klick, Enter oder Leertaste; "Etwas anderes" nimmt
- * Freitext. Bei Einfachauswahl schickt ein Klick die Antwort sofort - eine
+ * Rebuilt based on the question dialog in the Claude Code plugin: a label for the
+ * Decision, the question in larger font, then the options as radio
+ * (Single selection) or checkboxes (multiple selection), each with a label and
+ * Explanation. Selection by click, Enter or Space; "Something else" takes
+ * Free text. In single selection, a click sends the answer immediately - a
  * zweite Bestaetigung waere ein Klick zu viel.
  */
 function makeDecisionCard(requestId, header, question, options, multi) {
@@ -1525,8 +1690,8 @@ function makeDecisionCard(requestId, header, question, options, multi) {
   }
   card.appendChild(list);
 
-  // Freitext: die Optionen deckten nie alles ab, und ohne dieses Feld muesste
-  // der Benutzer die laufende Aufgabe abbrechen, um etwas anderes zu sagen.
+  // Free text: the options never covered everything, and without this field the
+  // user would have to cancel the current task to say something else.
   const freeWrap = document.createElement('div');
   freeWrap.className = 'decision-free';
   const free = document.createElement('input');
@@ -1570,7 +1735,7 @@ function makeConfirmCard(requestId, message, choices, diffText, hasDiff, stats) 
     const diffView = buildDiffView(diffText);
     card.appendChild(diffView);
 
-    // Footer: Stats + "In Editor öffnen"-Button
+    // Footer: Stats + "Open in Editor" button
     const footer = document.createElement('div');
     footer.className = 'diff-footer';
 
@@ -1614,7 +1779,7 @@ function makeConfirmCard(requestId, message, choices, diffText, hasDiff, stats) 
   return card;
 }
 
-// ── Farbiger Diff-Block aus unified-diff-String ──────────────────────────────
+// ── Colored diff block from unified-diff string ──────────────────────────────
 function buildDiffView(diffText) {
   const view = document.createElement('div');
   view.className = 'diff-view';
@@ -1676,8 +1841,8 @@ function updateBanner() {
 // ── Senden ───────────────────────────────────────────────────────────────────
 function submitPrompt() {
   const text = promptInput.value.trim();
-  // isBusy blockiert NICHT mehr: eine neue Aufgabe darf die laufende
-  // unterbrechen. Das Abbrechen macht der Extension-Host.
+  // isBusy no longer blocks: a new task may now start the ongoing
+  // interrupt. The extension host handles the cancellation.
   if (!text) return;
   promptInput.value = "";
   autoResize();
@@ -1690,8 +1855,8 @@ promptInput.addEventListener('keydown', (e) => {
 });
 promptInput.addEventListener('input', autoResize);
 
-// Eingabefeld beim Öffnen fokussieren – man will sofort tippen können.
-// Auch nach einem Tab-Wechsel zurück, weil der Fokus dabei verloren geht.
+// Focus the input field upon opening – so you can start typing immediately.
+// Also when returning after a tab switch, since focus is lost in that process.
 promptInput.focus();
 window.addEventListener('focus', () => { if (!isBusy) promptInput.focus(); });
 
@@ -1713,6 +1878,47 @@ function makeSystemMsg(text) {
   const d = document.createElement('div');
   d.className = 'msg-system'; d.textContent = text; return d;
 }
+
+/**
+ * Eine Anweisung, die waehrend der Arbeit getippt wurde.
+ *
+ * Sie sieht bewusst aus wie eine Benutzernachricht, nur blasser und mit einem
+ * Vermerk: sie IST gesendet, sie ist nur noch nicht dran. Ohne diese Karte
+ * wuesste man nicht, ob die Eingabe angekommen ist.
+ */
+function makeQueuedMsg(text, count) {
+  const d = document.createElement('div');
+  d.className = 'msg-user msg-queued';
+
+  const body = document.createElement('div');
+  body.textContent = text;
+  d.appendChild(body);
+
+  const note = document.createElement('div');
+  note.className = 'queued-note';
+  note.textContent = count > 1
+    ? '\\u23f3 eingereiht (' + count + ') \\u2013 kommt nach dem laufenden Schritt'
+    : '\\u23f3 eingereiht \\u2013 kommt nach dem laufenden Schritt';
+  d.appendChild(note);
+  return d;
+}
+
+/** Loop counter of the /loop loop. */
+function makeLoopRoundMsg(round, total, note) {
+  const d = document.createElement('div');
+  d.className = 'msg-iteration msg-loop';
+  d.textContent = '\\u21bb Schleife: Runde ' + round + ' von h\\u00f6chstens '
+    + total + (note ? ' \\u00b7 ' + note : '');
+  return d;
+}
+
+/** Show or hide the target bar below the toolbar. */
+function setGoalBar(goal) {
+  if (!goalBar) return;
+  const text = String(goal || '').trim();
+  goalBar.textContent = text ? '\\u25ce Ziel: ' + text : '';
+  goalBar.classList.toggle('visible', !!text);
+}
 function makeErrorMsg(text) {
   const d = document.createElement('div');
   d.className = 'msg-error'; d.textContent = '⚠ ' + text; return d;
@@ -1724,9 +1930,9 @@ function makeIterationMsg(iteration, reason) {
   return d;
 }
 
-// ── Kennzahlen: Prompt-Fortschritt und Tokens/Sekunde ───────────────────────
-// Bei großen Kontexten dauert allein die Auswertung der Eingabe Minuten. Ohne
-// diese Anzeige steht nur "KI denkt…" da und man weiß nicht, ob es haengt.
+// ── Key Metrics: Prompt Progress and Tokens/Second ─────────────────────────
+// With large contexts, evaluating the input alone can take minutes. Without
+// this display, only "AI is thinking…" appears, leaving you unsure if it's stuck.
 const statsBar      = document.getElementById('stats-bar');
 const statsProgress = document.getElementById('stats-progress');
 const statsFill     = document.getElementById('stats-progress-fill');
@@ -1739,9 +1945,9 @@ function fmtNum(n) {
 const thinkingLabel = document.getElementById('thinking-label');
 
 /**
- * Beschriftung der Denk-Leiste an die aktuelle Phase anpassen.
- * "KI denkt…" sagt nichts – waehrend der Eingabe-Auswertung will man wissen,
- * dass gerechnet wird und wie weit.
+ * Adjust the label of the thinking bar to the current phase.
+ * "AI is thinking…" says nothing – during input evaluation, one wants to know,
+ * that calculations are performed and to what extent.
  */
 function setThinkingPhase(text) {
   if (thinkingLabel) thinkingLabel.textContent = text;
@@ -1753,7 +1959,7 @@ function renderStats(s) {
 
   const parts = [];
 
-  // Waehrend der Prompt-Auswertung: Balken + Prozent
+  // During prompt evaluation: bar + percentage
   const p = s.promptProgress;
   if (p && p.fraction < 1) {
     statsProgress.classList.add('visible');
@@ -1793,15 +1999,15 @@ function resetStats() {
   setThinkingPhase("KI denkt...");
 }
 
-// Der gestreamte Absatz der laufenden Runde. Wird am Rundenende durch den
+// The streamed paragraph of the current round. At the end of the round, it is replaced by the
 // bereinigten Text ersetzt (siehe appendNarration).
 let streamedEl = null;
 
-// Zeilen der laufenden Runde, nach Schluessel. Eine Map statt "nur die letzte
-// Zeile": im Fenster-Lauf holte der Assistent zwei Seiten, und die erste Zeile
-// blieb auf "laeuft..." stehen, waehrend die fertige Ausgabe eine zweite Zeile
-// mit derselben Adresse bekam. Wer nur die letzte Zeile vergleicht, verliert
-// jede Meldung, die nicht unmittelbar auf ihre Vorgaengerin folgt.
+// Lines of the current round, by key. A map instead of "only the last
+// line": in the window run, the assistant fetched two pages, and the first line
+// remained at "running...", while the finished output received a second line
+// with the same address. If you only compare the last line, you lose
+// any message that does not immediately follow its predecessor.
 let progressRows = new Map();
 let lastProgressEl = null;
 
@@ -1831,7 +2037,7 @@ function progressKey(description) {
 function appendNarration(text) {
   const clean = String(text == null ? '' : text).trim();
 
-  // Gestreamten Absatz dieser Runde durch den sauberen Text ersetzen.
+  // Replace the streamed paragraph of this round with the clean text.
   if (streamedEl) {
     const el = streamedEl;
     streamedEl = null;
@@ -1839,7 +2045,7 @@ function appendNarration(text) {
       el.dataset.raw = clean;
       updateAssistantEl(el);
     } else if (el.parentNode) {
-      // Nichts als Aktionsmarkup: der leere Absatz hat im Chat nichts zu suchen
+      // Nothing but action markup: the empty paragraph has no place in the chat
       el.parentNode.removeChild(el);
     }
     finalizeProgress();
@@ -1852,12 +2058,12 @@ function appendNarration(text) {
   append(makeAssistantMsg(clean));
 }
 
-/** Wie viele Zeilen Ausgabe ohne Aufklappen zu sehen sind. */
+/** How many lines of output are visible without expanding. */
 const OUTPUT_PREVIEW_LINES = 4;
 
 /**
- * Ausgabe einer Aktion einsetzen: die ersten Zeilen sichtbar, der Rest hinter
- * einem Schalter. Ohne Kuerzung schiebt eine Testausgabe alles andere weg.
+ * Use the output of an action: the first lines are visible, the rest is hidden
+ * a switch. Without truncation, a test output pushes everything else away.
  */
 function fillOutput(box, text) {
   box.innerHTML = '';
@@ -1888,8 +2094,8 @@ function fillOutput(box, text) {
 }
 
 /**
- * Eine Werkzeugzeile bauen: Punkt, Werkzeugname, Ziel, Zusatz.
- * Bewusst wie eine Terminalzeile – eine Zeile pro Vorgang, Ausgabe darunter.
+ * Build a toolbar: point, tool name, target, additional.
+ * Conscious like a terminal line – one line per operation, output below.
  */
 function buildToolRow(meta, description) {
   const row = document.createElement('div');
@@ -1926,7 +2132,7 @@ function buildToolRow(meta, description) {
   return row;
 }
 
-/** Zustand einer Werkzeugzeile setzen: läuft / erfolgreich / fehlgeschlagen. */
+/** Set the status of a tool line: running / successful / failed. */
 function styleToolRow(row, meta) {
   const state = !meta ? 'ok'
     : meta.running ? 'running'
@@ -1965,9 +2171,9 @@ function appendOrUpdateProgress(description, output, meta) {
   append(row);
 }
 
-// ── Angewandte Dateiänderung mit farbigem Diff ──────────────────────────────
-// Im Auto-Modus gibt es keine Bestätigungskarte – ohne diese Anzeige würde man
-// nie sehen, was der Assistent geändert hat.
+// ── Applied file change with colored diff ──────────────────────────────
+// In auto mode there is no confirmation card – without this display you would
+// never see what the assistant changed.
 function renderFileDiff(change) {
   if (!change) return;
 
@@ -1996,9 +2202,9 @@ function renderFileDiff(change) {
   append(card);
 }
 
-// Abschnitt beenden: die bisherigen Werkzeugzeilen bleiben stehen, aber eine
-// gleichnamige Aktion danach bekommt eine neue Zeile - ein zweites "npm test"
-// nach einer Aenderung ist ein neuer Vorgang und kein Nachtrag zum ersten.
+// End section: the previous toolbar lines remain, but a
+// the identically named action afterwards gets a new line - a second "npm test"
+// After a change, it is a new process and not an addendum to the first one.
 function finalizeProgress() {
   progressRows = new Map();
   lastProgressEl = null;
@@ -2010,9 +2216,9 @@ function makeWarningMsg(text) {
   return d;
 }
 
-// ── Arbeitsplan (Todo-Liste der KI) ─────────────────────────────────────────
-// Es gibt immer nur EINE Plan-Karte pro Aufgabe: sie wird an ihrer Stelle
-// aktualisiert, damit man den Fortschritt verfolgt statt zehn Kopien zu sehen.
+// ── Work Plan (AI Todo List) ─────────────────────────────────────────
+// There is always only ONE plan card per task: it is updated in place
+// so that you can track progress instead of seeing ten copies.
 let planEl = null;
 
 function renderPlan(steps) {
@@ -2050,7 +2256,7 @@ function renderPlan(steps) {
   scrollBottom();
 }
 
-/** Plan-Karte freigeben, damit die nächste Aufgabe eine neue erhält. */
+/** Release the plan card so that the next task receives a new one. */
 function resetPlan() { planEl = null; }
 /**
  * Fusszeile am Ende eines Laufs: eine Zeile Bilanz, plus die Fehlschlaege.
@@ -2078,8 +2284,8 @@ function makeActionsPanel(actions, title) {
   for (const a of failed) {
     const row = document.createElement('div');
     row.className = 'action-item';
-    // Ueber textContent statt innerHTML: die Beschreibung kommt aus einer
-    // Modellantwort und darf kein Markup einschleusen koennen.
+    // Regarding textContent instead of innerHTML: the description comes from a
+    // model answer and must not be able to inject markup.
     const icon = document.createElement('span');
     icon.className = 'action-fail';
     icon.textContent = '\\u274c';
@@ -2094,32 +2300,32 @@ function makeActionsPanel(actions, title) {
 
 function append(el) { chat.appendChild(el); scrollBottom(); return el; }
 function scrollBottom() { requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; }); }
-// Der Denk-Zustand SPERRT die Eingabe nicht mehr: der Benutzer soll zwischen
-// den Iterationen eine neue Aufgabe schicken koennen. Enter unterbricht die
-// laufende Aufgabe dann und startet die neue.
+// The thinking state no longer blocks input: the user should be able to choose between
+// can send a new task to the iterations. Enter interrupts the
+// current task and then starts the new one.
 function setThinking(v) {
   isBusy = v;
   thinking.classList.toggle("visible", v);
   if (hintEl) hintEl.textContent = v
-    ? "Enter unterbricht die laufende Aufgabe und startet die neue"
+    ? "Enter reiht die Anweisung ein \u2013 sie kommt nach dem laufenden Schritt dran"
     : "Enter zum Senden \\u00b7 Shift+Enter f\\u00fcr Zeilenumbruch";
   if (v) scrollBottom();
 }
 function setInputEnabled(v) {
-  // Eingabe und Senden bleiben immer bedienbar
+  // Input and send remain always operable
   promptInput.disabled = false;
   sendBtn.disabled = false;
   if (v) isBusy = false;
 }
 
-// ── Markdown + Reasoning-Blöcke ─────────────────────────────────────────────
+// ── Markdown + Reasoning Blocks ─────────────────────────────────────────────
 
-/** Basis-Markdown ohne <think>-Handling */
+/** Basic Markdown without <think>-Handling */
 function renderMdBasic(text) {
   if (!text) return '';
 
-  // Code-Bloecke zuerst herausnehmen und durch Platzhalter ersetzen.
-  // Sonst wuerde die Zeilenverarbeitung darin Listen und Ueberschriften sehen.
+  // Remove code blocks first and replace them with placeholders.
+  // Otherwise, the line processing would see lists and headings within them.
   const blocks = [];
   let src = String(text).replace(/\\u0060\\u0060\\u0060([\\w+-]*)[ \\t]*\\r?\\n([\\s\\S]*?)\\u0060\\u0060\\u0060/g,
     (_m, lang, code) => {
@@ -2128,8 +2334,8 @@ function renderMdBasic(text) {
       return '\\u0000BLOCK' + i + '\\u0000';
     });
 
-  // Unvollstaendiger Block (Streaming laeuft noch): Rest als Code zeigen,
-  // damit der Text nicht als Markdown zerfaellt und dann umspringt.
+  // Incomplete block (streaming still running): Display the rest as code,
+  // so that the text does not break apart as Markdown and then jump around.
   const openFence = src.indexOf('\\u0060\\u0060\\u0060');
   if (openFence !== -1) {
     const head = src.slice(0, openFence);
@@ -2144,8 +2350,8 @@ function renderMdBasic(text) {
 
   const out = [];
   let listType = null;   // 'ul' | 'ol' | null
-  // Eine Leerzeile beendet den Absatz. Ohne dieses Merkmal wuerden zwei durch
-  // eine Leerzeile getrennte Absaetze zu einem verschmelzen.
+  // An empty line ends the paragraph. Without this feature, two paragraphs separated
+  // by an empty line would merge into one.
   let paragraphOpen = false;
 
   const closeList = () => {
@@ -2158,7 +2364,7 @@ function renderMdBasic(text) {
     h = h.replace(/\\u0060([^\\u0060]+)\\u0060/g, '<code>$1</code>');
     h = h.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
     h = h.replace(/(^|[^*])\\*([^*]+)\\*/g, '$1<em>$2</em>');
-    // Markdown-Links; nur http(s), damit kein javascript: durchkommt
+    // Markdown links; only http(s), so that no javascript: gets through
     h = h.replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^)\\s]+)\\)/g,
       '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
     return h;
@@ -2170,7 +2376,7 @@ function renderMdBasic(text) {
     const line = lines[i];
     const t = line.trim();
 
-    // Platzhalter fuer einen Code-Block
+    // Placeholder for a code block
     const ph = /^\\u0000BLOCK(\\d+)\\u0000$/.exec(t);
     if (ph) {
       closeList();
@@ -2220,7 +2426,7 @@ function renderMdBasic(text) {
 
     // Tabellenzeile
     if (/^\\|.*\\|$/.test(t)) {
-      // Trennzeile (|---|---|) gehoert zur Tabelle, wird aber nicht gezeigt
+      // Separator line (|---|---|) belongs to the table but is not displayed
       if (/^\\|[\\s:|-]+\\|$/.test(t)) continue;
       closeList();
       const cells = t.slice(1, -1).split('|').map(c => '<td>' + inline(c.trim()) + '</td>');
@@ -2250,22 +2456,22 @@ function renderMdBasic(text) {
 }
 
 /**
- * Aktualisiert ein Assistenten-Element inkrementell während des Streamings.
- * Das <details>-Element wird nur einmal erstellt und danach nie mehr ersetzt,
- * damit der Benutzer es ein-/ausklappen kann ohne dass es zurückgesetzt wird.
+ * Incrementally updates an assistant element during streaming.
+ * The <details> element is created only once and never replaced afterwards,
+ * so that the user can expand/collapse it without it being reset.
  */
 /**
- * Aktionsmarkup aus dem noch laufenden Stream schneiden.
+ * Cut action markup from the still-running stream.
  *
- * Der Chat rendert waehrend des Streamens die rohe Antwort. Ab der ersten
- * Aktions-Kopfzeile ist der Rest Werkzeugaufruf und keine Antwort mehr - ohne
- * diesen Schnitt blitzten ">>>REPLACE" und der Quellcode im Chat auf, bis die
- * Engine den bereinigten Text nachlieferte. Nur ein Schnitt, keine
- * Rekonstruktion: die verlaessliche Fassung kommt ohnehin nach.
+ * The chat renders the raw response during streaming. Starting from the first
+ * Action header is the remaining tool call and no longer a response - without
+ * this cut flashed ">>>REPLACE" and the source code in the chat until the
+ * The engine delivered the cleaned text. Only one cut, no
+ * Reconstruction: the reliable version will come anyway.
  */
 function cutActionMarkup(text) {
-  // Backticks im Muster muessen escaped werden: dieser Code steckt in einem
-  // TypeScript-Template-String, ein rohes \` beendet ihn (siehe AGENTS.md).
+  // Backticks in the pattern must be escaped: this code is inside a
+  // TypeScript template string, a raw \` terminates it (see AGENTS.md).
   const cut = String(text).search(/(^|\\n)[ \\t]*(?:\`\`\`)?action:[a-z_]+/i);
   return cut === -1 ? text : text.slice(0, cut);
 }
@@ -2275,7 +2481,7 @@ function updateAssistantEl(el) {
   const thinkStart = raw.indexOf('<think>');
 
   if (thinkStart === -1) {
-    // Kein Reasoning-Block → einfaches Rendering
+    // No reasoning block → simple rendering
     el.innerHTML = renderMdBasic(raw);
     return;
   }
@@ -2302,7 +2508,7 @@ function updateAssistantEl(el) {
 
     details = el.querySelector('.think-block');
 
-    // Scroll wenn Benutzer manuell aufklappt
+    // Scroll when the user manually expands
     details.addEventListener('toggle', () => {
       if (details.open) requestAnimationFrame(() => {
         details.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -2310,28 +2516,28 @@ function updateAssistantEl(el) {
     });
   }
 
-  // Nur Inhalt aktualisieren – open-Status bleibt erhalten
+  // Only update content – open status remains unchanged
   const contentEl = el.querySelector('.think-content');
   if (contentEl) contentEl.innerHTML = renderMdBasic(thinkText);
 
-  // Umfang in der Kopfzeile: auch zugeklappt soll man sehen, dass (und wie
-  // viel) gedacht wird. Sonst wirkt ein zugeklappter Block wie nichts.
+  // Scope in the header: even when collapsed, it should be visible that (and how
+  // much) is being thought about. Otherwise, a collapsed block looks like nothing.
   const metaEl = el.querySelector('.think-meta');
   if (metaEl) {
     const lines = thinkText ? thinkText.split('\\n').length : 0;
     metaEl.textContent = isStreaming ? ' · denkt… ' + lines + ' Z.' : ' · ' + lines + ' Z.';
   }
 
-  // Wenn Streaming fertig: einklappen (außer Benutzer hat manuell geöffnet)
+  // When streaming is complete: collapse (unless the user has manually opened it)
   if (!isStreaming) {
     const label = el.querySelector('.think-label');
     if (label) label.textContent = '🧠 Reasoning';
 
-    // Kein automatisches Ein- oder Ausklappen: der Zustand gehoert dem Benutzer.
-    // Vorher wurde hier beim Fertigwerden wieder zugeklappt - das hat gegen
-    // jeden Klick gearbeitet, den der Benutzer waehrend des Denkens gemacht hat.
+    // No automatic expand or collapse: the state belongs to the user.
+    // Previously, it would collapse again upon completion - this would undo
+    // any click the user made while thinking.
 
-    // Text nach </think> rendern
+    // Render text after
     const afterEl = el.querySelector('.think-after');
     if (afterEl) afterEl.innerHTML = renderMdBasic(afterThink);
   }
@@ -2345,7 +2551,7 @@ function updateAssistantEl(el) {
   }
 }
 
-/** Für nicht-gestreamte Nachrichten: statisches Rendering */
+/** For non-streamed messages: static rendering */
 function renderMd(text) {
   if (!text) return '';
   const thinkStart = text.indexOf('<think>');
@@ -2366,7 +2572,7 @@ function renderMd(text) {
       (after ? renderMd(after) : '');
   }
 
-  // Unvollständiger Block (sollte nach Stream nicht mehr vorkommen)
+  // Incomplete block (should not occur after stream)
   return (before ? renderMdBasic(before) : '') +
     '<details class="think-block">' +
       '<summary><span class="think-toggle">▶</span><span class="think-label">🧠 Reasoning\u2026</span></summary>' +

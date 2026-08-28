@@ -9,3 +9,8 @@ out/
 # Test-Sandbox: wird von test/suite.js bei jedem Lauf geloescht und neu
 # angelegt. Im Repo verursacht sie nur Rauschen in jedem Commit.
 test/sandbox/
+
+# Gesprächsverlauf des Assistenten – gehört zum Arbeitsplatz, nicht ins Repo.
+# Die gelernten Best Practices (.ai-assistant/PRACTICES.md) dagegen SCHON:
+# sie sind Projektwissen wie AGENTS.md.
+ai-code-assistant.json

@@ -241,6 +241,31 @@ section('AIEngine: Werkzeug-Handbuch im Prompt');
         /language the user used/.test(done.parameters.properties.zusammenfassung.description)
         && /Markdown/.test(done.parameters.properties.zusammenfassung.description),
         done.parameters.properties.zusammenfassung.description);
+
+    // ── Jede ausfuehrbare Aktion muss im KATALOG stehen ─────────────────────
+    // Der Fehler, der das hier noetig macht: `remember` stand im Handbuchtext,
+    // aber nicht in TOOL_DEFINITIONS. Mit nativeToolCalls (Standard) sieht das
+    // Modell nur den Katalog - im Lauf gegen laguna wurde das Werkzeug also nie
+    // aufgerufen, und die Datei mit den gelernten Regeln blieb leer. Kein Test
+    // hat das gesehen, weil beide Seiten einzeln stimmten.
+    const catalogue = new Set(tools.TOOL_DEFINITIONS.map(t => t.name));
+
+    // `todo` und `finish` sind Zweitnamen von `plan` und `done` - sie werden
+    // ausgefuehrt, brauchen aber keinen eigenen Katalogeintrag.
+    const aliases = new Set(['todo', 'finish']);
+
+    for (const action of tools.KNOWN_ACTIONS) {
+        if (aliases.has(action)) continue;
+        check(`Katalog kennt '${action}'`, catalogue.has(action),
+            `fehlt in TOOL_DEFINITIONS – mit nativeToolCalls unsichtbar fuer das Modell`);
+    }
+
+    // Und umgekehrt: ein Katalogeintrag ohne Ausfuehrung waere ein Werkzeug,
+    // das das Modell aufruft und das nichts tut.
+    for (const name of catalogue) {
+        check(`'${name}' ist eine bekannte Aktion`, tools.KNOWN_ACTIONS.has(name),
+            'steht im Katalog, wird aber nicht ausgefuehrt');
+    }
 }
 
 section('AIEngine: Plan-Parsing');
@@ -1541,7 +1566,229 @@ function runVerifyAfterChangeTests(cfg) {
     vscode.__settings.autoTest = vorher;
 
     runShellChoiceTests();
-    return runAskUserTests();
+    runCommandTests();
+    return runAskUserTests().then(() => runQueueTests());
+}
+
+// ── Slash-Befehle: /goal, /loop, /help ──────────────────────────────────────
+function runCommandTests() {
+    section('Befehle: /goal, /loop, /help');
+
+    const { parseCommand, parseBudget, HELP_TEXT } =
+        require(path.join(PROJECT, 'out', 'commands.js'));
+
+    // Erkennung
+    check('/goal erkannt', parseCommand('/goal alles gruen').name === 'goal');
+    check('/loop erkannt', parseCommand('/loop 5m testen').name === 'loop');
+    check('/help erkannt', parseCommand('/help').name === 'help');
+    check('deutsche Schreibweise', parseCommand('/ziel alles gruen').name === 'goal');
+    check('Rest wird abgetrennt',
+        parseCommand('/goal   alles gruen  ').rest === 'alles gruen',
+        JSON.stringify(parseCommand('/goal   alles gruen  ')));
+
+    // NUR am Anfang: sonst waere jede Erwaehnung ein Befehl
+    check('Erwaehnung mitten im Satz ist kein Befehl',
+        parseCommand('nutze bitte /goal um das zu setzen') === null);
+    check('unbekannter Befehl ist kein Befehl',
+        parseCommand('/gibtsnicht x') === null);
+    check('normale Nachricht ist kein Befehl',
+        parseCommand('Repariere die Tests') === null);
+
+    // Budget
+    const cases = [
+        ['5m Tests reparieren', 5, 'Tests reparieren'],
+        ['30 Minuten aufraeumen', 30, 'aufraeumen'],
+        ['2h grosse Sache', 120, 'grosse Sache'],
+        ['5 einfach weiter', 5, 'einfach weiter'],
+    ];
+    for (const [input, minutes, task] of cases) {
+        const r = parseBudget(input);
+        check(`Budget "${input}" -> ${minutes} min`, r.budget.minutes === minutes,
+            JSON.stringify(r.budget));
+        check(`Aufgabe aus "${input}"`, r.task === task, JSON.stringify(r.task));
+    }
+
+    const rounds = parseBudget('3x weiter machen');
+    check('Rundenbudget erkannt', rounds.budget.rounds === 3, JSON.stringify(rounds.budget));
+    check('Aufgabe nach Rundenbudget', rounds.task === 'weiter machen', rounds.task);
+
+    const ohne = parseBudget('einfach weiterarbeiten');
+    check('ohne Budget: Standard', ohne.budget.minutes === 10 && ohne.budget.rounds === 6,
+        JSON.stringify(ohne.budget));
+    check('ohne Budget: alles ist Aufgabe', ohne.task === 'einfach weiterarbeiten', ohne.task);
+
+    // Obergrenzen: eine Schleife aendert Dateien und kostet Tokens
+    check('Zeit gedeckelt', parseBudget('9999m x').budget.minutes === 120,
+        String(parseBudget('9999m x').budget.minutes));
+    check('Runden gedeckelt', parseBudget('9999x y').budget.rounds === 40,
+        String(parseBudget('9999x y').budget.rounds));
+
+    check('Hilfe nennt beide Befehle',
+        /\/goal/.test(HELP_TEXT) && /\/loop/.test(HELP_TEXT));
+    check('Hilfe nennt die Abbruchbedingungen',
+        /Budget aufgebraucht/.test(HELP_TEXT) && /Abbrechen/.test(HELP_TEXT));
+}
+
+// ── Eingereihte Anweisungen ─────────────────────────────────────────────────
+// Wie bei Claude Code: waehrend der Arbeit getippter Text unterbricht NICHT,
+// sondern kommt nach dem laufenden Schritt dran. Ein Abbruch mitten im Schritt
+// liesse halbfertige Arbeit zurueck - Datei geaendert, Tests nicht gelaufen.
+function runQueueTests() {
+    section('Warteschlange: Anweisung waehrend der Arbeit');
+
+    engine.clearQueuedInput();
+    engine.currentTask = 'Repariere die Tests';
+
+    check('leere Warteschlange', engine.pendingInputCount() === 0);
+    check('Leertext wird nicht eingereiht',
+        engine.queueUserInput('   ') === 0, String(engine.pendingInputCount()));
+
+    check('erste Anweisung', engine.queueUserInput('nimm date-fns') === 1);
+    check('zweite Anweisung', engine.queueUserInput('und schreib einen Test') === 2);
+
+    const prompt = engine.takeQueuedPrompt();
+    check('Warteschlange danach leer', engine.pendingInputCount() === 0);
+    check('Prompt weist sie als neu aus',
+        /NEW INSTRUCTION FROM THE USER/.test(prompt), String(prompt).slice(0, 80));
+    check('beide Anweisungen enthalten',
+        /date-fns/.test(prompt) && /schreib einen Test/.test(prompt), prompt);
+    check('Prompt verbietet Neuanfang',
+        /do not start over/i.test(prompt), prompt);
+
+    // Der Auftrag waechst mit - sonst ist die Nachforderung eine Runde spaeter
+    // wieder vergessen.
+    check('Auftrag traegt die Nachforderung',
+        /date-fns/.test(engine.currentTask), engine.currentTask);
+    check('urspruenglicher Auftrag bleibt',
+        /Repariere die Tests/.test(engine.currentTask), engine.currentTask);
+
+    check('leere Warteschlange gibt null', engine.takeQueuedPrompt() === null);
+
+    engine.queueUserInput('verwerfen');
+    engine.clearQueuedInput();
+    check('clearQueuedInput leert', engine.pendingInputCount() === 0);
+
+    return runPracticeTests();
+}
+
+// ── Aus Erfolgen lernen ─────────────────────────────────────────────────────
+// Vorbild ist Hermes: was sich bewaehrt hat, wird zu wiederverwendbarem
+// Vorgehenswissen. Der Wert steht und faellt mit der Auswahl - eine Sammlung
+// von "Bug behoben"-Notizen ist Ballast in jedem Prompt.
+function runPracticeTests() {
+    section('Best Practices: aus Erfolgen lernen');
+
+    const { PracticeStore } = require(path.join(PROJECT, 'out', 'practices.js'));
+    const dir = path.join(SANDBOX, 'practice');
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+
+    const store = new PracticeStore(dir);
+    check('anfangs leer', store.all().length === 0);
+    check('leerer Prompt-Block', store.forPrompt() === '');
+
+    check('Regel wird aufgenommen',
+        store.add('Tests mit `npm test` starten, nicht mit `node --test`',
+            'pretest kompiliert vorher') === true);
+    check('gespeichert', store.all().length === 1, String(store.all().length));
+
+    // Zu kurz ist keine Regel. "Klappt gut" ist kein Vorgehenswissen.
+    check('zu kurze Regel abgelehnt', store.add('Klappt', '') === false);
+    check('nichts dazugekommen', store.all().length === 1);
+
+    // Dubletten: Modelle formulieren dieselbe Einsicht jedes Mal anders.
+    check('Dublette erkannt trotz anderer Formulierung',
+        store.add('Die Tests immer mit `npm test` ausfuehren statt `node --test`',
+            'sonst laeuft es gegen alten Stand') === false,
+        JSON.stringify(store.all().map(e => e.rule)));
+    check('immer noch eine Regel', store.all().length === 1);
+
+    check('andere Regel geht durch',
+        store.add('Shell-Befehle laufen unter WSL, Pfade also als /mnt/d/...',
+            'Windows-Pfade brechen an den Backslashes') === true);
+    check('jetzt zwei Regeln', store.all().length === 2);
+    check('neueste zuerst', /WSL/.test(store.all()[0].rule), store.all()[0].rule);
+
+    // Der Prompt-Block: eingezaeunt und als Hintergrund ausgewiesen. Der Text
+    // stammt von einem Modell und darf sich nicht als Anweisung ausgeben.
+    const block = store.forPrompt();
+    check('Prompt-Block enthaelt beide Regeln',
+        /npm test/.test(block) && /WSL/.test(block), block);
+    check('Block ist eingezaeunt',
+        /<learned-practices>/.test(block) && /<\/learned-practices>/.test(block), block);
+    check('Block weist sich als Hintergrund aus',
+        /NOT instructions from the user/.test(block), block);
+    check('Block warnt vor Veralterung',
+        /out of date/.test(block), block);
+
+    // Datei: von Hand lesbar und bearbeitbar
+    const file = store.getPath();
+    check('Datei liegt im Workspace', fs.existsSync(file), file);
+    const raw = fs.readFileSync(file, 'utf-8');
+    check('Datei nennt ihren Zweck', /Best Practices/.test(raw), raw.slice(0, 60));
+    check('Datei sagt, dass man sie bearbeiten darf',
+        /von Hand bearbeitet/.test(raw), raw.slice(0, 300));
+    check('Regeln als Liste', /^- Shell-Befehle/m.test(raw), raw);
+
+    // Neu geladen muss dasselbe herauskommen - sonst waere die Datei nur Deko
+    const wieder = new PracticeStore(dir);
+    check('nach Neuladen zwei Regeln', wieder.all().length === 2,
+        JSON.stringify(wieder.all()));
+    check('Regel unveraendert gelesen',
+        wieder.all()[0].rule === store.all()[0].rule,
+        wieder.all()[0].rule);
+    check('Begruendung erhalten',
+        /Backslashes/.test(wieder.all()[0].why), wieder.all()[0].why);
+
+    check('clear leert', wieder.clear() === 2 && wieder.all().length === 0);
+
+    // ── Ueber die Aktion ────────────────────────────────────────────────────
+    vscode.__setWorkspace(dir);
+    engine.practiceStore = null;   // Speicher neu aufbauen lassen
+
+    return engine.parseAndExecuteActions(
+        '```action:remember\nregel: Nach jeder Aenderung `npm run compile` laufen lassen\n'
+        + 'warum: tsc meldet Fehler, die die Tests nicht sehen\n```',
+        async () => 'Ausführen'
+    ).then(actions => {
+        check('remember-Aktion erfolgreich', actions.length === 1 && actions[0].success,
+            JSON.stringify(actions));
+        check('Beschreibung nennt die Regel',
+            /Gelernt/.test(actions[0].description), actions[0].description);
+        check('Regel ist im Speicher',
+            engine.getPractices().all().some(e => /npm run compile/.test(e.rule)),
+            JSON.stringify(engine.getPractices().all()));
+
+        // Dublette gilt als ERFOLG - sonst haelt das Modell es fuer einen
+        // Fehlschlag und versucht es in der naechsten Runde noch einmal.
+        return engine.parseAndExecuteActions(
+            '```action:remember\nregel: Immer `npm run compile` nach einer Aenderung ausfuehren\n```',
+            async () => 'Ausführen');
+    }).then(actions => {
+        check('Dublette ist kein Fehlschlag', actions[0].success === true,
+            JSON.stringify(actions[0]));
+        check('Dublette sagt es deutlich',
+            /Schon bekannt/.test(actions[0].description), actions[0].description);
+        check('Ausgabe verbietet den zweiten Versuch',
+            /Do not try again/.test(actions[0].output), actions[0].output);
+        check('immer noch nur eine Regel',
+            engine.getPractices().all().length === 1,
+            String(engine.getPractices().all().length));
+
+        // Das Handbuch muss sagen, wann NICHT gemerkt wird - sonst fuellt sich
+        // die Datei mit Tagebucheintraegen.
+        const manual = engine.buildToolManual();
+        check('Handbuch erklaert das Merken', /action:remember/.test(manual));
+        check('Handbuch verlangt Ueberpruefung',
+            /VERIFIED/.test(manual), 'fehlt');
+        check('Handbuch verbietet Tagebucheintraege',
+            /diary entry/.test(manual), 'fehlt');
+        check('Handbuch begrenzt auf eine Regel',
+            /At most one rule per task/.test(manual), 'fehlt');
+
+        vscode.__setWorkspace(SANDBOX);
+        engine.practiceStore = null;
+    });
 }
 
 // ── Zaunlose Aktions-Kopfzeilen ─────────────────────────────────────────────
@@ -1664,8 +1911,23 @@ function runDisplayStripTests() {
         sichtbar4.includes('const a = 1;') && sichtbar4.includes('```js'), sichtbar4);
     check('Text nach dem Code-Block bleibt', sichtbar4.includes('Fertig.'), sichtbar4);
 
-    // 5. Und beide Bloecke muessen auch AUSGEFUEHRT werden, nicht nur
-    //    verschwinden - sonst arbeitet der Assistent die Haelfte nicht ab.
+    // 5. Doppelt geschickte Aktionen laufen nur EINMAL.
+    //    Im Lauf gegen laguna kam jeder Aufruf zweimal: npm test lief zweimal,
+    //    jede Datei wurde zweimal gelesen. Jede Runde kostete doppelt so lange.
+    section('Aktions-Parser: doppelte Aktionen');
+
+    const doppelt = [
+        'Ich pruefe die Tests.',
+        '```action:shell',
+        'npm test',
+        '```',
+        '```action:shell',
+        'npm test',
+        '```'
+    ].join('\n');
+
+    // 6. Und beide UNTERSCHIEDLICHEN Bloecke muessen ausgefuehrt werden, nicht
+    //    nur verschwinden - sonst arbeitet der Assistent die Haelfte nicht ab.
     return engine.parseAndExecuteActions(zweiBloecke, async () => 'Ausführen').then(actions => {
         check('beide Bloecke ohne Zaun dazwischen werden ausgefuehrt',
             actions.length === 2, JSON.stringify(actions.map(a => a.description)));
@@ -1673,6 +1935,30 @@ function runDisplayStripTests() {
             actions[0] && actions[0].description);
         check('zweiter Block: test', actions[1] && /test/.test(actions[1].description),
             actions[1] && actions[1].description);
+
+        // Zweimal derselbe Befehl: einmal ausfuehren
+        return engine.parseAndExecuteActions(doppelt, async () => 'Ablehnen');
+    }).then(actions => {
+        check('doppelter Befehl laeuft nur einmal', actions.length === 1,
+            JSON.stringify(actions.map(a => a.description)));
+
+        // Zweimal read_file auf VERSCHIEDENE Dateien sind zwei Aufgaben
+        return engine.parseAndExecuteActions(
+            '```action:read_file\npath: src/index.ts\n```\n'
+            + '```action:read_file\npath: src/services/userService.ts\n```',
+            async () => 'Ausführen');
+    }).then(actions => {
+        check('verschiedene Ziele bleiben zwei Aktionen', actions.length === 2,
+            JSON.stringify(actions.map(a => a.description)));
+
+        // Zweimal dieselbe Datei ist ein Versehen
+        return engine.parseAndExecuteActions(
+            '```action:read_file\npath: src/index.ts\n```\n'
+            + '```action:read_file\npath: src/index.ts\n```',
+            async () => 'Ausführen');
+    }).then(actions => {
+        check('dieselbe Datei zweimal gelesen: nur einmal', actions.length === 1,
+            JSON.stringify(actions.map(a => a.description)));
     });
 }
 

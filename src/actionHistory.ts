@@ -14,17 +14,17 @@ export interface AIAction {
     type: ActionType;
     timestamp: Date;
     description: string;
-    /** Absoluter Pfad zur betroffenen Datei */
+    /** Absolute path to the affected file */
     filePath: string;
-    /** Inhalt vor der Aktion (für Undo) – undefined bei neu erstellten Dateien */
+    /** Content before the action (for Undo) – undefined for newly created files */
     previousContent?: string;
-    /** Neuer Pfad bei Umbenennung */
+    /** New path on rename */
     newFilePath?: string;
 }
 
 /**
- * ActionHistory verwaltet alle KI-generierten Dateiänderungen.
- * Ermöglicht gezieltes oder vollständiges Rückgängigmachen.
+ * ActionHistory manages all AI-generated file changes.
+ * Enables targeted or complete undo.
  */
 export class ActionHistory {
     private static instance: ActionHistory;
@@ -40,7 +40,7 @@ export class ActionHistory {
         return ActionHistory.instance;
     }
 
-    /** Neue Aktion registrieren (vor der Ausführung aufrufen!) */
+    /** Register new action (call before execution!) */
     record(action: Omit<AIAction, 'id' | 'timestamp'>): AIAction {
         const entry: AIAction = {
             ...action,
@@ -52,7 +52,7 @@ export class ActionHistory {
         return entry;
     }
 
-    /** Letzte Aktion aus dem Verlauf holen (ohne Entfernen) */
+    /** Get last action from history (without removing) */
     getLast(): AIAction | undefined {
         return this.history[this.history.length - 1];
     }
@@ -63,8 +63,8 @@ export class ActionHistory {
     }
 
     /**
-     * Letzte KI-Aktion rückgängig machen.
-     * Gibt zurück ob erfolgreich.
+     * Undo the last AI action.
+     * Returns whether successful.
      */
     async undoLast(): Promise<boolean> {
         const action = this.history.pop();
@@ -76,7 +76,7 @@ export class ActionHistory {
     }
 
     /**
-     * Alle KI-Aktionen in umgekehrter Reihenfolge rückgängig machen.
+     * Undo all AI actions in reverse order.
      */
     async undoAll(): Promise<void> {
         const toRevert = [...this.history].reverse();
@@ -95,7 +95,7 @@ export class ActionHistory {
         try {
             switch (action.type) {
                 case 'file_create':
-                    // Erstellte Datei löschen
+                    // Delete created file
                     if (fs.existsSync(action.filePath)) {
                         fs.unlinkSync(action.filePath);
                         this.logger.info(`UNDO: Datei gelöscht: ${action.filePath}`);
@@ -103,7 +103,7 @@ export class ActionHistory {
                     break;
 
                 case 'file_edit':
-                    // Datei auf vorherigen Inhalt zurücksetzen
+                    // Reset file to previous content
                     if (action.previousContent !== undefined) {
                         fs.writeFileSync(action.filePath, action.previousContent, 'utf-8');
                         this.logger.info(`UNDO: Dateiinhalt wiederhergestellt: ${action.filePath}`);
@@ -111,7 +111,7 @@ export class ActionHistory {
                     break;
 
                 case 'file_delete':
-                    // Gelöschte Datei wiederherstellen
+                    // Restore deleted file
                     if (action.previousContent !== undefined) {
                         const dir = path.dirname(action.filePath);
                         fs.mkdirSync(dir, { recursive: true });
@@ -121,7 +121,7 @@ export class ActionHistory {
                     break;
 
                 case 'file_rename':
-                    // Umbenannte Datei zurückbenennen
+                    // Rename renamed file back
                     if (action.newFilePath && fs.existsSync(action.newFilePath)) {
                         fs.renameSync(action.newFilePath, action.filePath);
                         this.logger.info(`UNDO: Datei zurückbenannt: ${action.newFilePath} → ${action.filePath}`);

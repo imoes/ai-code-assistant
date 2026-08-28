@@ -3,11 +3,11 @@ import * as path from 'path';
 import { FileManager } from './fileManager';
 import { Logger } from './logger';
 
-/** Ergebnis einer Analyse-Aktion – wird als Text an die KI zurückgegeben. */
+/** Result of an analysis action – returned as text to the AI. */
 export interface AnalysisResult {
     /** Menschlich lesbare Kurzbeschreibung (Chat-Label) */
     description: string;
-    /** Formatierter Text für den KI-Kontext */
+    /** Formatted text for the AI context */
     output: string;
     /** false wenn nichts gefunden wurde bzw. ein Fehler auftrat */
     success: boolean;
@@ -29,11 +29,11 @@ const BINARY_EXT = new Set([
 const MAX_FILE_BYTES = 2_000_000;
 
 /**
- * CodeAnalyzer: Nur-Lese-Werkzeuge zur Code-Analyse (read_file, grep, glob, list_dir).
+ * CodeAnalyzer: Read-only tools for code analysis (read_file, grep, glob, list_dir).
  *
- * Alles läuft nativ in Node – kein WSL, keine Shell, keine Bestätigung nötig.
- * Damit kann der Assistent den bestehenden Code untersuchen BEVOR er ihn ändert,
- * genau wie ein menschlicher Entwickler.
+ * Everything runs natively in Node – no WSL, no shell, no confirmation required.
+ * This allows the assistant to examine the existing code BEFORE modifying it,
+ * just like a human developer.
  */
 export class CodeAnalyzer {
     private static instance: CodeAnalyzer;
@@ -52,8 +52,8 @@ export class CodeAnalyzer {
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * Datei mit Zeilennummern lesen.
-     * @param rawPath  Pfad relativ zum Workspace (absolute Pfade werden gekürzt)
+     * Read file with line numbers.
+     * @param rawPath  Path relative to the workspace (absolute paths are truncated)
      * @param offset   1-basierte Startzeile (Standard 1)
      * @param limit    Maximale Zeilenanzahl (Standard 400)
      */
@@ -67,7 +67,7 @@ export class CodeAnalyzer {
         }
 
         if (!fs.existsSync(abs)) {
-            // Hilfreiche Alternative anbieten statt nur "nicht gefunden"
+            // Offer a helpful alternative instead of just "not found"
             const suggestions = this.findSimilarPaths(relPath);
             const hint = suggestions.length
                 ? `\n\nMeintest du eine dieser Dateien?\n${suggestions.join('\n')}`
@@ -106,9 +106,9 @@ export class CodeAnalyzer {
 
         this.logger.info(`read_file: ${relPath} (Zeile ${start}–${end} von ${lines.length})`);
 
-        // Die Ausgabe wiederholt den Pfad NICHT: die Anzeige hat ihn schon in
-        // der Kopfzeile, und im Chat las man ihn sonst zweimal. Die Gesamtzahl
-        // der Zeilen wandert in die Beschreibung, wo sie hingehört.
+        // The output does NOT repeat the path: the display already shows it in
+        // the header, and otherwise it would appear twice in the chat. The total number
+        // of lines moves to the description, where it belongs.
         const range = end < lines.length || start > 1
             ? `L${start}–${end} von ${lines.length}`
             : `${lines.length} Zeilen`;
@@ -124,11 +124,11 @@ export class CodeAnalyzer {
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * Regex-Suche über den Workspace (wie ripgrep).
+     * Regex search across the workspace (like ripgrep).
      * @param pattern       JavaScript-Regex
      * @param globPattern   optionaler Datei-Filter, z.B. "*.ts"
      * @param searchPath    optionaler Unterordner
-     * @param ignoreCase    Groß-/Kleinschreibung ignorieren
+     * @param ignoreCase    ignore case
      * @param maxResults    Trefferlimit
      */
     grep(
@@ -209,7 +209,7 @@ export class CodeAnalyzer {
     // glob
     // ──────────────────────────────────────────────────────────────────────────
 
-    /** Dateien nach Glob-Muster finden. */
+    /** Find files matching the glob pattern. */
     glob(globPattern: string, maxResults = 200): AnalysisResult {
         const label = `glob: ${globPattern}`;
         let root: string;
@@ -242,7 +242,7 @@ export class CodeAnalyzer {
     // list_dir
     // ──────────────────────────────────────────────────────────────────────────
 
-    /** Verzeichnisinhalt auflisten (eine Ebene, mit Dateigrößen). */
+    /** List directory contents (one level, with file sizes). */
     listDir(rawPath = '.'): AnalysisResult {
         const relPath = rawPath === '.' ? '.' : this.displayPath(rawPath);
         const label = `list_dir: ${relPath}`;
@@ -282,12 +282,12 @@ export class CodeAnalyzer {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Projekt-Überblick (für den ersten Prompt)
+    // Project Overview (for the first prompt)
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * Kompakter Projektüberblick: Dateibaum nach Ordner gruppiert + erkannte
-     * Sprachen/Build-Tools. Deutlich informativer als eine flache Dateiliste.
+     * Compact project overview: file tree grouped by folder + detected
+     * Languages/Build Tools. Much more informative than a flat file list.
      */
     projectOverview(maxFiles = 400): string {
         let root: string;
@@ -297,7 +297,7 @@ export class CodeAnalyzer {
         const files = [...this.walk(root)].slice(0, maxFiles)
             .map(f => path.relative(root, f).replace(/\\/g, '/'));
 
-        // Nach Verzeichnis gruppieren
+        // Group by directory
         const byDir = new Map<string, string[]>();
         for (const f of files) {
             const dir = path.posix.dirname(f);
@@ -342,30 +342,30 @@ export class CodeAnalyzer {
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * Pfad für die Anzeige auf Workspace-relativ kürzen.
+     * Shorten the path for display to be workspace-relative.
      *
-     * Modelle übergeben oft absolute Pfade. Unverändert übernommen sprengen die
-     * jedes Chat-Label und jede Log-Zeile – und sagen nichts, was der relative
-     * Pfad nicht kürzer sagt.
+     * Models often pass absolute paths. Taken unchanged, they exceed
+     * each chat label and each log line – and say nothing about the relative
+     * Path not shorter says.
      */
     private displayPath(relOrAbs: string): string {
         try {
             const root = this.fileManager.getWorkspaceRoot();
             const abs = path.isAbsolute(relOrAbs) ? relOrAbs : path.join(root, relOrAbs);
             const rel = path.relative(root, abs).replace(/\\/g, '/');
-            // Außerhalb des Workspace (beginnt mit ..) → Originalangabe behalten
+            // Outside the workspace (starts with ..) → Keep original specification
             return rel && !rel.startsWith('..') ? rel : relOrAbs;
         } catch {
             return relOrAbs;
         }
     }
 
-    /** Heuristik: enthält der Text ein NUL-Byte, ist es keine Quelldatei. */
+    /** Heuristic: if the text contains a NUL byte, it is not a source file. */
     private looksBinary(content: string): boolean {
         return content.indexOf(String.fromCharCode(0)) !== -1;
     }
 
-    /** Rekursiver Datei-Iterator, überspringt Ignore-Verzeichnisse. */
+    /** Recursive file iterator, skips ignore directories. */
     private *walk(dir: string, depth = 0): Generator<string> {
         if (depth > 8) return;
         let entries: fs.Dirent[];
@@ -373,7 +373,7 @@ export class CodeAnalyzer {
         catch { return; }
         for (const e of entries) {
             if (IGNORE_DIRS.has(e.name)) continue;
-            // Versteckte Verzeichnisse überspringen (außer .claude/.github)
+            // Skip hidden directories (except .claude/.github)
             if (e.isDirectory() && e.name.startsWith('.')
                 && e.name !== '.claude' && e.name !== '.github') continue;
             const full = path.join(dir, e.name);
@@ -385,7 +385,7 @@ export class CodeAnalyzer {
         }
     }
 
-    /** Glob-Muster in Regex übersetzen. Unterstützt **, *, ? und {a,b}. */
+    /** Translate glob patterns into regex. Supports **, *, ? and {a,b}. */
     private globToRegex(pattern: string): RegExp {
         const normalized = pattern.replace(/\\/g, '/').replace(/^\.\//, '');
         let re = '';
@@ -414,7 +414,7 @@ export class CodeAnalyzer {
         return new RegExp(`^${re}$`);
     }
 
-    /** Ähnliche Dateinamen finden (Tippfehler-Hilfe bei read_file). */
+    /** Find similar filenames (typo assistance for read_file). */
     private findSimilarPaths(relPath: string, max = 5): string[] {
         let root: string;
         try { root = this.fileManager.getWorkspaceRoot(); } catch { return []; }

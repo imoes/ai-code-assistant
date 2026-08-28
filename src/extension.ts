@@ -18,14 +18,14 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.window.registerTreeDataProvider('aiAssistant.sessionsView', sidebar)
     );
 
-    // ── Chat-Tab öffnen ───────────────────────────────────────────────────────
+    // ── Open Chat-Tab ───────────────────────────────────────────────────────
     context.subscriptions.push(
         vscode.commands.registerCommand('aiAssistant.openPanel', () => {
             ChatPanel.open(context.extensionUri, true);
         })
     );
 
-    // ── Selektion aus Editor senden ───────────────────────────────────────────
+    // ── Send selection from editor ───────────────────────────────────────────
     context.subscriptions.push(
         vscode.commands.registerCommand('aiAssistant.sendPrompt', async () => {
             const editor = vscode.window.activeTextEditor;
@@ -56,13 +56,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const applyMode = async (mode: AssistantMode, notify = true) => {
         const config = vscode.workspace.getConfiguration('aiAssistant');
-        // Workspace-Bereich, wenn ein Ordner offen ist: der Modus gehört zum
-        // Projekt, nicht zur Installation.
+        // Workspace area, when a folder is open: the mode belongs to the
+        // project, not to the installation.
         const target = vscode.workspace.workspaceFolders?.length
             ? vscode.ConfigurationTarget.Workspace
             : vscode.ConfigurationTarget.Global;
         await config.update('mode', mode, target);
-        // autoApply mitführen, damit ältere Abfragen konsistent bleiben
+        // Keep autoApply so that older queries remain consistent
         await config.update('autoApply', mode === 'auto', target);
 
         logger.info(`Arbeitsmodus gesetzt: ${mode}`);
@@ -94,7 +94,7 @@ export function activate(context: vscode.ExtensionContext): void {
         })
     );
 
-    // Alter Befehl: rotiert jetzt durch alle drei Modi
+    // Old command: now cycles through all three modes
     context.subscriptions.push(
         vscode.commands.registerCommand('aiAssistant.toggleMode', async () => {
             const order: AssistantMode[] = ['ask', 'auto', 'plan'];
@@ -117,7 +117,7 @@ export function activate(context: vscode.ExtensionContext): void {
         })
     );
 
-    // ── Einstellungen öffnen ──────────────────────────────────────────────────
+    // ── Open settings ──────────────────────────────────────────────────
     context.subscriptions.push(
         vscode.commands.registerCommand('aiAssistant.openSettings', () =>
             SettingsPanel.open(context.extensionUri)
@@ -174,7 +174,7 @@ export function activate(context: vscode.ExtensionContext): void {
         })
     );
 
-    // ── Konfigurationsänderungen loggen ───────────────────────────────────────
+    // ── Log configuration changes ───────────────────────────────────────
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('aiAssistant')) {

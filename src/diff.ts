@@ -1,8 +1,8 @@
 /**
  * diff.ts – LCS-basierter Zeilen-Diff-Algorithmus.
  *
- * Gibt strukturierte Diff-Zeilen zurück, die im WebView farbig gerendert
- * und im VSCode-Diff-Editor geöffnet werden können.
+ * Returns structured diff lines that are rendered in color in the WebView
+ * and can be opened in the VSCode-Diff-Editor.
  */
 
 export type DiffLineType = 'add' | 'remove' | 'context' | 'hunk';
@@ -21,14 +21,14 @@ export interface DiffHunk {
 }
 
 /**
- * Berechnet den Zeilen-Diff zwischen zwei Texten per LCS.
- * Liefert Hunks (zusammenhängende Änderungsblöcke) mit je `contextLines`
- * Kontext-Zeilen oben und unten.
+ * Calculates the line diff between two texts using LCS.
+ * Returns hunks (contiguous change blocks) each with `contextLines`
+ * Context lines above and below.
  *
  * @param oldText      Alter Dateiinhalt
  * @param newText      Neuer Dateiinhalt
  * @param contextLines Anzahl Kontext-Zeilen pro Hunk (Standard: 3)
- * @param maxLines     Maximale Zeilenzahl pro Seite (Schutz vor riesigen Diffs)
+ * @param maxLines     Maximum number of lines per page (protection against huge diffs)
  */
 export function computeDiff(
     oldText: string,
@@ -44,8 +44,8 @@ export function computeDiff(
 }
 
 /**
- * Gibt den Diff als formatierten String zurück (unified-diff-ähnlich).
- * Wird als `detail`-String an die Confirm-Karte übergeben.
+ * Returns the diff as a formatted string (unified-diff-like).
+ * Is passed as the `detail` string to the Confirm card.
  */
 export function formatDiff(hunks: DiffHunk[]): string {
     if (hunks.length === 0) return '(keine Änderungen)';
@@ -64,7 +64,7 @@ export function formatDiff(hunks: DiffHunk[]): string {
 }
 
 /**
- * Zählt geänderte Zeilen: [entfernt, hinzugefügt]
+ * Counts changed lines: [removed, added]
  */
 export function diffStats(hunks: DiffHunk[]): [number, number] {
     let removed = 0, added = 0;
@@ -78,7 +78,7 @@ export function diffStats(hunks: DiffHunk[]): [number, number] {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Merge-Sequenz (für SmartMerge in fileManager)
+// Merge sequence (for SmartMerge in fileManager)
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -95,8 +95,8 @@ export interface MergeLine {
 }
 
 /**
- * Gibt die vollständige LCS-Sequenz zurück (keine Hunk-Gruppierung).
- * Verwendet von fileManager.smartMergeEdit() um nur Additions zu übernehmen.
+ * Returns the complete LCS sequence (no hunk grouping).
+ * Used by fileManager.smartMergeEdit() to only apply additions.
  */
 export function computeMergeSequence(oldText: string, newText: string, maxLines = 500): MergeLine[] {
     const oldLines = oldText.split('\n').slice(0, maxLines);
@@ -125,7 +125,7 @@ function lcs(oldLines: string[], newLines: string[]): RawLine[] {
     const m = oldLines.length;
     const n = newLines.length;
 
-    // DP-Tabelle: Speicherbedarf O(m*n) – bei maxLines=400 → 160k Einträge, ok
+    // DP table: Memory requirement O(m*n) – with maxLines=400 → 160k entries, ok
     const dp: Uint32Array[] = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1));
 
     for (let i = 1; i <= m; i++) {
@@ -161,7 +161,7 @@ function lcs(oldLines: string[], newLines: string[]): RawLine[] {
 }
 
 function buildHunks(raw: RawLine[], ctx: number): DiffHunk[] {
-    // Indizes der geänderten Zeilen finden
+    // Find indices of the changed lines
     const changed = raw
         .map((l, i) => ({ i, changed: l.type !== 'context' }))
         .filter(x => x.changed)
@@ -169,7 +169,7 @@ function buildHunks(raw: RawLine[], ctx: number): DiffHunk[] {
 
     if (changed.length === 0) return [];
 
-    // Änderungen zu Gruppen zusammenfassen
+    // Summarize changes to groups
     const groups: [number, number][] = [];
     let start = changed[0], end = changed[0];
 
@@ -184,7 +184,7 @@ function buildHunks(raw: RawLine[], ctx: number): DiffHunk[] {
     }
     groups.push([start, end]);
 
-    // Hunks aus Gruppen bauen
+    // Build hunks from groups
     const hunks: DiffHunk[] = [];
     for (const [gs, ge] of groups) {
         const from = Math.max(0, gs - ctx);

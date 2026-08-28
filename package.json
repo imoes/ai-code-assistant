@@ -1,11 +1,12 @@
 {
   "name": "ai-code-assistant",
   "displayName": "AI Code Assistant (llama.cpp MCP)",
-  "description": "Autonomer AI Code Assistant basierend auf llama.cpp MCP – erstellt, bearbeitet und testet Code direkt im Workspace.",
-  "version": "0.10.0",
+  "description": "Autonomous coding assistant powered by llama.cpp or any OpenAI-compatible endpoint - reads, plans, writes and tests code in your workspace.",
+  "version": "0.11.0",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://gitlab.ippen.media/mutkluge/ai-code-assistant"
+    "url": "https://github.com/imoes/ai-code-assistant"
   },
   "engines": {
     "vscode": "^1.105.0"
@@ -312,7 +313,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package --baseContentUrl https://gitlab.ippen.media/mutkluge/ai-code-assistant/-/raw/main --baseImagesUrl https://gitlab.ippen.media/mutkluge/ai-code-assistant/-/raw/main",
+    "package": "vsce package",
     "lint": "eslint src --ext ts",
     "test": "node test/run-all.js",
     "pretest": "npm run compile"

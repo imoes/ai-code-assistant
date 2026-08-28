@@ -10,6 +10,8 @@ import { ConfirmFn, autoConfirmFn } from './confirm';
 import { WebSearcher } from './webSearch';
 import { CodeAnalyzer } from './codeAnalyzer';
 import { AgentConsole } from './agentConsole';
+import { LoopBudget } from './commands';
+import { PracticeStore } from './practices';
 import {
     toolsForMode,
     READ_ONLY_ACTIONS,
@@ -21,15 +23,15 @@ import {
 } from './toolCallParser';
 
 /**
- * Sprachregel – steht am Anfang jedes System-Prompts.
+ * Language policy – appears at the beginning of every system prompt.
  *
- * Die Anweisungen an das Modell sind **englisch**: die Modelle folgen englischen
- * Instruktionen zuverlässiger, und die Werkzeugbeschreibungen fallen kürzer aus.
- * Die Antwort soll davon unberührt bleiben und in der Sprache des Benutzers
- * erfolgen – sonst antwortet ein Assistent mit deutschem Bedienfeld plötzlich
- * englisch. Deshalb wird die Regel ausdrücklich gesetzt und mehrfach wiederholt
- * (Ansagen, Plan-Punkte, Abschlusstext), denn genau dort fällt ein Rückfall ins
- * Englische dem Benutzer sofort auf.
+ * The instructions to the model are **English**: the models follow English
+ * Instructions are more reliable, and the tool descriptions become shorter.
+ * The response should remain unaffected and in the user's language
+ * occur – otherwise an assistant with a German interface will suddenly respond
+ * English. Therefore, the rule is explicitly set and repeated multiple times
+ * (announcements, plan points, closing text), because that is exactly where a relapse into
+ * Display to the user immediately.
  */
 export const LANGUAGE_RULE =
     '## Language\n' +
@@ -39,15 +41,15 @@ export const LANGUAGE_RULE =
     'closing summary. Identifiers, code, file paths, shell commands and the action ' +
     'block syntax stay as they are.\n';
 
-/** Arbeitsmodus des Assistenten. */
+/** Assistant's working mode. */
 export type AssistantMode = 'ask' | 'auto' | 'plan';
 
 /**
  * Aktuellen Arbeitsmodus lesen.
  *
- * `aiAssistant.mode` ist die Quelle der Wahrheit. Nur solange niemand sie
- * gesetzt hat, gilt das alte `autoApply` weiter – damit bestehende Installationen
- * nach dem Update nicht plötzlich im falschen Modus laufen.
+ * `aiAssistant.mode` is the source of truth. Only as long as no one
+ * has been set, the old `autoApply` continues to apply – so that existing installations
+ * do not suddenly run in the wrong mode after the update.
  */
 export function getAssistantMode(): AssistantMode {
     const config = vscode.workspace.getConfiguration('aiAssistant');
@@ -77,91 +79,91 @@ export interface ExecutedAction {
     output?: string;
 }
 
-/** Ein Schritt im Arbeitsplan des Assistenten. */
+/** A step in the assistant's work plan. */
 export interface PlanStep {
     text: string;
     status: 'todo' | 'doing' | 'done';
 }
 
-/** Callback wenn der Assistent seinen Plan erstellt oder aktualisiert. */
+/** Callback when the assistant creates or updates its plan. */
 export type PlanCallback = (steps: PlanStep[]) => void;
 
-/** Callback der pro Repair-Iteration aufgerufen wird */
+/** Callback invoked for each repair iteration */
 export type IterationCallback = (iteration: number, reason: string) => void;
 
 /**
- * Beschreibt eine Aktion so, dass die Anzeige sie sauber darstellen kann.
+ * Describes an action so that the display can render it cleanly.
  *
- * Vorher bekam die Oberfläche nur einen fertigen String mit Emoji darin und
- * musste ihn zerlegen. Mit diesen Feldern kann sie eine kompakte Zeile
- * bauen – Werkzeugname, Ziel, Zusatz – wie in einem Terminal.
+ * Previously, the UI only received a ready-made string containing an emoji and
+ * had to disassemble it. With these fields, it can create a compact line
+ * build – tool name, target, additional info – as in a terminal.
  */
 export interface ActionMeta {
-    /** Anzeigename des Werkzeugs: Read, Grep, Bash, … */
+    /** Display name of the tool: Read, Grep, Bash, … */
     tool: string;
     /** Worauf es angewendet wurde: Pfad, Suchmuster, Befehl */
     target?: string;
-    /** Zusatz am Zeilenende, z.B. "L1–115" oder "12 Treffer" */
+    /** Additional information at the end of the line, e.g. "L1–115" or "12 matches" */
     detail?: string;
-    /** Läuft der Vorgang noch? */
+    /** Is the process still running? */
     running?: boolean;
     /** Ergebnis, sobald bekannt */
     ok?: boolean;
 }
 
-/** Callback für laufende Aktionen (Shell-Output, Suche, …) */
+/** Callback for ongoing actions (shell output, search, ...) */
 export type ActionProgressCallback = (
     description: string,
     output: string,
     meta?: ActionMeta
 ) => void;
 
-/** Callback für laufende Kennzahlen (Prompt-Fortschritt, Tokens, Tokens/s) */
+/** Callback for running metrics (prompt progress, tokens, tokens/s) */
 export type StatsProgressCallback = (stats: GenerationStats) => void;
 
 /**
- * Callback für die Ansage des Assistenten – einmal pro Runde.
+ * Callback for the assistant's announcement – once per round.
  *
- * Nötig, weil `process()` nur den Text der ERSTEN Runde zurückgibt: die
- * Ansagen der Folgerunden gingen sonst verloren und im Chat stand ab Runde 2
- * nur noch "nächster Schritt…" ohne zu sagen, was der Assistent vorhat.
+ * Necessary because `process()` only returns the text of the FIRST round: the
+ * Announcements from subsequent rounds would otherwise be lost, and the chat would show from round 2 onwards
+ * only "next step…" without stating what the assistant plans to do.
  */
 export type NarrationCallback = (text: string) => void;
 
-/** Eine Antwortmöglichkeit im Entscheidungs-Dialog. */
+/** An answer option in the decision dialog. */
 export interface AskOption {
     label: string;
     description: string;
 }
 
-/** Eine Entscheidungsfrage an den Benutzer. */
+/** A decision question for the user. */
 export interface AskRequest {
-    /** Kurzes Etikett, 2–3 Wörter – wie die Tab-Beschriftung bei Claude Code */
+    /** Short label, 2–3 words – like the tab label in Claude Code */
     header: string;
     question: string;
     options: AskOption[];
-    /** Mehrfachauswahl (Kästchen) statt Einfachauswahl (Radio) */
+    /** Multiple selection (checkboxes) instead of single selection (radio buttons) */
     multi: boolean;
 }
 
 /**
- * Callback für den Entscheidungs-Dialog.
+ * Callback for the decision dialog.
  *
- * Gibt die gewählten Beschriftungen zurück, bei Mehrfachauswahl mit `", "`
- * verbunden – dieselbe Form, die auch Claude Code im Webview verwendet. Ein
- * leerer String heißt: der Benutzer hat abgebrochen.
+ * Returns the selected labels, with multiple selections separated by `", "`
+ * connected – the same form that Claude Code also uses in the webview. One
+ * empty string means: the user has canceled.
  */
 export type AskCallback = (request: AskRequest) => Promise<string>;
 
 /**
- * AIEngine: Verarbeitet Prompts, führt Aktionen aus, schreibt History.
+ * AIEngine: Processes prompts, executes actions, writes history.
  *
  * Features:
  *  - command.md: Liest workspace/command.md als permanente KI-Anweisung
- *  - Shell-Feedback-Loop: Bei fehlgeschlagenen Befehlen wird die Ausgabe
- *    automatisch zurück an die KI gegeben (max. 3 Iterationen)
- *  - History: Jede Konversation wird in ai-code-assistant.json gespeichert
- *  - Kontext-Warnung: Warnt wenn das Kontext-Limit des Modells naht
+ * - Shell feedback loop: On failed commands, the output
+ * automatically returned to the AI (max. 3 iterations)
+ * - History: Every conversation is saved in ai-code-assistant.json
+ * - Context warning: Warns when the model's context limit is approaching
  */
 export class AIEngine {
     private static instance: AIEngine;
@@ -172,59 +174,74 @@ export class AIEngine {
     private console = AgentConsole.getInstance();
     private logger = Logger.getInstance();
 
-    /** Aktueller Arbeitsplan (Todo-Liste) der laufenden Aufgabe */
+    /** Current work plan (todo list) of the running task */
     private plan: PlanStep[] = [];
 
-    /** Callback um den Plan im Chat anzuzeigen */
+    /** Callback to display the plan in the chat */
     private onPlanUpdate?: PlanCallback;
 
-    /** Callback für laufende Kennzahlen (Fortschritt, Tokens/Sekunde) */
+    /** Callback for running metrics (progress, tokens/second) */
     private onStats?: StatsProgressCallback;
 
-    /** Callback für die Ansage pro Runde (siehe NarrationCallback) */
+    /** Callback for the announcement per round (see NarrationCallback) */
     private onNarration?: NarrationCallback;
 
-    /** Callback für den Entscheidungs-Dialog (siehe AskCallback) */
+    /** Callback for the decision dialog (see AskCallback) */
     private onAsk?: AskCallback;
 
-    /** Von der KI gesetztes Signal, dass die Aufgabe abgeschlossen ist */
+    /** Signal set by the AI indicating that the task is completed */
     private taskComplete = false;
 
-    /** Zusammenfassung aus `action:done` – wird als Schlussantwort angezeigt */
+    /** Summary from `action:done` – displayed as the final answer */
     private lastDoneSummary = '';
 
     /**
-     * Der Auftrag des Benutzers aus Runde 0 – wortwörtlich.
+     * Standing target (`/goal`). `null` means "not yet read from the history"
+     * – not the same as "no target set".
+     */
+    private goal: string | null = null;
+
+    /** Is a `/loop` loop currently running? */
+    private loopActive = false;
+
+    /** Commands that were typed during work (see queueUserInput) */
+    private pendingInputs: string[] = [];
+
+    /** Learned best practices – loaded only on first access. */
+    private practiceStore: PracticeStore | null = null;
+
+    /**
+     * The user's instruction from round 0 – verbatim.
      *
-     * Die Fortsetzungs-Prompts der Schleife sprachen von „der ursprünglichen
-     * Aufgabe", ohne sie zu nennen. Das Modell suchte sie im Gesprächsverlauf
-     * und fand dort die Aufgabe der Vorsitzung. Wer weiterarbeiten lassen will,
-     * muss den Auftrag jede Runde mitschicken.
+     * The continuation prompts of the loop referred to "the original
+     * Task", without naming it. The model searched for it in the conversation history
+     * and found there the task of presiding. Whoever wants to let others continue working,
+     * must send the order every round.
      */
     private currentTask = '';
 
-    /** Vom Benutzer gesetztes Abbruch-Signal – beendet auch die Schleife */
+    /** User-set abort signal – also terminates the loop */
     private cancelled = false;
 
-    /** Läuft gerade eine Aufgabe? Für "neue Aufgabe unterbricht die alte". */
+    /** Is a task currently running? For "new task interrupts the old". */
     private busy = false;
 
-    /** Plan-Modus: nur lesen und planen, keine Änderungen */
+    /** Plan mode: read-only and planning, no changes */
     private planModeActive = false;
 
-    /** Fingerabdruck der Aktionen der letzten Runde – erkennt Kreisläufe */
+    /** Fingerprint of the actions from the last round – detects cycles */
     private lastActionSignature = '';
 
-    /** Wie oft dieselbe Runde in Folge auftrat */
+    /** How often the same round occurred consecutively */
     private repeatCount = 0;
 
-    /** Konversationsverlauf (In-Memory, wird auch in History gespeichert) */
+    /** Conversation history (in-memory, also stored in history) */
     private conversationHistory: ChatMessage[] = [];
 
-    /** HistoryManager: wird lazy initialisiert wenn Workspace bekannt */
+    /** HistoryManager: is lazily initialized when the Workspace is known */
     private historyManager: HistoryManager | null = null;
 
-    /** Verhindert doppeltes Laden der History */
+    /** Prevents double loading of the history */
     private historyLoaded = false;
 
     private constructor() {}
@@ -245,22 +262,22 @@ export class AIEngine {
         this.logger.info('Konversationsverlauf zurückgesetzt.');
     }
 
-    /** Callback registrieren, über den Planänderungen in den Chat gemeldet werden. */
+    /** Register a callback that reports plan changes to the chat. */
     setPlanCallback(cb: PlanCallback | undefined): void {
         this.onPlanUpdate = cb;
     }
 
-    /** Callback registrieren, über den Kennzahlen in den Chat gemeldet werden. */
+    /** Register a callback that reports key figures to the chat. */
     setStatsCallback(cb: StatsProgressCallback | undefined): void {
         this.onStats = cb;
     }
 
-    /** Callback registrieren, über den die Ansage jeder Runde gemeldet wird. */
+    /** Register a callback that reports the announcement of each round. */
     setNarrationCallback(cb: NarrationCallback | undefined): void {
         this.onNarration = cb;
     }
 
-    /** Callback für den Entscheidungs-Dialog setzen (siehe AskCallback). */
+    /** Set callback for the decision dialog (see AskCallback). */
     setAskCallback(cb: AskCallback | undefined): void {
         this.onAsk = cb;
     }
@@ -270,10 +287,168 @@ export class AIEngine {
         return this.plan.map(s => ({ ...s }));
     }
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // Goal (/goal) and Loop (/loop)
+    // ──────────────────────────────────────────────────────────────────────────
+
     /**
-     * Gesamten gespeicherten Verlauf löschen – Datei und laufende Konversation.
+     * Stehendes Ziel abfragen.
      *
-     * @returns Anzahl der entfernten Sessions
+     * The goal is not the order of a round, but what everyone
+     * Work through orders – “an assistant that writes code, finds bugs, and
+     * corrected". It goes into every request and survives session and restart,
+     * because otherwise it disappears exactly when a long task begins.
+     */
+    getGoal(): string {
+        if (this.goal === null) {
+            this.ensureHistoryManager();
+            this.goal = this.historyManager?.getGoal() ?? '';
+        }
+        return this.goal;
+    }
+
+    /** Set a goal (empty text clears it). */
+    setGoal(text: string): void {
+        this.goal = text.trim();
+        this.ensureHistoryManager();
+        this.historyManager?.setGoal(this.goal);
+        this.logger.info(this.goal ? `Ziel gesetzt: ${this.goal}` : 'Ziel gelöscht.');
+    }
+
+    /**
+     * Repeat working on the goal until the budget is exhausted.
+     *
+     * A round is a complete `process()` run with its own
+     * Agent loop. After that, it is checked whether to continue at all –
+     * a loop that does the same thing three times is wasted time.
+     *
+     * Abbruchbedingungen, in dieser Reihenfolge:
+     * 1. The user has canceled (`cancel()`), or a new instruction
+     * has replaced the current task.
+     * 2. The assistant reports the goal as achieved (`action:done` AND no
+     *      offenen Planschritte).
+     * 3. Time or round budget exhausted.
+     * 4. Two consecutive rounds without any action – then nothing more happens.
+     *
+     * Without (4), the loop drains the budget while the model in each
+     * Round only explains that everything is done.
+     */
+    async runLoop(
+        task: string,
+        budget: LoopBudget,
+        onStream: StreamCallback,
+        confirmFn: ConfirmFn | undefined,
+        onIteration?: IterationCallback,
+        onActionProgress?: ActionProgressCallback,
+        onRound?: (round: number, total: number, note: string) => void
+    ): Promise<{ rounds: number; actions: number; stopped: string }> {
+        const started = Date.now();
+        const deadline = started + budget.minutes * 60_000;
+        const goal = this.getGoal();
+
+        let rounds = 0;
+        let actions = 0;
+        let idleRounds = 0;
+        let stopped = 'Budget aufgebraucht';
+
+        this.loopActive = true;
+        try {
+            while (rounds < budget.rounds) {
+                if (this.cancelled) { stopped = 'abgebrochen'; break; }
+                if (Date.now() >= deadline) { stopped = 'Zeit aufgebraucht'; break; }
+
+                rounds++;
+                const left = Math.max(0, Math.round((deadline - Date.now()) / 60_000));
+
+                // In a round-budget scenario, time is not the limit: "still
+                // ~120 minutes" to report, while after the third round
+                // is misleading. What it depends on is stated in the
+                // Labeling of the budget.
+                const boundByRounds = /Runde/i.test(budget.label);
+                onRound?.(rounds, budget.rounds, boundByRounds
+                    ? `noch ${budget.rounds - rounds} Runde(n)`
+                    : `noch ~${left} Minute(n)`);
+
+                // What the user types in between takes precedence over the
+                // loop prompt – they are watching and adjusting.
+                const queued = rounds > 1 ? this.takeQueuedPrompt() : null;
+                const prompt = queued
+                    ?? (rounds === 1
+                        ? task
+                        : this.buildLoopPrompt(rounds, budget.rounds, left, task, goal));
+
+                const result = await this.process(
+                    prompt, onStream, confirmFn, onIteration, 0, onActionProgress
+                );
+                actions += result.actions.length;
+
+                if (this.cancelled) { stopped = 'abgebrochen'; break; }
+
+                // Nothing done: once is chance, twice is stagnation.
+                if (result.actions.length === 0) {
+                    idleRounds++;
+                    if (idleRounds >= 2) { stopped = 'keine Aktionen mehr'; break; }
+                } else {
+                    idleRounds = 0;
+                }
+
+                // Reported as complete AND no open planning step: then it is done.
+                const openSteps = this.plan.filter(s => s.status !== 'done').length;
+                if (this.taskComplete && openSteps === 0) {
+                    stopped = 'Ziel erreicht';
+                    break;
+                }
+            }
+        } finally {
+            this.loopActive = false;
+        }
+
+        this.logger.info(
+            `Schleife beendet nach ${rounds} Runde(n), ${actions} Aktion(en): ${stopped}`);
+        return { rounds, actions, stopped };
+    }
+
+    /** Is a `/loop` loop currently running? */
+    isLooping(): boolean {
+        return this.loopActive;
+    }
+
+    /**
+     * The prompt for each round starting from the second.
+     *
+     * He names three things that the model otherwise does not have: where it is in the budget
+     * states what the goal is, and that "already done" is a valid response
+     * is. Without the last point, a model invents work to complete the round.
+     * fill.
+     */
+    private buildLoopPrompt(
+        round: number, total: number, minutesLeft: number, task: string, goal: string
+    ): string {
+        const openSteps = this.plan.filter(s => s.status !== 'done');
+        return [
+            `LOOP ROUND ${round} of at most ${total} (about ${minutesLeft} minute(s) left).`,
+            '',
+            goal ? `GOAL:\n${goal}\n` : '',
+            `TASK:\n${task}`,
+            '',
+            openSteps.length > 0
+                ? 'Still open in the plan:\n'
+                    + openSteps.map(s => `- ${s.text}`).join('\n')
+                : 'The plan has no open steps.',
+            '',
+            'Check what is actually still missing for the goal – read the code, run the',
+            'tests. Then do the next concrete step.',
+            '',
+            'If the goal is genuinely reached: verify it once (tests, or the file you',
+            'changed) and finish with action:done. Do NOT invent work to fill the round –',
+            '"already done" is a valid answer and ends the loop.'
+        ].filter(Boolean).join('\n');
+    }
+
+    /**
+     * Delete the entire saved history – file and ongoing conversation.
+     *
+     * @returns Number of removed sessions
      */
     clearHistory(): number {
         this.ensureHistoryManager();
@@ -298,7 +473,7 @@ export class AIEngine {
         this.logger.info('Abbruch vom Benutzer: Anfrage und Agenten-Schleife werden beendet.');
     }
 
-    /** Läuft gerade eine Aufgabe? */
+    /** Is a task currently running? */
     isBusy(): boolean {
         return this.busy;
     }
@@ -310,10 +485,10 @@ export class AIEngine {
     /**
      * Benutzer-Prompt verarbeiten.
      *
-     * @param userPrompt     Eingabe des Benutzers
+     * @param userPrompt     User input
      * @param onStream       Token-Streaming-Callback
-     * @param confirmFn      In-Chat-Bestätigungsfunktion
-     * @param onIteration    Callback wenn eine Repair-Iteration startet
+     * @param confirmFn      In-Chat confirmation function
+     * @param onIteration    Callback when a repair iteration starts
      * @param _depth         Interne Rekursionstiefe (0 = erste Anfrage)
      */
     async process(
@@ -336,14 +511,14 @@ export class AIEngine {
             ? autoConfirmFn
             : (confirmFn ?? autoConfirmFn);
 
-        // Abbruch prüfen, bevor eine neue Runde beginnt. Der Benutzer soll
-        // zwischen den Iterationen herauskommen, nicht erst am Schrittlimit.
+        // Check for cancellation before a new round begins. The user should
+        // be able to exit between iterations, not only at the step limit.
         if (this.cancelled) {
             this.logger.info('Agenten-Schleife abgebrochen (Benutzer).');
             return { text: '', actions: [], iterations: _depth };
         }
 
-        // Neue Benutzer-Aufgabe → Abschluss-Signal und alten Plan verwerfen
+        // New user task → completion signal and discard old plan
         if (_depth === 0) {
             this.cancelled = false;
             this.busy = true;
@@ -355,15 +530,15 @@ export class AIEngine {
             this.repeatCount = 0;
             this.logger.info(`Arbeitsmodus: ${mode}`);
 
-            // Arbeitsprotokoll im Terminal beginnen, wenn gewünscht
+            // Start the work log in the terminal, if desired
             if (config.get<boolean>('showConsole', true)) {
                 this.console.task(userPrompt, mode);
                 this.console.show(false);   // anlegen, aber nicht den Fokus klauen
             }
         }
 
-        // Im Plan-Modus sind Änderungen gesperrt – auch dann, wenn das Modell
-        // sie trotzdem versucht (siehe blockedInPlanMode).
+        // In plan mode, changes are locked – even if the model
+        // still attempts them (see blockedInPlanMode).
         this.planModeActive = mode === 'plan';
 
         // ── History-Manager initialisieren ──────────────────────────────────
@@ -380,9 +555,9 @@ export class AIEngine {
             this.logger.info(`Workspace-Scan: ${allFilesList.length} Datei(en) in ${root}`);
             workspaceContext = `\n\n## Project\n${this.analyzer.projectOverview()}`;
 
-            // Aktive Editor-Datei und im Prompt erwähnte Dateien vorab einbinden.
-            // Bewusst auf 600 Zeilen begrenzt: den Rest holt sich der Assistent
-            // gezielt mit read_file, statt den Kontext blind vollzuschreiben.
+            // Include the active editor file and files mentioned in the prompt in advance.
+            // Intentionally limited to 600 lines: the assistant retrieves the rest
+            // specifically using read_file, instead of blindly filling the context.
             const PRELOAD_LINES = 600;
 
             const editor = vscode.window.activeTextEditor;
@@ -393,7 +568,7 @@ export class AIEngine {
                     `\`\`\`\n${this.addLineNumbers(content, PRELOAD_LINES)}\n\`\`\``;
             }
 
-            // Weitere im Prompt erwähnte Dateien automatisch einlesen
+            // Automatically read in other files mentioned in the prompt
             const relFiles = allFilesList.map(f => path.relative(root, f));
             const mentionedFiles = relFiles.filter(rel => {
                 const filename = path.basename(rel);
@@ -422,24 +597,26 @@ project layout (package.json→npm test, Cargo.toml→cargo test, pytest.ini→p
 go.mod→go test ./..., pom.xml→mvn test, build.gradle→./gradlew test, *.csproj→dotnet test)
 and append it as the last action:shell block.` : '';
 
-        // ── System-Prompt zusammenbauen ──────────────────────────────────────
-        // Reihenfolge: STABIL zuerst, VERÄNDERLICH zuletzt.
-        // llama.cpp cacht den gemeinsamen Prompt-Präfix zwischen Anfragen. In einer
-        // Agenten-Schleife mit 12 Runden ist das der Unterschied zwischen einmaliger
-        // und zwölffacher Prompt-Auswertung. Alles, was sich pro Runde ändert
-        // (Dateiinhalte, Plan), muss daher ans ENDE – sonst ist der Cache ab dort
-        // wertlos und das große Werkzeug-Handbuch wird jede Runde neu ausgewertet.
+        // ── Build System Prompt ───────────────────────────────────────────────
+        // Order: STABLE first, VARIABLE last.
+        // llama.cpp caches the common prompt prefix between requests. In an
+        // agent loop with 12 rounds, this is the difference between single
+        // and twelvefold prompt evaluation. Everything that changes per round
+        // (file contents, plan) must therefore go to the END – otherwise the cache is useless from there
+        // on and the large tool manual is evaluated anew every round.
         const fullSystemPrompt = [
             systemPromptBase,
             commandMdContent ? `\n\n## Permanent project instructions\n${commandMdContent}` : '',
             this.buildToolManual(),
             testInstruction,
+            this.buildGoalContext(),
+            this.getPractices()?.forPrompt() ?? '',
             workspaceContext,
             this.buildPlanContext()
         ].join('');
 
-        // ── Kontext-Größe schätzen ────────────────────────────────────────────
-        // Verlauf komprimieren, BEVOR die Anfrage rausgeht – sonst platzt sie.
+        // ── Estimate context size ─────────────────────────────────────────────
+        // Compress history BEFORE sending the request – otherwise it will blow up.
         const compactNote = await this.compactHistoryIfNeeded(fullSystemPrompt);
         if (compactNote) {
             onActionProgress?.('🗜 Verlauf komprimiert', compactNote);
@@ -447,7 +624,7 @@ and append it as the last action:shell block.` : '';
 
         const contextWarning = this.checkContextSize(fullSystemPrompt, userPrompt);
 
-        // ── Automatische Web-Suche bei Schlüsselwörtern ───────────────────────
+        // ── Automatic web search for keywords ───────────────────────
         let searchContext = '';
         if (_depth === 0 && this.detectSearchIntent(userPrompt)) {
             onActionProgress?.('🔍 Suchbegriff wird optimiert…', userPrompt.slice(0, 80));
@@ -477,15 +654,15 @@ and append it as the last action:shell block.` : '';
 
         this.logger.info(`KI-Anfrage [depth=${_depth}]: "${userPrompt.slice(0, 80)}"`);
 
-        // ── KI-Anfrage senden ─────────────────────────────────────────────────
-        // Werkzeuge im OpenAI-Schema mitsenden, wenn aktiviert. llama.cpp rendert
-        // sie ins Format des Modells und parst die Antwort zurück – deshalb
-        // funktioniert das mit Qwen, Gemma, Kimi, laguna, DeepSeek gleichermaßen.
+        // ── Send AI Request ─────────────────────────────────────────────────
+        // Send tools in the OpenAI schema if enabled. llama.cpp renders
+        // them into the model's format and parses the response back – therefore
+        // it works equally well with Qwen, Gemma, Kimi, laguna, DeepSeek.
         const useNativeTools = config.get<boolean>('nativeToolCalls', true);
 
         let rawResponse = '';
         let nativeCalls = '';
-        /** Ansagen aus den Werkzeugaufrufen (`absicht`) – siehe unten */
+        /** Announcements from the tool calls (`intent`) – see below */
         let toolIntents: string[] = [];
         try {
             const result = await this.mcpClient.complete(
@@ -508,57 +685,57 @@ and append it as the last action:shell block.` : '';
             throw new Error(`KI nicht erreichbar: ${(err as Error).message}`);
         }
 
-        // Reasoning-Modelle (laguna, DeepSeek R1, Qwen …) entwerfen im <think>-Block
-        // oft Aktions-Blöcke, die sie danach verwerfen oder anders ausführen. Die
-        // dürfen NICHT ausgeführt werden – nur die eigentliche Antwort zählt.
+        // Reasoning models (laguna, DeepSeek R1, Qwen, etc.) often design action blocks in the <think> block
+        // that they subsequently discard or execute differently. These
+        // MUST NOT be executed – only the actual response counts.
         //
-        // Hat der Server Werkzeugaufrufe geliefert, sind DIE die Wahrheit: der
-        // Antworttext ist dann Prosa. Sonst wird der Text geparst – als Rückfall
-        // für Server ohne --jinja und Modelle, die die Werkzeuge ignorieren und
-        // ihr Format trotzdem in den Text schreiben. (Die Textnormalisierung
-        // passiert in parseAndExecuteActions.)
+        // If the server provided tool calls, THESE are the truth: the
+        // response text is then prose. Otherwise, the text is parsed – as a fallback
+        // for servers without --jinja and models that ignore the tools and
+        // still write their format into the text. (The text normalization
+        // occurs in parseAndExecuteActions.)
         const actionSource = nativeCalls || this.stripReasoning(rawResponse);
 
-        // ── Konversationsverlauf pflegen ──────────────────────────────────────
-        // Ohne Reasoning: der Denkteil ist für die nächste Runde wertlos, würde
-        // aber den Kontext volllaufen lassen (bei Reasoning-Modellen oft das
-        // Mehrfache der eigentlichen Antwort).
+        // ── Maintain conversation history ──────────────────────────────────────
+        // Without reasoning: the thinking part is useless for the next round, but
+        // would fill up the context (with reasoning models, often many times the
+        // actual response).
         this.conversationHistory.push({ role: 'user', content: userPrompt });
         this.conversationHistory.push({ role: 'assistant', content: actionSource.trim() || rawResponse });
         if (this.conversationHistory.length > 30) {
             this.conversationHistory = this.conversationHistory.slice(-30);
         }
-        // Ansage des Assistenten VOR den Aktionen – sonst stehen die Aktionen
-        // ohne Begründung da.
+        // Announcement of the assistant BEFORE the actions – otherwise the actions
+        // stand without justification.
         //
-        // Bei nativen Werkzeugaufrufen liefern Modelle `content: null`: sie
-        // stecken alles in den Aufruf und schreiben keine Prosa. Deshalb tragen
-        // die Werkzeuge ein Feld `absicht`, das hier einspringt.
+        // For native tool calls, models return `content: null`: they
+        // put everything into the call and write no prose. Therefore, the
+        // tools include a field `intent`, which is used here.
         const prose = this.cleanForDisplay(rawResponse);
         const cleanText = prose || toolIntents.join('\n');
         this.console.narration(cleanText);
 
-        // Der bereinigte Text geht in JEDER Runde an die Anzeige – auch in der
-        // ersten. Der Chat streamt die ROHE Antwort mit; ohne diese Nachlieferung
-        // bleiben die Aktionsblöcke dort stehen, und der Benutzer liest
-        // „>>>REPLACE" samt Quellcode statt einer Antwort.
+        // The cleaned text goes to the display in EVERY round – even in the
+        // first one. The chat streams the RAW response along with it; without this follow-up
+        // the action blocks remain there, and the user reads
+        // ">>>REPLACE" along with source code instead of an answer.
         //
-        // Leerer Text ist eine gültige Meldung: dann bestand die Runde nur aus
-        // Werkzeugaufrufen und der gestreamte Absatz wird entfernt.
+        // Empty text is a valid message: then the round consisted only of
+        // tool calls and the streamed paragraph is removed.
         this.onNarration?.(cleanText);
 
         const actions = await this.parseAndExecuteActions(actionSource, confirm, onActionProgress);
         const thinkingBlock = this.extractThinkingBlock(rawResponse);
 
-        // Abschluss-Zusammenfassung als Nachricht nachschieben – sie ist die
-        // Antwort auf die Aufgabe und gehört als Markdown in den Chat, nicht in
-        // eine Werkzeugausgabe.
+        // Push the final summary as a message – it is the
+        // response to the task and belongs as Markdown in the chat, not in
+        // a tool output.
         if (this.lastDoneSummary && this.lastDoneSummary !== cleanText) {
             this.onNarration?.(this.lastDoneSummary);
             this.lastDoneSummary = '';
         }
 
-        // ── Beispiel-Erkennung: KI hat nur Beispiel gezeigt statt zu handeln ──
+        // ── Example Detection: AI only showed an example instead of taking action ──
         if (_depth === 0 && actions.length === 0 && config.get<boolean>('autoFixOnError', true)) {
             const hasCodeBlock = /```[\w\s]*\n[\s\S]+?```/.test(actionSource);
             const looksLikeExample = hasCodeBlock && /beispiel|example|so könnte|hier ist wie|du kannst|you can|hier ein|so würde/i.test(actionSource);
@@ -597,6 +774,30 @@ and append it as the last action:shell block.` : '';
             })), reasoning);
         }
 
+        // ── Enqueued instruction: here is the clean cut ───────────────
+        // The step is finished, the file written, the output is there. What
+        // the user has typed in the meantime comes NOW – before
+        // the step that the loop itself would have planned.
+        const queued = this.takeQueuedPrompt();
+        if (queued) {
+            const note = 'Neue Anweisung erhalten – setze sie um…';
+            this.logger.info(`Eingereihte Anweisung wird eingeschoben (Runde ${_depth + 1}).`);
+            this.console.step(_depth + 1, note);
+            onIteration?.(_depth + 1, note);
+
+            const queuedResult = await this.process(
+                queued, onStream, confirmFn, onIteration, _depth + 1, onActionProgress
+            );
+
+            if (_depth === 0) this.busy = false;
+            return {
+                text: cleanText,
+                actions: [...actions, ...queuedResult.actions],
+                contextWarning,
+                iterations: queuedResult.iterations + 1
+            };
+        }
+
         // ── Agenten-Schleife ──────────────────────────────────────────────────
         const step = this.planNextStep(actions, _depth, config);
 
@@ -628,22 +829,22 @@ and append it as the last action:shell block.` : '';
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Agenten-Schleife: entscheidet, ob und wie weitergearbeitet wird
+    // Agent Loop: decides whether and how to continue working
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * Nächsten Schritt der Agenten-Schleife bestimmen.
+     * Determine the next step of the agent loop.
      *
-     * Weitergearbeitet wird, wenn nach dieser Runde noch etwas offen ist:
-     *  - Analyse-Ergebnisse liegen vor  → die KI muss sie jetzt verwerten
-     *  - Shell-Befehl ist fehlgeschlagen → Fehler analysieren und beheben
-     *  - Befehlsausgabe ohne Codeänderung → auf Basis der Ausgabe handeln
-     *  - Der Plan hat noch offene Schritte → nächsten Schritt abarbeiten
+     * Work continues if anything remains open after this round:
+     * - Analysis results are available → the AI must now utilize them
+     * - Shell command failed → analyze and fix the error
+     * - Command output without code changes → act based on the output
+     * - The plan still has open steps → process the next step
      *
-     * Abgebrochen wird bei action:done, bei erreichtem Schrittlimit oder wenn
-     * nichts mehr offen ist.
+     * Cancellation occurs on action:done, upon reaching the step limit, or if
+     * nothing is left open.
      *
-     * @returns Prompt + Begründung für die nächste Runde, oder null zum Beenden
+     * @returns Prompt + reasoning for the next round, or null to terminate
      */
     private planNextStep(
         actions: ExecutedAction[],
@@ -656,13 +857,13 @@ and append it as the last action:shell block.` : '';
             ? config.get<number>('maxAgentSteps', 12)
             : config.get<number>('autoFixIterations', 3);
 
-        // Benutzer hat abgebrochen – nicht weitermachen
+        // User has canceled – do not continue
         if (this.cancelled) {
             this.logger.info('Agenten-Schleife beendet: vom Benutzer abgebrochen.');
             return null;
         }
 
-        // Die KI hat die Aufgabe selbst als fertig gemeldet
+        // The AI has reported the task as completed itself
         if (this.taskComplete) {
             this.logger.info('Agenten-Schleife beendet: action:done erhalten.');
             return null;
@@ -676,16 +877,16 @@ and append it as the last action:shell block.` : '';
         const analyses = actions.filter(a => a.type === 'analysis' && a.output?.trim());
         const failedShells = actions.filter(a => a.type === 'shell' && !a.success && a.output?.trim());
 
-        // Der Auftrag wird in JEDER Runde mitgeschickt. Ohne ihn sucht das Modell
-        // sich „die ursprüngliche Aufgabe" selbst aus dem Verlauf zusammen.
+        // The instruction is sent in EVERY round. Without it, the model
+        // pieces together "the original task" itself from the history.
         const task = this.currentTask
             ? `YOUR TASK (unchanged – this is what you are working on):\n`
                 + `${this.currentTask.slice(0, 1500)}\n\n`
             : '';
 
-        // Fehlgeschlagene Änderungen (Patch griff nicht, Datei fehlt, abgelehnt).
-        // Die MÜSSEN zurückgemeldet werden: sonst wiederholt das Modell denselben
-        // Patch endlos, weil es nie erfährt, dass er nicht gegriffen hat.
+        // Failed changes (patch did not apply, file missing, rejected).
+        // These MUST be reported: otherwise the model will repeat the same
+        // patch endlessly, because it never learns that it did not apply.
         const isFileAction = (t: ExecutedAction['type']) =>
             t === 'file_create' || t === 'file_edit' || t === 'file_delete';
         const failedFileActions = actions.filter(
@@ -697,9 +898,9 @@ and append it as the last action:shell block.` : '';
         // Befehlsausgaben unterdrückt und die Schleife lief blind weiter.
         const hasFileActions = actions.some(a => isFileAction(a.type) && a.success);
 
-        // ── Wiederholung erkennen ─────────────────────────────────────────────
-        // Liefert eine Runde exakt dasselbe Ergebnis wie die vorherige, bringt
-        // Weitermachen nichts: das Modell dreht sich im Kreis.
+        // ── Detect repetition ─────────────────────────────────────────────
+        // If a round yields exactly the same result as the previous one,
+        // continuing is pointless: the model is going in circles.
         const signature = actions
             .map(a => `${a.success ? '+' : '-'}${a.type}:${a.description}`)
             .join('|');
@@ -756,7 +957,7 @@ and append it as the last action:shell block.` : '';
             };
         }
 
-        // ── 1b. Änderung ist nicht durchgegangen: Ursache zurückmelden ────────
+        // ── 1b. Change did not go through: Report the cause ────────
         if (failedFileActions.length > 0 && autoFix) {
             return {
                 reason: `${failedFileActions.length} Änderung(en) nicht angewendet – korrigiere…`,
@@ -771,7 +972,7 @@ and append it as the last action:shell block.` : '';
             };
         }
 
-        // ── 2. Analyse-Ergebnisse liegen vor: jetzt verwerten ─────────────────
+        // ── 2. Analysis results are available: now utilize them ─────────────────
         if (analyses.length > 0 && agentLoop) {
             const ctx = this.formatOutputs(analyses);
             const labels = analyses.map(a => a.description).join(', ');
@@ -844,7 +1045,7 @@ and append it as the last action:shell block.` : '';
         return null;
     }
 
-    /** Aktions-Ausgaben als Kontext-Block für die nächste Runde formatieren. */
+    /** Format action outputs as a context block for the next round. */
     private formatOutputs(actions: ExecutedAction[]): string {
         return actions.map(a => {
             if (a.output?.startsWith('Benutzer-Anweisung:')) {
@@ -855,7 +1056,7 @@ and append it as the last action:shell block.` : '';
         }).join('\n\n');
     }
 
-    /** Obergrenze für eine einzelne Aktionsausgabe im Folge-Prompt. */
+    /** Upper limit for a single action output in the follow-up prompt. */
     private static readonly MAX_OUTPUT_CHARS = 6000;
 
     /**
@@ -888,10 +1089,10 @@ and append it as the last action:shell block.` : '';
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * Werkzeug-Handbuch für den System-Prompt: alle Aktions-Blöcke + Arbeitsweise.
+     * Tool manual for the system prompt: all action blocks + workflow.
      *
-     * Bewusst zweigeteilt: erst LESEN/ANALYSIEREN, dann SCHREIBEN. Der Assistent
-     * soll den bestehenden Code verstehen, bevor er ihn anfasst.
+     * Consciously split into two phases: first READ/ANALYZE, then WRITE. The assistant
+     * should understand the existing code before modifying it.
      */
     private buildToolManual(): string {
         const config = vscode.workspace.getConfiguration('aiAssistant');
@@ -903,8 +1104,8 @@ and append it as the last action:shell block.` : '';
 
         const parts: string[] = [];
 
-        // Die Sprachregel steht ZUERST – sie ist der Grund, warum das Handbuch
-        // überhaupt englisch sein darf.
+        // The language rule comes FIRST – it is the reason why the manual
+        // is allowed to be in English in the first place.
         parts.push(LANGUAGE_RULE);
 
         parts.push(
@@ -914,7 +1115,7 @@ and append it as the last action:shell block.` : '';
             `who sees the task through to the end.\n`
         );
 
-        // ── Plan-Modus: nur untersuchen und planen ───────────────────────────
+        // ── Plan Mode: only examine and plan ───────────────────────────
         if (mode === 'plan') {
             parts.push(
                 `\n## PLAN MODE ACTIVE – no changes\n` +
@@ -1019,7 +1220,31 @@ and append it as the last action:shell block.` : '';
             `\`\`\`action:web_fetch\nurl: https://example.com/docs\n\`\`\`\n`
         );
 
-        // ── Rückfrage an den Benutzer ────────────────────────────────────────
+        // ── Learning from successes ──────────────────────────────────────────────
+        // Hermes is the role model: what has proven itself becomes reusable
+        // procedural knowledge. The value depends entirely on the selection – a
+        // collection of "bug fixed" notes is dead weight in any prompt.
+        parts.push(
+            `\n## Learning from what worked\n` +
+            `When something non-obvious worked and you VERIFIED it (tests green, ` +
+            `command succeeded), record it as a rule for next time:\n` +
+            `\`\`\`action:remember\nregel: Run the tests with \`npm test\`, not \`node --test\`\n` +
+            `warum: pretest compiles first; without it the tests run against stale output\n\`\`\`\n\n` +
+            `A good rule is short, imperative and true next week too. Record:\n` +
+            `- how something is built, tested or started in THIS project\n` +
+            `- a pitfall that cost you a round, and what avoids it\n` +
+            `- a convention you had to discover from the code\n\n` +
+            `Do NOT record:\n` +
+            `- what you did today ("fixed the tokenizer") – that is a diary entry, ` +
+            `it helps nobody next time\n` +
+            `- anything you did not verify – an unverified guess is worse than no rule\n` +
+            `- general programming knowledge you already have\n` +
+            `- something already listed under "What worked in this project before"\n\n` +
+            `At most one rule per task. If nothing was learned, record nothing – ` +
+            `that is the normal case.\n`
+        );
+
+        // ── User Inquiry ───────────────────────────────────────────────────────
         parts.push(
             `\n## Asking the user to decide\n` +
             `When the task allows several defensible routes and the choice is the ` +
@@ -1038,9 +1263,9 @@ and append it as the last action:shell block.` : '';
             `- you only want permission to keep working (you have it – keep working).\n`
         );
 
-        // ── Ansage vor jeder Aktion ──────────────────────────────────────────
-        // Ohne diese Anweisung führt das Modell Werkzeuge stumm aus und der
-        // Benutzer sieht nur eine Liste von Aktionen, ohne zu wissen, warum.
+        // ── Announcement before every action ──────────────────────────────────────────
+        // Without this instruction, the model executes tools silently and the
+        // user only sees a list of actions, without knowing why.
         parts.push(
             `\n## Say what you are doing – before every action\n` +
             `Before each tool call, write ONE short sentence in the first person: what you ` +
@@ -1078,7 +1303,131 @@ and append it as the last action:shell block.` : '';
 
         return parts.join('');
     }
-    /** Aktuellen Plan als Kontext-Block (damit die KI weiß, wo sie steht). */
+    /**
+     * The standing target as a prompt block.
+     *
+     * Comes BEFORE the workspace context, because it changes per round and that
+     * Goal not: llama.cpp caches the common prompt prefix, and everything
+     * Stable belongs at the front.
+     */
+    private buildGoalContext(): string {
+        const goal = this.getGoal();
+        if (!goal) return '';
+        return `\n\n## Standing goal\n${goal}\n`
+            + `Every task works towards this. If a request conflicts with it, say so in `
+            + `one sentence and follow the request – the user knows their goal.\n`;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Gelernte Best Practices
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /** The memory of learned rules (null if no workspace is open). */
+    getPractices(): PracticeStore | null {
+        if (!this.practiceStore) {
+            try {
+                this.practiceStore = new PracticeStore(this.fileManager.getWorkspaceRoot());
+            } catch {
+                return null;   // ohne Workspace gibt es nichts zu lernen
+            }
+        }
+        return this.practiceStore;
+    }
+
+    /**
+     * Remember a rule – from `action:remember`.
+     *
+     * Deliberately no own action type: it is a note, not a change to
+     * Project. A discarded duplicate is still a success, otherwise it would hold that
+     * Model it for a failure and try again in the next round
+     * once again.
+     */
+    private handleRememberAction(content: string): ExecutedAction {
+        const rule = /^\s*(?:regel|rule|praxis|practice):\s*(.+)$/mi.exec(content);
+        const why = /^\s*(?:warum|why|grund|evidence|beleg):\s*(.+)$/mi.exec(content);
+
+        const ruleText = (rule?.[1] ?? content.split('\n')[0] ?? '').trim();
+        const whyText = (why?.[1] ?? '').trim();
+
+        const store = this.getPractices();
+        if (!store) {
+            return {
+                type: 'info',
+                description: 'Kein Workspace – nichts gemerkt',
+                success: false,
+                output: 'There is no workspace open, so there is nowhere to store the rule.'
+            };
+        }
+
+        const added = store.add(ruleText, whyText);
+        return {
+            type: 'info',
+            description: added
+                ? `💡 Gelernt: ${ruleText.slice(0, 60)}`
+                : `💡 Schon bekannt: ${ruleText.slice(0, 60)}`,
+            success: true,
+            output: added
+                ? 'Stored. It will be part of every future request in this project.'
+                : 'Already known (or too vague) – nothing stored. Do not try again; '
+                    + 'carry on with the task.'
+        };
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Eingereihte Anweisungen
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Eine Anweisung einreihen, die während der Arbeit getippt wurde.
+     *
+     * Sie unterbricht NICHT. Der laufende Schritt wird zu Ende gebracht, dann
+     * kommt sie dran – so hält es auch Claude Code. Wer sofort abbrechen will,
+     * nimmt `cancel()`.
+     *
+     * Der Grund gegen das Unterbrechen: mitten in einem Schritt abzubrechen
+     * lässt halbfertige Arbeit zurück – eine Datei geändert, die Tests nicht
+     * gelaufen. Am Schrittende ist der Zustand sauber.
+     */
+    queueUserInput(text: string): number {
+        const clean = text.trim();
+        if (!clean) return this.pendingInputs.length;
+        this.pendingInputs.push(clean);
+        this.logger.info(`Anweisung eingereiht (${this.pendingInputs.length} in der Warteschlange): `
+            + clean.slice(0, 80));
+        return this.pendingInputs.length;
+    }
+
+    /** How many instructions are waiting? */
+    pendingInputCount(): number {
+        return this.pendingInputs.length;
+    }
+
+    /** Discard all pending instructions (on cancellation and new task). */
+    clearQueuedInput(): void {
+        this.pendingInputs = [];
+    }
+
+    /**
+     * Get the next enqueued instruction as a prompt – or `null`.
+     *
+     * Several instructions are summarized into one: who three times
+     * pushes forward, does not want three rounds of individual processing.
+     */
+    private takeQueuedPrompt(): string | null {
+        if (this.pendingInputs.length === 0) return null;
+        const all = this.pendingInputs.splice(0);
+
+        // The order grows with it: otherwise, the additional request only exists in this
+        // one round and is forgotten in the next one.
+        this.currentTask = `${this.currentTask}\n\nNachtrag: ${all.join(' ')}`.trim();
+
+        return 'NEW INSTRUCTION FROM THE USER – it arrived while you were working and '
+            + 'takes precedence over the step you had planned next:\n\n'
+            + all.map(t => `- ${t}`).join('\n')
+            + '\n\nCarry it out now. Keep what you already did; do not start over.';
+    }
+
+    /** Current plan as a context block (so the AI knows where it stands). */
     private buildPlanContext(): string {
         if (this.plan.length === 0) return '';
         const marks = { done: '[x]', doing: '[>]', todo: '[ ]' };
@@ -1093,9 +1442,9 @@ and append it as the last action:shell block.` : '';
     /**
      * Projekt-Anweisungsdateien laden (AGENTS.md, CLAUDE.md, command.md, …).
      *
-     * Diese Dateien sind der "Projektvertrag": Konventionen, Build-Befehle,
-     * Verbote. Sie werden bei JEDER Anfrage als permanente Regeln mitgegeben –
-     * genau wie Claude Code CLAUDE.md liest.
+     * These files are the "project contract": conventions, build commands,
+     * Prohibitions. They are provided as permanent rules with EVERY request –
+     * just like Claude Code reads CLAUDE.md.
      */
     private readInstructionFiles(): string {
         const config = vscode.workspace.getConfiguration('aiAssistant');
@@ -1113,7 +1462,7 @@ and append it as the last action:shell block.` : '';
                 if (!fs.existsSync(p) || !fs.statSync(p).isFile()) continue;
                 const content = fs.readFileSync(p, 'utf-8').trim();
                 if (!content) continue;
-                // Sehr große Anweisungsdateien kürzen, damit der Kontext nicht platzt
+                // Shorten very large instruction files so that the context does not overflow
                 const clipped = content.length > 8000
                     ? content.slice(0, 8000) + '\n… [gekürzt]'
                     : content;
@@ -1152,7 +1501,7 @@ and append it as the last action:shell block.` : '';
             ?? config.get<number>('contextWarningThreshold', 6000);
         const limit = Math.floor(ctx * (percent / 100));
 
-        // Grobe Schätzung: 1 Token ≈ 4 Zeichen
+        // Rough estimate: 1 token ≈ 4 characters
         const chars = systemPrompt.length
             + this.conversationHistory.reduce((sum, m) => sum + m.content.length, 0);
         const estimated = Math.round(chars / 4);
@@ -1160,8 +1509,8 @@ and append it as the last action:shell block.` : '';
         if (estimated < limit) return undefined;
 
         const before = this.conversationHistory.length;
-        // Die letzten vier Nachrichten sind der aktuelle Arbeitsstand – die
-        // bleiben wörtlich, damit der Assistent nicht den Faden verliert.
+        // The last four messages are the current work status – they
+        // remain verbatim so that the assistant does not lose track.
         const keep = this.conversationHistory.slice(-4);
         const fold = this.conversationHistory.slice(0, -4);
         if (fold.length === 0) return undefined;
@@ -1198,8 +1547,8 @@ and append it as the last action:shell block.` : '';
             ], { maxTokens: 1500 });
             summary = this.stripReasoning(result.content).trim();
         } catch (err) {
-            // Zusammenfassen fehlgeschlagen → hart kürzen statt die Anfrage
-            // scheitern zu lassen. Ein verkürzter Verlauf ist besser als keiner.
+            // Summarization failed → hard truncate instead of letting the request
+            // fail. A truncated history is better than none.
             this.logger.warn(`Komprimieren fehlgeschlagen (${(err as Error).message}) – kürze hart.`);
             this.conversationHistory = keep;
             return `⚠ Verlauf gekürzt: ${before - keep.length} Nachricht(en) entfernt `
@@ -1226,7 +1575,7 @@ and append it as the last action:shell block.` : '';
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Kontext-Größe prüfen
+    // Check context size
     // ──────────────────────────────────────────────────────────────────────────
 
     private checkContextSize(systemPrompt: string, userPrompt: string): string | undefined {
@@ -1234,7 +1583,7 @@ and append it as the last action:shell block.` : '';
         const maxTokens = config.get<number>('maxTokens', 2048);
         const warnThreshold = config.get<number>('contextWarningThreshold', 6000);
 
-        // Grobe Token-Schätzung: 1 Token ≈ 4 Zeichen
+        // Rough token estimate: 1 token ≈ 4 characters
         const historyChars = this.conversationHistory
             .reduce((sum, m) => sum + m.content.length, 0);
         const totalChars = systemPrompt.length + historyChars + userPrompt.length;
@@ -1251,7 +1600,7 @@ and append it as the last action:shell block.` : '';
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Aktionen parsen & ausführen
+    // Parse and execute actions
     // ──────────────────────────────────────────────────────────────────────────
 
 
@@ -1278,11 +1627,11 @@ and append it as the last action:shell block.` : '';
         if (!text.includes('SEARCH')) return text;
 
         const cleaned = text
-            // Zaun direkt VOR >>>REPLACE
+            // Fence directly BEFORE >>>REPLACE
             .replace(/\r?\n[ \t]*```[ \t]*(?=\r?\n[ \t]*>>>+REPLACE)/g, '')
-            // Zaun direkt NACH <<<SEARCH
+            // Fence directly AFTER <<<SEARCH
             .replace(/(<<<+SEARCH>*[ \t]*\r?\n)[ \t]*```[\w-]*[ \t]*\r?\n/g, '$1')
-            // Zaun direkt NACH >>>REPLACE
+            // Fence directly AFTER >>>REPLACE
             .replace(/(>>>+REPLACE>*[ \t]*\r?\n)[ \t]*```[\w-]*[ \t]*\r?\n/g, '$1');
 
         if (cleaned !== text) {
@@ -1326,7 +1675,7 @@ and append it as the last action:shell block.` : '';
             const bare = inFence ? null : /^\s*action:(\w+)\s*$/.exec(line);
             if (!bare || !SAFE.has(bare[1])) { out.push(line); continue; }
 
-            // Inhalt sind die folgenden Zeilen, solange sie wie Argumente
+            // The content consists of the following lines, as long as they are like arguments
             // aussehen. Prosa danach bleibt Prosa.
             const body: string[] = [];
             let j = i + 1;
@@ -1335,8 +1684,8 @@ and append it as the last action:shell block.` : '';
                 if (/^\s*$/.test(l) && body.length > 0) break;
                 if (/^\s*```/.test(l) || /^\s*action:\w+\s*$/.test(l)) break;
                 const looksLikeArg = /^\s*\w+:\s*/.test(l) || /^\s*-\s*\[.\]/.test(l);
-                // Fortsetzungszeile eines mehrzeiligen Werts nur zulassen,
-                // wenn schon ein Argument dasteht.
+                // Allow continuation lines of a multi-line value only
+                // if an argument is already present.
                 if (!looksLikeArg && body.length === 0) break;
                 if (!looksLikeArg && !/^\s{2,}\S/.test(l)) break;
                 body.push(l);
@@ -1359,19 +1708,19 @@ and append it as the last action:shell block.` : '';
     }
 
     /**
-     * Alle Schreibweisen des Modells auf `\`\`\`action:name … \`\`\`` bringen.
+     * Bring all model spellings into `\`\`\`action:name … \`\`\``.
      *
-     * **Diese Methode ist die einzige Normalisierung – Parser UND Anzeige
-     * benutzen sie.** Vorher hatte der Parser eine Stufe mehr als die Anzeige,
-     * und das Ergebnis stand im Fenster: ein `patch_file`-Block mit verrutschten
-     * Zäunen wurde ausgeführt (der Parser konnte ihn geradeziehen), blieb aber
-     * als Text im Chat stehen – der Benutzer las `>>>REPLACE` und den
-     * Quellcode statt einer Antwort. Wer hier eine Stufe ergänzt, ergänzt sie
-     * damit automatisch für beide Wege.
+     * **This method is the only normalization – Parser AND display
+     * use them.** Previously, the parser had one more level than the display,
+     * and the result appeared in the window: a `patch_file` block with shifted
+     * Fences were executed (the parser could straighten them out), but remained
+     * as text in the chat – the user read `>>>REPLACE` and the
+     * Source code instead of an answer. Whoever adds a level here adds it
+     * so that it automatically works for both directions.
      *
-     * Umgewandelt werden: XML-Tags (Gemma, Qwen), Klammer-Tags, die nativen
-     * Tool-Call-Formate aller Modellfamilien, zaunlose Kopfzeilen und
-     * überzählige oder fehlende Zäune in Patch-Blöcken.
+     * Converted: XML tags (Gemma, Qwen), bracket tags, the native
+     * Tool-call formats of all model families, fenceless headers and
+     * excess or missing fences in patch blocks.
      */
     private normalizeActionMarkup(text: string): string {
         return this.closeUnterminatedActionFences(
@@ -1389,10 +1738,10 @@ and append it as the last action:shell block.` : '';
     }
 
     /**
-     * Fehlende Schluss-Zäune ergänzen.
+     * Add missing end fences.
      *
-     * Beobachtet im Fenster: das Modell schrieb zwei Blöcke hintereinander und
-     * ließ den Zaun dazwischen weg.
+     * Observed in the window: the model wrote two blocks in a row and
+     * remove the fence in between.
      *
      *     ```action:list_dir
      *     path: src
@@ -1400,12 +1749,12 @@ and append it as the last action:shell block.` : '';
      *     path: test
      *     ```
      *
-     * Das Blockmuster endet dann am Zaun der ZWEITEN Kopfzeile: der erste Block
-     * wird ausgeführt, der Rest bleibt als Text übrig – und stand so im Chat.
-     * Ein neuer Kopf innerhalb eines Blocks bedeutet: der vorige ist zu Ende.
+     * The block pattern then ends at the fence of the SECOND header row: the first block
+     * is executed, the rest remains as text – and was thus in the chat.
+     * A new header within a block means: the previous one is finished.
      *
-     * Läuft nach `normalizePatchFences`, denn in einem Patch-Rumpf sind Zäune
-     * erlaubt; die räumt jene Stufe vorher auf.
+     * Runs after `normalizePatchFences`, because fences
+     * allowed; that clears that stage beforehand.
      */
     private closeUnterminatedActionFences(text: string): string {
         const lines = text.split('\n');
@@ -1441,11 +1790,11 @@ and append it as the last action:shell block.` : '';
 
         const normalized = this.normalizeActionMarkup(response);
 
-        // [^\n]* erlaubt trailing spaces/tabs nach dem Aktionstyp
+        // [^\n]* allows trailing spaces/tabs after the action type
         const blockPattern = /```action:(\w+)[^\n]*\n([\s\S]*?)```/g;
         let match: RegExpExecArray | null;
 
-        // Debug: gefundene Blöcke loggen
+        // Debug: log found blocks
         const allMatches: string[] = [];
         const debugPattern = /```action:(\w+)[^\n]*\n/g;
         let dbg: RegExpExecArray | null;
@@ -1457,13 +1806,33 @@ and append it as the last action:shell block.` : '';
             this.logger.info(`Rohantwort (Anfang): ${response.slice(0, 400).replace(/\n/g, '↵')}`);
         }
 
+        // Identische Aktionen einer Runde nur EINMAL ausführen.
+        //
+        // Im Lauf gegen laguna kam jeder Werkzeugaufruf doppelt: `npm test`
+        // lief zweimal, der Prüfbefehl zweimal, jede Datei wurde zweimal
+        // gelesen. Das Modell schickt denselben Aufruf zweimal, und ohne diese
+        // Sperre kostet jede Runde doppelt so lange. Bei einem Schreibvorgang
+        // wäre es schlimmer als langsam.
+        //
+        // Nur buchstabengleiche Blöcke: zwei `read_file` auf verschiedene
+        // Dateien sind zwei Aufgaben, zwei auf dieselbe Datei ist ein Versehen.
+        const seenBlocks = new Set<string>();
+
         while ((match = blockPattern.exec(normalized)) !== null) {
             const actionType = match[1];
             const blockContent = match[2].trim();
 
-            // Plan-Modus: nur lesen und planen. Modelle versuchen trotz
-            // gefiltertem Werkzeugkatalog gelegentlich zu schreiben – hier ist
-            // die harte Grenze, nicht im Prompt.
+            const blockKey = `${actionType} ${blockContent}`;
+            if (seenBlocks.has(blockKey)) {
+                this.logger.info(
+                    `Aktions-Parser: '${actionType}' doppelt geschickt – zweiter Aufruf übersprungen.`);
+                continue;
+            }
+            seenBlocks.add(blockKey);
+
+            // Plan mode: read-only and planning. Models occasionally attempt to write despite
+            // a filtered tool catalog – here is
+            // the hard limit, not in the prompt.
             if (this.planModeActive && !READ_ONLY_ACTIONS.has(actionType)) {
                 this.logger.warn(`Plan-Modus: Aktion '${actionType}' blockiert.`);
                 executed.push({
@@ -1494,6 +1863,9 @@ and append it as the last action:shell block.` : '';
                         break;
                     case 'shell':
                         executed.push(await this.handleShellAction(blockContent, confirm, onActionProgress));
+                        break;
+                    case 'remember':
+                        executed.push(this.handleRememberAction(blockContent));
                         break;
                     case 'ask_user':
                         executed.push(await this.handleAskUserAction(blockContent, confirm, onActionProgress));
@@ -1545,12 +1917,12 @@ and append it as the last action:shell block.` : '';
     }
 
     /**
-     * Code säubern, bevor er in eine Datei geht.
+     * Clean up the code before writing it to a file.
      *
-     * Modelle lassen manchmal Reste ihrer Tool-Call-Serialisierung im Inhalt
-     * stehen (beobachtet: eine Zeile `</arg_value>` mitten im Quellcode, die
-     * die Datei unbrauchbar machte). Das wird hier abgefangen – und geloggt,
-     * weil es auf ein Modell- oder Serverproblem hindeutet.
+     * Models sometimes leave remnants of their tool-call serialization in the content
+     * stand (observed: a line `</arg_value>` in the middle of the source code, which
+     * made the file unusable). This is caught here – and logged,
+     * because it indicates a model or server issue.
      */
     private cleanCodeForWrite(content: string, where: string): string {
         const { code, removed } = stripToolMarkupFromCode(content);
@@ -1567,7 +1939,7 @@ and append it as the last action:shell block.` : '';
     }
 
     private async handleFileAction(type: 'create_file' | 'edit_file', content: string, confirm: ConfirmFn): Promise<ExecutedAction> {
-        // Separator-Suche: akzeptiert '---', '--- ', '---\r\n', '---\n', auch ohne Newline am Ende
+        // Separator search: accepts '---', '--- ', '---\r\n', '---\n', also without newline at the end
         const sepMatch = content.match(/^---[ \t]*(\r?\n|$)/m);
         if (!sepMatch || sepMatch.index === undefined) throw new Error('Kein "---" Trenner im Aktionsblock gefunden');
         const pathMatch = content.slice(0, sepMatch.index).match(/^path:\s*(.+)$/m);
@@ -1576,8 +1948,8 @@ and append it as the last action:shell block.` : '';
         const fileContent = this.cleanCodeForWrite(
             content.slice(sepMatch.index + sepMatch[0].length), `${type}`);
 
-        // Smart-Merge bei edit_file: KI liefert oft nur einen Teil der Datei.
-        // Wenn die neue Version deutlich kürzer ist → Smart-Merge statt vollem Replace.
+        // Smart-merge during edit_file: The AI often provides only a part of the file.
+        // If the new version is significantly shorter → use smart-merge instead of a full replace.
         if (type === 'edit_file') {
             const existing = this.fileManager.readFile(filePath);
             if (existing && existing.length > 0) {
@@ -1598,8 +1970,8 @@ and append it as the last action:shell block.` : '';
             }
         }
 
-        // Fallback: Modelle verwechseln create_file/edit_file.
-        // Wenn edit_file auf eine nicht-existierende Datei trifft → erstellen statt werfen.
+        // Fallback: Models confuse create_file/edit_file.
+        // When edit_file encounters a non-existent file → create instead of throwing.
         const fileExists = !!this.fileManager.readFile(filePath);
         let actualType = type;
         if (type === 'edit_file' && !fileExists) {
@@ -1636,7 +2008,7 @@ and append it as the last action:shell block.` : '';
         const newContent = this.cleanCodeForWrite(
             content.slice(sepMatch2.index + sepMatch2[0].length), 'replace_lines');
 
-        // Fallback: Datei existiert nicht → erstellen
+        // Fallback: file does not exist → create
         if (!this.fileManager.readFile(filePath)) {
             this.logger.warn(`replace_lines auf nicht-existierende Datei "${filePath}" – erstelle stattdessen.`);
             const ok = await this.fileManager.createFile(filePath, newContent, { overwrite: false, confirmFn: confirm });
@@ -1669,10 +2041,10 @@ and append it as the last action:shell block.` : '';
         const filePath = pathMatch[1].trim();
         const patchBody = content.slice(sepMatch3.index + sepMatch3[0].length);
 
-        // SEARCH/REPLACE-Blöcke parsen: <<<SEARCH\n...\n>>>REPLACE\n...\n (Ende = nächster Block oder EOF)
-        // Akzeptiert auch altes Format <<<SEARCH>>> für Rückwärtskompatibilität
-        // Git-Konflikt-/Aider-Schreibweise auf unsere Marker bringen. Viele
-        // Modelle sind darauf trainiert und schreiben sie auch hier.
+        // Parsing SEARCH/REPLACE blocks: <<<SEARCH\n...\n>>>REPLACE\n...\n (end = next block or EOF)
+        // Also accepts old format <<<SEARCH>>> for backward compatibility
+        // Adapting Git conflict/Aider notation to our markers. Many
+        // models are trained on this and also write it here.
         const markerBody = patchBody
             .replace(/^[ \t]*<{5,}[ \t]*SEARCH[ \t]*$/gim, '<<<SEARCH')
             .replace(/^[ \t]*={5,}[ \t]*$/gm, '>>>REPLACE')
@@ -1714,15 +2086,15 @@ and append it as the last action:shell block.` : '';
     }
 
     /**
-     * Abschluss-Marker vom Ende eines SEARCH- oder REPLACE-Textes entfernen.
+     * Remove the closing marker from the end of a SEARCH or REPLACE text.
      *
-     * Modelle setzen hinter den neuen Code gern noch eine Markierungszeile –
-     * `>>>`, `<<<END>>>`, `>>>>>>> REPLACE`, `=======`. Bleibt die stehen,
-     * landet sie mitten im Quellcode und macht die Datei kaputt. (Genau so
+     * Models often like to add a marker line after the new code –
+     * `>>>`, `<<<END>>>`, `>>>>>>> REPLACE`, `=======`. These remain,
+     * it lands right in the middle of the source code and breaks the file. (Exactly like
      * passiert: laguna schrieb `>>>` in tokenizer.js.)
      *
-     * Nur Zeilen, die AUSSCHLIESSLICH aus Markerzeichen bestehen, werden
-     * entfernt – Code wie `if (a >>> b)` bleibt unangetastet.
+     * Only lines that consist EXCLUSIVELY of marker characters are
+     * removes – Code like `if (a >>> b)` remains untouched.
      */
     private stripPatchTerminator(text: string): string {
         return text
@@ -1748,12 +2120,12 @@ and append it as the last action:shell block.` : '';
             return { type: 'shell', description: 'Shell deaktiviert', success: false, output: 'Shell-Befehle sind deaktiviert.' };
         }
 
-        // Der Block kann eine Kopfzeile `shell: powershell` tragen. Ohne sie
-        // gilt die Einstellung – für Build und Tests ist das WSL.
+        // The block can have a header `shell: powershell`. Without it,
+        // the setting applies – for builds and tests, this is WSL.
         const { shellKind, command: rest } = AIEngine.parseShellBlock(command);
         const trimmed = rest.trim();
 
-        // cat/head/tail: VOR dem Confirm-Dialog abfangen und direkt lesen
+        // cat/head/tail: Intercept before the Confirm dialog and read directly
         let workDirEarly: string;
         try { workDirEarly = this.fileManager.getWorkspaceRoot(); } catch { workDirEarly = ''; }
         if (workDirEarly) {
@@ -1788,7 +2160,7 @@ and append it as the last action:shell block.` : '';
                 return { type: 'shell', description: `Abgelehnt: ${trimmed}`, success: false };
             }
             this.logger.info(`Shell: Benutzer-Anweisung an KI: ${userInstruction.trim()}`);
-            // Als fehlgeschlagene Shell-Action zurückgeben → triggert Repair-Loop mit User-Kontext
+            // Return as a failed shell action → triggers repair loop with user context
             return {
                 type: 'shell',
                 description: `Abgelehnt: ${trimmed}`,
@@ -1803,11 +2175,11 @@ and append it as the last action:shell block.` : '';
         try { workDir = this.fileManager.getWorkspaceRoot(); }
         catch { return { type: 'shell', description: 'Kein Workspace', success: false }; }
 
-        // Beim Start als "läuft" melden, danach mit Ergebnis überschreiben –
-        // dieselbe Karte, damit man den Befehl nicht zweimal liest.
-        // Werkzeugname zeigt die Shell: sonst sieht man in der Zeile nicht, ob
-        // der Befehl unter WSL oder in der PowerShell lief – bei Fehlern ist das
-        // die erste Frage.
+        // Report as "running" at startup, then overwrite with the result –
+        // the same card, so you don't have to read the command twice.
+        // The tool name shows the shell: otherwise you can't tell from the line whether
+        // the command ran under WSL or in PowerShell – in case of errors, that's
+        // the first question.
         const toolName = shellLabel === 'PowerShell' ? 'PowerShell' : 'Bash';
 
         onActionProgress?.(`Shell: ${commandToRun}`, '', {
@@ -1834,16 +2206,16 @@ and append it as the last action:shell block.` : '';
     }
 
     /**
-     * Entscheidungsfrage an den Benutzer – und warten.
+     * Question to the user – and wait.
      *
-     * Das Gegenstück zu Claude Codes Frage-Dialog: eine Frage, 2–4 Optionen mit
-     * Beschriftung und Erklärung, Einfach- oder Mehrfachauswahl, plus ein
-     * Freitextfeld für „etwas anderes". Die Antwort geht als Ausgabe der Aktion
-     * zurück ins Modell, also in die nächste Runde der Schleife.
+     * The counterpart to Claude Code's question dialog: a question, 2–4 options with
+     * Labeling and explanation, single or multiple selection, plus a
+     * Free text field for "something else". The answer is passed as the output of the action
+     * back into the model, i.e., into the next iteration of the loop.
      *
-     * Wichtig für die Schleife: die Antwort ist eine ERFOLGREICHE Aktion mit
-     * Ausgabe. Damit greift Zweig 3 von `planNextStep` und das Modell arbeitet
-     * mit der Entscheidung weiter, statt stehenzubleiben.
+     * Important for the loop: the response is a SUCCESSFUL action with
+     * Output. This triggers branch 3 of `planNextStep` and the model works
+     * proceed with the decision instead of standing still.
      */
     private async handleAskUserAction(
         content: string,
@@ -1862,8 +2234,8 @@ and append it as the last action:shell block.` : '';
             tool: 'Frage', target: request.question, running: true
         });
 
-        // Ohne Dialog-Callback (kopflos, Tests, Sidebar) über die
-        // Bestätigungskarte fragen – die kennt jeder Aufrufer.
+        // Without dialog callback (headless, tests, sidebar) ask via the
+        // confirmation card – every caller knows it.
         const answer = this.onAsk
             ? await this.onAsk(request)
             : await confirm(
@@ -1902,17 +2274,17 @@ and append it as the last action:shell block.` : '';
     /**
      * `ask_user`-Block zerlegen.
      *
-     * Format – Kopfzeilen plus eine Option pro Zeile:
+     * Format – Header lines plus one option per line:
      *
      *     header: Bibliothek
      *     question: Welche Datumsbibliothek?
      *     multi: false
      *     options:
      *     date-fns — klein, modular, Standard in neuen Projekten
-     *     Luxon — Zeitzonen eingebaut, größer
+     * Luxon — built-in time zones, larger
      *
-     * Der Gedankenstrich trennt Beschriftung und Erklärung; erlaubt sind „—",
-     * „–", „ - " und „:". Fehlt er, ist die ganze Zeile die Beschriftung.
+     * The em dash separates the label and the explanation; allowed are “—”,
+     * "–", " - " and ":". If it is missing, the entire line is the label.
      */
     static parseAskBlock(raw: string): AskRequest {
         const text = raw.replace(/\r\n/g, '\n');
@@ -1925,8 +2297,8 @@ and append it as the last action:shell block.` : '';
         const header = field('header') || field('titel') || 'Entscheidung';
         const multi = /^(true|ja|yes|1)$/i.test(field('multi') || field('mehrfach'));
 
-        // Optionen: alles nach einer Zeile `options:` bzw. `optionen:`,
-        // sonst jede Zeile, die wie eine Aufzählung aussieht.
+        // Options: everything after a line `options:` or `optionen:`,
+        // otherwise every line that looks like a list item.
         const optionsStart = /^\s*(?:options|optionen):\s*$/im.exec(text);
         const body = optionsStart
             ? text.slice(optionsStart.index + optionsStart[0].length)
@@ -1935,14 +2307,14 @@ and append it as the last action:shell block.` : '';
         const known = /^\s*(?:question|frage|header|titel|multi|mehrfach|absicht|options|optionen)\s*:/i;
         const options: AskOption[] = [];
         for (const line of body.split('\n')) {
-            // Nur echte Aufzählungszeichen entfernen. Ein weiter gefasstes
-            // Muster fräst auch die Beschriftung an: aus „3 Varianten" würde
-            // „Varianten".
+            // Only remove actual bullet points. A broader
+            // pattern also strips the label: from "3 variants" it
+            // would become "variants".
             const trimmed = line.replace(/^\s*(?:[-*•]\s+|\d+[.)]\s+)/, '').trim();
             if (!trimmed || known.test(line)) continue;
-            // Trenner zwischen Beschriftung und Erklärung. Der Bindestrich
-            // braucht Abstand auf BEIDEN Seiten, sonst zerschneidet er
-            // „date-fns" mitten im Namen.
+            // Separator between label and explanation. The hyphen
+            // needs spacing on BOTH sides, otherwise it cuts
+            // “date-fns” right in the middle of the name.
             const split = /\s+(?:—|–|::)\s*|\s+-\s+|:\s+/.exec(trimmed);
             if (split) {
                 options.push({
@@ -1961,9 +2333,9 @@ and append it as the last action:shell block.` : '';
     /**
      * Shell-Block zerlegen: optionale Kopfzeile `shell: powershell`, Rest Befehl.
      *
-     * Der Block darf beides sein – eine reine Befehlszeile (der übliche Fall)
-     * oder ein Kopf-plus-Rumpf-Block mit `---`. Ein Befehl, der zufällig mit
-     * „shell:" beginnt, wird nicht zur Kopfzeile: geprüft wird auf die beiden
+     * The block can be both – a pure command line (the usual case)
+     * or a head-plus-body block with `---`. A command that randomly starts with
+     * If it starts with "shell:", it is not checked as a header line: the two are checked
      * bekannten Werte.
      */
     static parseShellBlock(raw: string): { shellKind: ShellKind; command: string } {
@@ -1983,8 +2355,8 @@ and append it as the last action:shell block.` : '';
             }
         }
 
-        // Trenner überspringen – auch wenn gar keine Kopfzeile davor stand:
-        // manche Modelle schreiben ihn gewohnheitsmäßig immer.
+        // Skip the separator – even if no header preceded it:
+        // some models habitually write it anyway.
         while (/^\s*(?:---)?\s*$/.test(lines[start] ?? '')
                && start < lines.length
                && !/\S/.test(lines[start] ?? '')) {
@@ -2000,8 +2372,8 @@ and append it as the last action:shell block.` : '';
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * Nur-Lese-Analyse. Läuft ohne Bestätigung, weil nichts verändert wird –
-     * dadurch kann der Assistent den Code frei untersuchen.
+     * Read-only analysis. Runs without confirmation because nothing is changed –
+     * this allows the assistant to freely examine the code.
      */
     private handleAnalysisAction(
         type: 'read_file' | 'grep' | 'glob' | 'list_dir',
@@ -2024,7 +2396,7 @@ and append it as the last action:shell block.` : '';
         let result;
         switch (type) {
             case 'read_file': {
-                // Pfad kann als "path: x" oder als nackte erste Zeile kommen
+                // The path can be provided as "path: x" or as a bare first line
                 const p = field('path') ?? field('file') ?? content.split('\n')[0].trim();
                 if (!p) throw new Error('Kein "path:" im read_file Block gefunden');
                 result = this.analyzer.readFile(p, numField('offset') ?? 1, numField('limit') ?? 400);
@@ -2053,12 +2425,12 @@ and append it as the last action:shell block.` : '';
             }
         }
 
-        // Kompakte Anzeige: Werkzeugname, Ziel, Zusatz – getrennt, damit die
-        // Oberfläche eine Terminalzeile daraus bauen kann.
+        // Compact display: tool name, target, additional info – separated so that
+        // the surface can build a terminal line from it.
         const DISPLAY: Record<string, string> = {
             read_file: 'Read', grep: 'Grep', glob: 'Glob', list_dir: 'List'
         };
-        // description hat die Form "read_file: src/a.ts (L1–115)"
+        // description has the form "read_file: src/a.ts (L1–115)"
         const parsed = /^[\w_]+:\s*(.+?)(?:\s*[(→]\s*(.+?)\)?)?$/.exec(result.description);
         onActionProgress?.(result.description, result.output.slice(0, 4000), {
             tool: DISPLAY[type] ?? type,
@@ -2082,7 +2454,7 @@ and append it as the last action:shell block.` : '';
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * Arbeitsplan der KI übernehmen. Format je Zeile:
+     * Take over the AI's work plan. Format per line:
      *   - [ ] offen   - [>] in Arbeit   - [x] erledigt
      */
     private handlePlanAction(content: string): ExecutedAction {
@@ -2090,7 +2462,7 @@ and append it as the last action:shell block.` : '';
         for (const rawLine of content.split('\n')) {
             const line = rawLine.trim();
             if (!line) continue;
-            // "- [x] Text", "* [ ] Text", "1. [>] Text" oder schlicht "- Text"
+            // "- [x] Text", "* [ ] Text", "1. [>] Text" or simply "- Text"
             const m = line.match(/^(?:[-*+]|\d+[.)])\s*(?:\[([ xX>~-])\]\s*)?(.+)$/);
             if (!m) continue;
             const mark = (m[1] ?? ' ').toLowerCase();
@@ -2122,17 +2494,17 @@ and append it as the last action:shell block.` : '';
         };
     }
 
-    /** action:done – die KI meldet die Aufgabe als abgeschlossen. */
+    /** action:done – the AI reports the task as completed. */
     private handleDoneAction(content: string): ExecutedAction {
         this.taskComplete = true;
         const summary = content.match(/^(?:zusammenfassung|summary):\s*([\s\S]+)$/mi);
         const text = (summary ? summary[1] : content).trim();
         this.logger.info('KI meldet Aufgabe abgeschlossen.');
 
-        // Die Zusammenfassung ist die Schlussantwort, keine Werkzeugausgabe.
-        // Als `output` landete sie in einer Monospace-Box mit vier sichtbaren
-        // Zeilen – Aufzählungen und Hervorhebungen darin waren nur Rohtext.
-        // `process()` gibt sie deshalb als Nachricht in den Chat.
+        // The summary is the final answer, not a tool output.
+        // As `output`, it ended up in a monospace box with four visible
+        // lines – enumerations and highlights within it were only raw text.
+        // `process()` therefore sends it as a message to the chat.
         this.lastDoneSummary = text;
 
         return {
@@ -2144,11 +2516,11 @@ and append it as the last action:shell block.` : '';
     }
 
     /**
-     * Seite abrufen und ihren Text an die KI geben.
+     * Fetch the page and provide its text to the AI.
      *
-     * Ohne dieses Werkzeug bekommt das Modell aus einer Suche nur Titel und
-     * Adressen – damit kann es keine Frage beantworten. Erst der Seiteninhalt
-     * hilft. Deshalb hat auch Claude Code neben der Suche ein Abrufwerkzeug.
+     * Without this tool, the model only receives the title from a search and
+     * Addresses – it cannot answer any questions with them. Only the page content
+     * helps. That is why Claude Code also has a retrieval tool in addition to the search.
      */
     private async handleWebFetchAction(
         content: string,
@@ -2216,9 +2588,9 @@ and append it as the last action:shell block.` : '';
     }
 
     /**
-     * Fügt Zeilennummern zu Dateiinhalt hinzu (für den KI-Kontext).
+     * Adds line numbers to file content (for AI context).
      * Format: "   1 | erste Zeile"
-     * Kürzt bei maxLines auf die ersten N Zeilen.
+     * Truncates to the first N lines at maxLines.
      */
     private addLineNumbers(content: string, maxLines = 300): string {
         const lines = content.split('\n');
@@ -2240,19 +2612,19 @@ and append it as the last action:shell block.` : '';
     }
 
     /**
-     * Baut eine AI-Prompt-formatierte Reasoning-Zusammenfassung.
-     * Format: lesbare Sätze, die als Kontext in künftigen Prompts wiederverwendet werden können.
+     * Build an AI-prompt-formatted reasoning summary.
+     * Format: readable sentences that can be reused as context in future prompts.
      */
     private buildReasoningSummary(userPrompt: string, thinking: string | undefined, actions: ExecutedAction[]): string {
         const parts: string[] = [];
 
-        // Ab Runde 1 ist `userPrompt` der Fortsetzungs-Prompt der Schleife, nicht
-        // der Auftrag. In der Zusammenfassung muss der Auftrag stehen.
+        // Starting from round 1, `userPrompt` is the loop's continuation prompt, not
+        // the task. The task must be included in the summary.
         const task = this.currentTask || userPrompt;
         parts.push(`Aufgabe: "${task.slice(0, 200).replace(/\n/g, ' ')}"`);
 
         if (thinking) {
-            // Thinking-Block auf max. 600 Zeichen kürzen um History-Größe zu kontrollieren
+            // Shorten the thinking block to a maximum of 600 characters to control history size
             const trimmed = thinking.length > 600
                 ? thinking.slice(0, 600).trimEnd() + '…'
                 : thinking;
@@ -2303,27 +2675,27 @@ and append it as the last action:shell block.` : '';
     }
 
     private stripActionBlocks(text: string): string {
-        // Genau dieselbe Normalisierung wie im Parser: was ausgeführt wird, muss
-        // auch aus der Anzeige verschwinden. Sonst liest der Benutzer
-        // „action:done" oder „>>>REPLACE" samt Quellcode statt einer Antwort.
+        // Exactly the same normalization as in the parser: what is executed must
+        // also disappear from the display. Otherwise the user reads
+        // "action:done" or ">>>REPLACE" along with source code instead of an answer.
         return this.normalizeActionMarkup(text)
             .replace(/<think>[\s\S]*?<\/think>/gi, '')              // Reasoning-Blöcke
             .replace(/```action:\w+[^\n]*\n[\s\S]*?```\n?/g, '')    // Backtick-Blöcke
             .replace(/<action:\w+>[\s\S]*?<\/action:\w+>\n?/g, '')  // XML-Tags
             .replace(/\[action:\w+\][\s\S]*?\[\/action:\w+\]\n?/g, '') // Bracket-Tags
-            // Ein Block, dessen Schluss-Zaun das Modell ganz vergessen hat:
-            // ab der Kopfzeile bis zum Textende wegwerfen. Ein abgeschnittener
-            // Aktionsblock ist im Chat nie eine Antwort.
+            // A block whose closing fence the model has completely forgotten:
+            // discard from the header line to the end of the text. A truncated
+            // action block is never a response in the chat.
             .replace(/```action:\w+[^\n]*\n[\s\S]*$/g, '')
             // Uebrige Patch-Marker: der Block war weg, die Marker standen noch da
             .replace(/^\s*(?:<<<SEARCH|>>>REPLACE|>>>>>>>\s*REPLACE|<<<<<<<\s*SEARCH)\s*$/gm, '')
             .trim();
     }
 
-    /** Anzeigetext: Aktions-Blöcke UND rohes Tool-Call-Markup entfernen. */
+    /** Display text: Remove action blocks AND raw tool-call markup. */
     private cleanForDisplay(text: string): string {
-        // Das Markup ist bereits als Aktion ausgeführt – im Chat hat es nichts
-        // zu suchen, sonst liest der Benutzer XML statt einer Antwort.
+        // The markup has already been executed as an action – it has no place
+        // in the chat, otherwise the user would read XML instead of an answer.
         return stripToolCallMarkup(this.stripActionBlocks(text)).trim();
     }
 
@@ -2338,9 +2710,9 @@ and append it as the last action:shell block.` : '';
             this.historyManager = new HistoryManager(root);
             this.logger.info(`HistoryManager initialisiert: ${root}`);
 
-            // Die letzte Sitzung kommt als EINE Hintergrund-Notiz zurück, nicht
-            // als nachgespielte Gesprächsrunden. Sonst hält das Modell die alte
-            // Aufgabe für die laufende – siehe HistoryManager.getLastSessionDigest.
+            // The last session is returned as ONE background note, not
+            // as replayed conversation rounds. Otherwise, the model would treat the old
+            // task as the current one – see HistoryManager.getLastSessionDigest.
             if (!this.historyLoaded) {
                 this.historyLoaded = true;
                 const digest = this.historyManager.getLastSessionDigest();
@@ -2368,8 +2740,8 @@ and append it as the last action:shell block.` : '';
     }
 
     /**
-     * Erkennt ob der Benutzer eine Web-Suche möchte.
-     * Gibt den Roh-Prompt zurück wenn Suche erkannt, sonst null.
+     * Detects whether the user wants to perform a web search.
+     * Returns the raw prompt if search is detected, otherwise null.
      */
     private detectSearchIntent(prompt: string): boolean {
         const lower = prompt.toLowerCase();
@@ -2391,8 +2763,8 @@ and append it as the last action:shell block.` : '';
     }
 
     /**
-     * Nutzt den LLM um einen optimierten Suchbegriff aus dem Benutzer-Prompt zu extrahieren.
-     * Beispiel: "suche im Internet nach der API von Checkmk" → "Checkmk REST API"
+     * Use the LLM to extract an optimized search term from the user prompt.
+     * Example: "search the Internet for the Checkmk API" → "Checkmk REST API"
      */
     private async extractSearchQuery(prompt: string): Promise<string> {
         try {
@@ -2429,7 +2801,7 @@ and append it as the last action:shell block.` : '';
                 .split('\n')[0]                                  // Nur erste Zeile
                 .trim();
 
-            // Hard-Stop bei Konjunktionen — alles dahinter ist Aufgabe, nicht Suchbegriff
+            // Hard stop at conjunctions — everything after is the task, not the search term
             const stopWords = [' und ', ' and ', ' dann ', ' um ', ' damit ', ' mit ', '. '];
             let query = raw;
             for (const stop of stopWords) {
@@ -2451,7 +2823,7 @@ and append it as the last action:shell block.` : '';
             .replace(/recherchiere(\s+nach)?/gi, '')
             .replace(/search\s+(the\s+web|online|for)/gi, '')
             .replace(/google\s+(das|nach)?/gi, '')
-            // Alles nach "und" / "dann" abschneiden
+            // Truncate everything after "and" / "then"
             .replace(/\s+(und|dann|um|damit|\.)\s+.*/i, '')
             .replace(/[?.!]+$/, '')
             .trim()

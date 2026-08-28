@@ -3,15 +3,15 @@ import { ChatPanel } from './chatPanel';
 import { AssistantMode, getAssistantMode } from './aiEngine';
 
 /**
- * SidebarProvider – TreeDataProvider für die linke Activity-Bar-Leiste.
+ * SidebarProvider – TreeDataProvider for the left Activity Bar.
  *
  * Zeigt interaktiv:
- *  - Aktuellen Modus (Ask / Auto / Plan) mit Auswahl
- *  - Auto-Test-Toggle (Tests nach KI-Änderungen automatisch ausführen)
- *  - Button zum Öffnen einer neuen Chat-Session
+ * - Current mode (Ask / Auto / Plan) with selection
+ * - Auto-Test-Toggle (Automatically run tests after AI changes)
+ * - Button to open a new chat session
  *
- * Alle Einstellungen werden in vscode.workspace.getConfiguration gespeichert,
- * damit sie persistent sind und in der Einstellungs-UI auftauchen.
+ * All settings are stored in vscode.workspace.getConfiguration,
+ * so that they are persistent and appear in the settings UI.
  */
 export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
     private _onDidChangeTreeData = new vscode.EventEmitter<SidebarItem | undefined | void>();
@@ -22,7 +22,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
     constructor(extensionUri: vscode.Uri) {
         this.extensionUri = extensionUri;
 
-        // Bei Konfigurationsänderung automatisch neu rendern
+        // Automatically re-render on configuration change
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('aiAssistant')) {
                 this.refresh();
@@ -43,9 +43,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
         const mode     = getAssistantMode();
         const autoTest = config.get<boolean>('autoTest', false);
 
-        // Beschriftung und Symbol je Modus. Muss zur Listbox im Chat passen –
-        // zwei Anzeigen desselben Zustands, die verschiedenes sagen, sind
-        // schlimmer als nur eine.
+        // Label and icon per mode. Must match the listbox in the chat –
+        // two representations of the same state that convey different information are
+        // worse than just one.
         const MODES: Record<AssistantMode, { label: string; icon: string; tip: string }> = {
             ask: {
                 label: 'Ask – jede Änderung bestätigen',

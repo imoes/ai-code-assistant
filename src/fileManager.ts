@@ -13,7 +13,7 @@ export class FileManager {
     private history = ActionHistory.getInstance();
     private logger = Logger.getInstance();
 
-    /** Empfänger für angewandte Änderungen (Chat-Panel), siehe setDiffReporter */
+    /** Receiver for applied changes (chat panel), see setDiffReporter */
     private diffReporter?: DiffReporter;
 
     private constructor() {}
@@ -53,11 +53,11 @@ export class FileManager {
     }
 
     /**
-     * Workspace-relativer Pfad mit Schrägstrichen – für Anzeige und für die KI.
+     * Workspace-relative path with forward slashes – for display and for the AI.
      *
-     * `path.relative` liefert unter Windows Backslashes. Die tauchten dann in
-     * Fehlermeldungen auf (`src\tokenizer.js`), während alle anderen Pfade
-     * Schrägstriche haben. Das Modell muss Pfade wiedererkennen können.
+     * `path.relative` returns backslashes on Windows. These then appeared in
+     * Error messages on (`src\tokenizer.js`), while all other paths
+     * Have slashes. The model must be able to recognize paths.
      */
     private relDisplay(absPath: string): string {
         try {
@@ -74,7 +74,7 @@ export class FileManager {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Datei erstellen / überschreiben
+    // Create file / overwrite
     // ──────────────────────────────────────────────────────────────────────────
 
     async createFile(
@@ -111,7 +111,7 @@ export class FileManager {
         this.logger.action('FILE_WRITE', abs);
         this.reportChange(abs, previousContent, content);
 
-        // Datei im Editor im Hintergrund öffnen
+        // Open file in the background editor
         vscode.workspace.openTextDocument(vscode.Uri.file(abs)).then(doc =>
             vscode.window.showTextDocument(doc, { preview: true, preserveFocus: true, viewColumn: vscode.ViewColumn.One })
         );
@@ -162,7 +162,7 @@ export class FileManager {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Datei löschen
+    // Delete file
     // ──────────────────────────────────────────────────────────────────────────
 
     async deleteFile(
@@ -234,18 +234,18 @@ export class FileManager {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // VSCode Diff-Editor öffnen (für den "In Editor öffnen"-Button)
+    // Open VSCode Diff Editor (for the "Open in Editor" button)
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * Öffnet den eingebauten VSCode-Diff-Editor mit der aktuellen und der
+     * Opens the built-in VSCode diff editor with the current and the
      * KI-generierten Version einer Datei.
-     * Schreibt den neuen Inhalt in eine temporäre Datei (wird beim Schließen gelöscht).
+     * Write the new content to a temporary file (deleted upon closing).
      */
     async openDiffEditor(absPath: string, newContent: string, label: string): Promise<void> {
         const oldUri = vscode.Uri.file(absPath);
 
-        // Neue Version als temp. Datei neben dem Original
+        // New version as temporary file next to the original
         const ext = path.extname(absPath);
         const tmpPath = path.join(os.tmpdir(), `ai-diff-${Date.now()}${ext}`);
         fs.writeFileSync(tmpPath, newContent, 'utf-8');
@@ -259,7 +259,7 @@ export class FileManager {
             { preview: true, preserveFocus: true }
         );
 
-        // Temp-Datei nach kurzem Delay löschen (Editor hält sie im Speicher)
+        // Delete temporary file after a short delay (editor keeps it in memory)
         setTimeout(() => {
             try { fs.unlinkSync(tmpPath); } catch { /* ignorieren */ }
         }, 60_000);
@@ -299,12 +299,12 @@ export class FileManager {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Zeilen ersetzen (für action:replace_lines)
+    // Replace lines (for action:replace_lines)
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * Ersetzt einen Zeilenbereich [startLine, endLine] (1-basiert, inklusiv)
-     * durch neuen Code. Lässt alle anderen Zeilen unangetastet.
+     * Replaces a line range [startLine, endLine] (1-based, inclusive)
+     * by new code. Leaves all other lines untouched.
      */
     async replaceLines(
         filePath: string,
@@ -356,17 +356,17 @@ export class FileManager {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Smart-Merge (Sicherheitsnetz für edit_file mit zu kurzem Inhalt)
+    // Smart-Merge (Safety net for edit_file with too short content)
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
      * Wendet KI-generierten Inhalt intelligent an:
-     * - Additionen werden übernommen
-     * - Entfernungen werden dem User zur Bestätigung vorgelegt
-     *   (mit 3 Optionen: "Nur Additions", "Komplett ersetzen", "Ablehnen")
+     * - Additions are adopted
+     * - Distances are presented to the user for confirmation
+     * (with 3 options: "Only Additions", "Replace Completely", "Reject")
      *
-     * Wird aufgerufen wenn edit_file einen deutlich kürzeren Inhalt liefert
-     * als die Originaldatei hat (Verdacht auf ungewollte Löschung).
+     * Called when edit_file provides a significantly shorter content
+     * as the original file has (suspected accidental deletion).
      */
     async smartMergeEdit(
         filePath: string,
@@ -380,22 +380,22 @@ export class FileManager {
         const originalContent = fs.readFileSync(abs, 'utf-8');
         const sequence = computeMergeSequence(originalContent, aiContent);
 
-        // Zähle wie viele Zeilen entfernt würden
+        // Count how many lines would be removed
         const removedLines = sequence.filter(l => l.type === 'remove');
         const addedLines   = sequence.filter(l => l.type === 'add');
 
-        // "Nur Additions" Inhalt aufbauen: original + new additions, keine Löschungen
+        // Build "Additions only" content: original + new additions, no deletions
         const additionsOnlyLines: string[] = [];
         for (const l of sequence) {
             if (l.type === 'keep' || l.type === 'add') {
                 additionsOnlyLines.push(l.text);
             }
-            // 'remove': nicht aufnehmen → bleibt erhalten
+            // 'remove': do not include → remains
         }
         const additionsOnlyContent = additionsOnlyLines.join('\n');
 
         if (!confirmFn) {
-            // Kein Confirm-Fn: sicher sein → nur Additions anwenden
+            // No confirm function: be sure → only apply additions
             if (additionsOnlyContent === originalContent) return true;
             this.history.record({ type: 'file_edit', description: 'Smart-Merge (nur Additions)', filePath: abs, previousContent: originalContent });
             fs.writeFileSync(abs, additionsOnlyContent, 'utf-8');
@@ -404,7 +404,7 @@ export class FileManager {
             return true;
         }
 
-        // Diff für die Anzeige: zeige was "Nur Additions" gegenüber Original ändert
+        // Diff for the display: show what "Additions only" changes compared to the original
         const diff = this.makeDiffMeta(abs, originalContent, additionsOnlyContent);
         const [rm, add] = diff.stats;
 
@@ -433,9 +433,9 @@ export class FileManager {
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * Ersetzt einen genau definierten Textblock in der Datei durch neuen Code.
-     * Deutlich sicherer als editFile() wenn nur ein Teil verändert werden soll,
-     * da der Rest der Datei unangetastet bleibt.
+     * Replaces a precisely defined text block in the file with new code.
+     * Much safer than editFile() when only a part needs to be changed,
+     * since the rest of the file remains untouched.
      */
     async patchFile(
         filePath: string,
@@ -452,7 +452,7 @@ export class FileManager {
 
         const originalContent = fs.readFileSync(abs, 'utf-8');
 
-        // Exact-match versuchen, dann whitespace-normalisiert
+        // Try exact match, then whitespace-normalized
         let newContent: string;
         if (originalContent.includes(searchText)) {
             newContent = originalContent.replace(searchText, replaceText);
@@ -495,12 +495,12 @@ export class FileManager {
     }
 
     /**
-     * Erklärt, WARUM ein Patch nicht griff – und was stattdessen zu tun ist.
+     * Explains WHY a patch did not take effect – and what to do instead.
      *
-     * Ohne diese Diagnose versucht das Modell denselben Patch immer wieder:
-     * die alte Meldung sagte nur "Suchtext nicht gefunden", nicht dass die
-     * Änderung längst drin ist. Genau so lief der Assistent in eine Schleife
-     * aus fehlgeschlagenen Patches.
+     * Without this diagnosis, the model repeatedly attempts the same patch:
+     * the old message only said "Search text not found", not that the
+     * The change has long been included. The assistant got stuck in a loop exactly like that.
+     * from failed patches.
      */
     private explainPatchMiss(
         rel: string,
@@ -510,14 +510,14 @@ export class FileManager {
     ): string {
         const squish = (s: string) => s.replace(/\s+/g, ' ').trim();
 
-        // 1. Ist die Änderung schon angewendet? Dann ist nichts zu tun.
+        // 1. Has the change already been applied? If so, nothing needs to be done.
         if (replaceText.trim() && squish(content).includes(squish(replaceText))) {
             return `Die Änderung ist in ${rel} BEREITS VORHANDEN – der neue Code steht `
                 + `schon in der Datei. Wiederhole diesen Patch nicht. Prüfe mit read_file, `
                 + `was noch offen ist, und arbeite am nächsten Punkt weiter.`;
         }
 
-        // 2. Erste Zeile des Suchtextes finden – dann liegt es an den Folgezeilen
+        // 2. Find the first line of the search text – then it's up to the following lines
         const firstLine = searchText.split('\n').map(l => l.trim()).find(Boolean);
         if (firstLine) {
             const lines = content.split('\n');
@@ -560,25 +560,25 @@ export class FileManager {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Angewandte Änderungen melden
+    // Report Applied Changes
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * Empfänger für angewandte Änderungen setzen (Chat-Panel).
+     * Set recipient for applied changes (chat panel).
      *
-     * Im Auto-Modus gibt es keine Bestätigungskarte – ohne diese Meldung würde
-     * der Benutzer nie erfahren, was der Assistent geändert hat.
+     * In auto mode there is no confirmation card – without this message it would
+     * the user never finds out what the assistant changed.
      */
     setDiffReporter(reporter: DiffReporter | undefined): void {
         this.diffReporter = reporter;
     }
 
     /**
-     * Eine erfolgte Änderung melden.
+     * Report a change that has occurred.
      *
-     * @param absPath     Absoluter Pfad der Datei
+     * @param absPath     Absolute path of the file
      * @param oldContent  Inhalt vorher (undefined = Datei war neu)
-     * @param newContent  Inhalt nachher (undefined = Datei gelöscht)
+     * @param newContent  Content afterwards (undefined = file deleted)
      */
     private reportChange(absPath: string, oldContent?: string, newContent?: string): void {
         const rel = this.relDisplay(absPath);
@@ -587,8 +587,8 @@ export class FileManager {
             ? 'gelöscht'
             : oldContent === undefined ? 'erstellt' : 'geändert';
 
-        // Bei neuen Dateien gibt es keinen sinnvollen Diff – dort zählt nur die
-        // Zeilenzahl. Bei Änderungen zeigen wir den echten farbigen Diff.
+        // For new files, there is no meaningful diff – only the
+        // line count matters. For changes, we show the real colored diff.
         if (kind === 'geändert') {
             const hunks = computeDiff(oldContent!, newContent!);
             const stats = diffStats(hunks);

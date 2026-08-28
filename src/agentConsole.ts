@@ -1,22 +1,22 @@
 import * as vscode from 'vscode';
 
 /**
- * AgentConsole – ein echtes Terminal, in dem mitläuft, was der Assistent tut.
+ * AgentConsole – a real terminal where you can follow along with what the assistant does.
  *
- * Warum ein Terminal und nicht der Ausgabekanal: der Kanal ist ein Log für
- * Diagnose, mit Zeitstempeln und Interna. Beim Zusehen will man das, was ein
- * Entwickler an der Konsole sähe – den Befehl, seine Ausgabe, das Ergebnis.
+ * Why a terminal and not the output channel: the channel is a log for
+ * Diagnostics, with timestamps and internals. When watching, you want what a
+ * developer at the console would see – the command, its output, the result.
  *
- * Es ist ein Pseudo-Terminal (kein Shell-Prozess): hier wird nichts ausgeführt,
- * nur dargestellt. Die Befehle laufen weiter über den ShellRunner, dessen
- * Ausgabe die KI auch braucht – ein zweites Mal ausführen wäre falsch.
+ * It is a pseudo-terminal (no shell process): nothing is executed here,
+ * only displayed. The commands continue to run via the ShellRunner, whose
+ * Output that the AI also needs – running it a second time would be wrong.
  */
 export class AgentConsole {
     private static instance: AgentConsole;
 
     private terminal?: vscode.Terminal;
     private writer = new vscode.EventEmitter<string>();
-    /** Vor dem Öffnen anfallende Zeilen puffern, damit nichts verloren geht */
+    /** Buffer lines that occur before opening so that nothing is lost */
     private buffer: string[] = [];
     private opened = false;
 
@@ -27,7 +27,7 @@ export class AgentConsole {
         return AgentConsole.instance;
     }
 
-    // ANSI-Farben. Ein Terminal ohne Farbe ist eine Wand aus Text.
+    // ANSI colors. A terminal without color is a wall of text.
     private static readonly C = {
         reset: '\x1b[0m',
         dim: '\x1b[2m',
@@ -43,7 +43,7 @@ export class AgentConsole {
 
     /**
      * Terminal anlegen bzw. anzeigen.
-     * @param reveal  true = in den Vordergrund holen
+     * @param reveal  true = bring to the foreground
      */
     show(reveal = true): void {
         this.ensureTerminal();
@@ -68,7 +68,7 @@ export class AgentConsole {
                 this.opened = false;
                 this.terminal = undefined;
             },
-            // Eingaben ignorieren: es gibt keine Shell dahinter
+            // Ignore inputs: there is no shell behind it
             handleInput: () => { /* absichtlich leer */ }
         };
 
@@ -79,13 +79,13 @@ export class AgentConsole {
         });
     }
 
-    /** Rohtext schreiben – Zeilenumbrüche für das Terminal umsetzen. */
+    /** Write raw text – apply line breaks for the terminal. */
     private raw(text: string): void {
         const crlf = text.replace(/\r?\n/g, '\r\n');
         if (this.opened) {
             this.writer.fire(crlf);
         } else {
-            // Terminal noch nicht offen → puffern (max. 500 Zeilen)
+            // Terminal not yet open → buffer (max. 500 lines)
             this.buffer.push(crlf);
             if (this.buffer.length > 500) this.buffer.shift();
         }
@@ -99,7 +99,7 @@ export class AgentConsole {
     // Protokoll-Bausteine
     // ──────────────────────────────────────────────────────────────────────────
 
-    /** Neue Benutzeraufgabe – setzt das Protokoll optisch ab. */
+    /** New user task – visually resets the protocol. */
     task(prompt: string, mode: string): void {
         const C = AgentConsole.C;
         this.ensureTerminal();
@@ -111,7 +111,7 @@ export class AgentConsole {
         this.line();
     }
 
-    /** Beginn eines Schrittes der Agenten-Schleife. */
+    /** Start of a step in the agent loop. */
     step(n: number, reason: string): void {
         const C = AgentConsole.C;
         this.line();
@@ -119,7 +119,7 @@ export class AgentConsole {
         this.line(`${C.blue}   ${reason}${C.reset}`);
     }
 
-    /** Der Assistent hat einen Plan angelegt oder aktualisiert. */
+    /** The assistant has created or updated a plan. */
     plan(steps: { text: string; status: string }[]): void {
         const C = AgentConsole.C;
         const done = steps.filter(s => s.status === 'done').length;
@@ -135,10 +135,10 @@ export class AgentConsole {
     }
 
     /**
-     * Was der Assistent selbst zu diesem Schritt sagt.
+     * What the assistant itself says about this step.
      *
-     * Steht bewusst VOR den Aktionen: so liest man erst die Absicht und dann,
-     * was daraus wurde – wie bei einem Entwickler, der laut mitdenkt.
+     * Intentionally placed BEFORE the actions: this way the intent is read first and then,
+     * what resulted from it – like a developer thinking out loud.
      */
     narration(text: string): void {
         const C = AgentConsole.C;
@@ -150,14 +150,14 @@ export class AgentConsole {
         }
     }
 
-    /** Eine ausgeführte Aktion mit ihrer Ausgabe. */
+    /** An executed action with its output. */
     action(description: string, output?: string, success = true): void {
         const C = AgentConsole.C;
         const icon = success ? `${C.green}✔${C.reset}` : `${C.red}✖${C.reset}`;
         this.line(`   ${icon} ${description}`);
 
         if (!output) return;
-        // Ausgabe eingerückt und gedimmt, damit sie als Ausgabe lesbar bleibt
+        // Output indented and dimmed so that it remains readable as output
         const lines = output.replace(/\s+$/, '').split('\n');
         const shown = lines.slice(0, 40);
         for (const l of shown) {
@@ -168,13 +168,13 @@ export class AgentConsole {
         }
     }
 
-    /** Ein Shell-Befehl, wie an der Konsole. */
+    /** A shell command, as on the console. */
     command(cmd: string): void {
         const C = AgentConsole.C;
         this.line(`   ${C.bold}$ ${cmd}${C.reset}`);
     }
 
-    /** Angewandte Dateiänderung mit Zeilenbilanz. */
+    /** Applied file change with line count. */
     change(path: string, kind: string, removed: number, added: number): void {
         const C = AgentConsole.C;
         this.line(`   ${C.green}✔${C.reset} ${kind}: ${C.bold}${path}${C.reset}  ` +
@@ -190,7 +190,7 @@ export class AgentConsole {
         this.line();
     }
 
-    /** Warnung oder Fehler. */
+    /** Warning or error. */
     problem(text: string): void {
         const C = AgentConsole.C;
         this.line(`   ${C.red}⚠ ${text}${C.reset}`);

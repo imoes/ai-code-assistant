@@ -1,0 +1,48 @@
+# Baut die Extension und legt die .vsix als Artefakt ab.
+#
+# Das Gegenstück zur .gitlab-ci.yml: dieselben Schritte, damit ein Build auf
+# GitHub dasselbe prüft wie der interne. Die .vsix wird NICHT ins Repo
+# committet – sie entsteht hier und hängt als Artefakt am Lauf.
+#
+# Die Tests brauchen kein Netz und keinen Modellserver: sie fahren die Engine
+# gegen einen vscode-Stub und lokale Testserver.
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # npm ci statt npm install: reproduzierbar aus package-lock.json.
+      - run: npm ci
+
+      - run: npm run compile
+      - run: npm run lint
+      - run: npm test
+
+      - run: npm run package
+
+      # Der Dateiname enthält die Version aus package.json. Sie wird bei jeder
+      # funktionalen Änderung erhöht (siehe AGENTS.md) – dadurch lassen sich
+      # Artefakte auseinanderhalten.
+      - name: .vsix als Artefakt ablegen
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-code-assistant-${{ github.sha }}
+          path: '*.vsix'
+          if-no-files-found: error
+          retention-days: 30

@@ -3,17 +3,17 @@ import { MCPClient } from './mcpClient';
 import { Logger } from './logger';
 import { getAssistantMode } from './aiEngine';
 
-/** Ein Eingabefeld im Einstellungs-Panel. */
+/** An input field in the settings panel. */
 interface FieldDef {
-    /** Schlüssel ohne "aiAssistant."-Präfix */
+    /** Keys without "aiAssistant."-prefix */
     key: string;
     label: string;
     kind: 'text' | 'password' | 'number' | 'boolean' | 'textarea' | 'list' | 'select';
     hint?: string;
-    /** Nur für kind: 'number' */
+    /** Only for kind: 'number' */
     min?: number;
     max?: number;
-    /** Nur für kind: 'select' – Wert und Beschriftung je Option */
+    /** Only for kind: 'select' – value and label per option */
     options?: { value: string; label: string }[];
 }
 
@@ -24,12 +24,12 @@ interface SectionDef {
 }
 
 /**
- * SettingsPanel – Einstellungen als eigenes Formular mit Speichern-Button.
+ * SettingsPanel – settings as a separate form with a save button.
  *
- * VS Code speichert in seinem eigenen Einstellungs-UI bei jedem Tastendruck.
- * Hier werden Änderungen erst gesammelt und beim Klick auf "Speichern"
- * gemeinsam übernommen – dadurch lässt sich z.B. ein API-Key vollständig
- * eintippen, ohne dass halbfertige Werte gespeichert werden.
+ * VS Code saves in its own settings UI on every keystroke.
+ * Here, changes are only collected and upon clicking "Save"
+ * jointly assumed – this allows, for example, an API key to be completely
+ * enter without saving incomplete values.
  */
 export class SettingsPanel {
     public static readonly viewType = 'aiAssistant.settingsPanel';
@@ -215,7 +215,7 @@ export class SettingsPanel {
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     }
 
-    /** Panel öffnen bzw. bestehendes in den Vordergrund holen. */
+    /** Open the panel or bring the existing one to the foreground. */
     static open(extensionUri: vscode.Uri): SettingsPanel {
         if (SettingsPanel.current) {
             SettingsPanel.current.panel.reveal(vscode.ViewColumn.Active);
@@ -225,9 +225,9 @@ export class SettingsPanel {
         return SettingsPanel.current;
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // Nachrichten vom WebView
-    // ──────────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // Messages from WebView
+    // ─────────────────────────────────────────────────────────────────────────
 
     private async handleMessage(msg: {
         type: string;
@@ -253,10 +253,10 @@ export class SettingsPanel {
     }
 
     /**
-     * Alle Felder in die VS-Code-Konfiguration schreiben.
+     * Write all fields to the VS Code configuration.
      *
-     * Geschrieben wird in den Workspace-Bereich, wenn ein Ordner geöffnet ist –
-     * sonst global. So bleiben projektspezifische Modelle/Keys beim Projekt.
+     * Writes to the workspace area when a folder is open –
+     * otherwise global. This way, project-specific models/keys stay with the project.
      */
     private async save(values: Record<string, unknown>): Promise<void> {
         const config = vscode.workspace.getConfiguration('aiAssistant');
@@ -301,9 +301,9 @@ export class SettingsPanel {
 
         // Modus-Listbox in allen offenen Chat-Tabs aktualisieren
         if (changed.includes('mode') || changed.includes('autoApply')) {
-            // autoApply mitführen, damit die veraltete Einstellung nicht dem
-            // neuen Modus widerspricht – sonst zeigen Panel und Chat
-            // Unterschiedliches an.
+            // carry along autoApply so that the outdated setting does not contradict
+            // the new mode – otherwise the panel and chat
+            // will display different things.
             const mode = getAssistantMode();
             try {
                 await config.update('autoApply', mode === 'auto', target);
@@ -316,7 +316,7 @@ export class SettingsPanel {
         }
     }
 
-    /** Rohwert aus dem Formular in den erwarteten Konfigurationstyp wandeln. */
+    /** Convert the raw value from the form into the expected configuration type. */
     private coerce(field: FieldDef, raw: unknown): unknown {
         switch (field.kind) {
             case 'boolean':
@@ -337,16 +337,16 @@ export class SettingsPanel {
         }
     }
 
-    /** Aktuelle Werte aller Felder aus der Konfiguration lesen. */
+    /** Read current values of all fields from the configuration. */
     private readValues(): Record<string, unknown> {
         const config = vscode.workspace.getConfiguration('aiAssistant');
         const out: Record<string, unknown> = {};
         for (const section of SettingsPanel.SECTIONS) {
             for (const field of section.fields) {
-                // Der Modus wird aus mode UND dem alten autoApply hergeleitet.
-                // Läse das Panel nur `mode`, zeigte es bei einer Installation
-                // ohne gesetztes `mode` "Ask", während der Chat "Auto" anzeigt –
-                // und ein Klick auf Speichern hätte den Auto-Modus stillschweigend
+                // The mode is derived from mode AND the old autoApply.
+                // If the panel only read `mode`, it would show during an installation
+                // without `mode` set to "Ask", while the chat displays "Auto" –
+                // and a click on Speichern would silently enable the Auto-Modus
                 // abgeschaltet.
                 const value = field.key === 'mode'
                     ? getAssistantMode()
@@ -597,7 +597,7 @@ function save() {
 
 saveBtn.addEventListener('click', save);
 document.getElementById('btn-test').addEventListener('click', () => {
-  // Erst speichern, dann testen – sonst würde die alte URL getestet
+  // Save first, then test – otherwise the old URL would be tested
   if (dirty) { vscode.postMessage({ type: 'save', values: collect() }); }
   setStatus('Verbindung wird getestet…', 'busy');
   vscode.postMessage({ type: 'testConnection' });

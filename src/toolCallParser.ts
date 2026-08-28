@@ -1,10 +1,10 @@
 /**
- * Übersetzt die nativen Tool-Call-Formate der Modelle in unsere Aktions-Blöcke.
+ * Translates the native tool-call formats of the models into our action blocks.
  *
- * Warum das nötig ist: Auf Tool-Use trainierte Modelle greifen auf ihr
- * eingelerntes Format zurück, auch wenn der System-Prompt Backtick-Blöcke
- * verlangt. Ohne Übersetzung findet der Aktions-Parser nichts und der Assistent
- * redet nur über die Aufgabe, statt sie zu erledigen.
+ * Why this is necessary: Models trained on tool use rely on their
+ * learned format back, even if the system prompt contains backtick blocks
+ * required. Without translation, the action parser finds nothing and the assistant
+ * only talks about the task instead of completing it.
  *
  * Jede Modellfamilie hat ihr eigenes Format:
  *
@@ -29,7 +29,7 @@
  *     ```json
  *     {"pattern": "foo"}
  *     ```<|tool_call_end|><|tool_calls_end|>
- *     (mit Fullwidth-Balken U+FF5C und U+2581, nicht ASCII)
+ * (with fullwidth bar U+FF5C and U+2581, not ASCII)
  *
  * Quellen: llama.cpp docs/function-calling.md, ggml-org/llama.cpp#15012,
  * vLLM Tool-Calling-Doku, netclaw.dev Troubleshooting-Guide.
@@ -41,29 +41,30 @@ export interface ToolCall {
     args: Record<string, string>;
 }
 
-/** Minimales Logger-Interface, damit dieses Modul ohne vscode auskommt. */
+/** Minimal logger interface so that this module can operate without vscode. */
 export interface ToolCallLogger {
     info(msg: string): void;
     warn(msg: string): void;
 }
 
 /**
- * Aktionen, die der Assistent tatsächlich ausführen kann.
- * Nur diese Namen werden übersetzt – so wird aus einem beliebigen
- * JSON-Array im Antworttext nie versehentlich eine Aktion.
+ * Actions that the assistant can actually perform.
+ * Only these names are translated – thus turning any arbitrary
+ * Never accidentally include an action in the JSON array in the response text.
  */
 export const KNOWN_ACTIONS = new Set([
     'read_file', 'grep', 'glob', 'list_dir',
     'create_file', 'edit_file', 'replace_lines', 'patch_file', 'delete_file',
-    'shell', 'web_search', 'web_fetch', 'plan', 'todo', 'done', 'finish', 'ask_user'
+    'shell', 'web_search', 'web_fetch', 'plan', 'todo', 'done', 'finish', 'ask_user',
+    'remember'
 ]);
 
 /**
- * Werkzeugnamen anderer Assistenten auf unsere Aktionen abbilden.
+ * Map tool names of other assistants to our actions.
  *
- * Modelle sind auf die Werkzeugnamen ihres jeweiligen Trainings-Harness
- * geprägt (Cline, Aider, OpenHands, Claude Code, Codex …). Ein Modell, das
- * `write_file` gelernt hat, wird das auch hier aufrufen – dann soll es wirken.
+ * Models are named after the tool names of their respective training harness
+ * shaped (Cline, Aider, OpenHands, Claude Code, Codex ...). A model that
+ * `write_file` has learned to call it as well – then it should work.
  */
 export const ACTION_ALIASES: Record<string, string> = {
     // Lesen
@@ -87,7 +88,7 @@ export const ACTION_ALIASES: Record<string, string> = {
     str_replace_editor: 'patch_file', apply_patch: 'patch_file',
     apply_diff: 'patch_file', replace_in_file: 'patch_file',
     search_replace: 'patch_file', edit_range: 'replace_lines',
-    // Löschen
+    // Delete
     remove_file: 'delete_file', rm: 'delete_file', delete: 'delete_file',
     // Shell
     bash: 'shell', sh: 'shell', run: 'shell', exec: 'shell',
@@ -106,7 +107,7 @@ export const ACTION_ALIASES: Record<string, string> = {
     submit: 'done'
 };
 
-/** Argumentnamen anderer Harnesses auf unsere Feldnamen abbilden. */
+/** Map argument names of other harnesses to our field names. */
 export const ARG_ALIASES: Record<string, string> = {
     file_path: 'path', filepath: 'path', filename: 'path', file: 'path',
     file_name: 'path', target_file: 'path', uri: 'path',
@@ -122,10 +123,10 @@ export const ARG_ALIASES: Record<string, string> = {
 };
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Werkzeugkatalog für serverseitiges Tool-Calling
+// Tool catalog for server-side tool calling
 // ──────────────────────────────────────────────────────────────────────────────
 
-/** Eine Werkzeugdefinition im OpenAI-Schema. */
+/** A tool definition in the OpenAI schema. */
 export interface ToolDefinition {
     name: string;
     description: string;
@@ -144,27 +145,27 @@ function numProp(description: string) {
 }
 
 /**
- * Beschreibung des Feldes `absicht` – steht in JEDEM Werkzeug.
+ * Description of the `absicht` field – present in EVERY tool.
  *
- * Englisch wie der ganze Katalog, aber mit dem ausdrücklichen Hinweis, dass der
- * WERT in der Sprache des Benutzers zu schreiben ist: der Satz landet direkt im
- * Chat. Ohne den Hinweis antwortet ein Modell auf eine deutsche Frage plötzlich
- * mit englischen Ansagen.
+ * English like the entire catalog, but with the explicit note that the
+ * Writing the VALUE in the user's language is: the sentence ends up directly in
+ * Chat. Without the hint, a model suddenly
+ * with English announcements.
  */
 const INTENT_PROP = 'ONE short sentence in the first person: what you are doing '
     + 'here and why. It is shown to the user, so write it in the language the '
     + 'user used in their request.';
 
 /**
- * Unsere Aktionen als Werkzeuge im OpenAI-Schema.
+ * Our actions as tools in the OpenAI schema.
  *
- * Damit kann llama.cpp das modellspezifische Format selbst erzeugen und parsen –
- * das ist der einzige Weg, der ohne Formatpflege für Qwen, Gemma, Kimi, laguna,
- * DeepSeek, Mistral und alles Künftige funktioniert.
+ * This allows llama.cpp to generate and parse the model-specific format itself –
+ * this is the only way that works without formatting for Qwen, Gemma, Kimi, laguna,
+ * DeepSeek, Mistral, and everything future works.
  *
- * Die Beschreibungen sind **englisch**: Modelle folgen englischen Instruktionen
- * zuverlässiger, und der Katalog steht in jeder Anfrage im Prompt. Die Antwort
- * des Modells bleibt in der Sprache des Benutzers – siehe LANGUAGE_RULE und
+ * The descriptions are **English**: Models follow English instructions
+ * reliable, and the catalog is included in every request in the prompt. The response
+ * the model remains in the user's language – see LANGUAGE_RULE and
  * INTENT_PROP.
  */
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -327,6 +328,27 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         }
     },
     {
+        name: 'remember',
+        description: 'Records a rule learned from something that worked, so it is '
+            + 'available in every future task in this project. Only call it when you '
+            + 'VERIFIED that something non-obvious worked (tests green, command '
+            + 'succeeded) AND the insight still holds next week. Never for what you '
+            + 'did today ("fixed the tokenizer") – that is a diary entry and helps '
+            + 'nobody. At most one rule per task; recording nothing is the normal case.',
+        parameters: {
+            type: 'object',
+            properties: {
+                absicht: strProp(INTENT_PROP),
+                regel: strProp('The rule, short and imperative, e.g. "Run the tests '
+                    + 'with `npm test`, not `node --test`". In the user\'s language.'),
+                warum: strProp('The evidence – what happened that makes this a rule, '
+                    + 'e.g. "pretest compiles first; without it the tests run against '
+                    + 'stale output" (optional but valuable)')
+            },
+            required: ['absicht', 'regel']
+        }
+    },
+    {
         name: 'ask_user',
         description: 'Asks the user a decision question and waits for the answer. '
             + 'Use it when the task allows several defensible routes and the choice '
@@ -394,35 +416,37 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 ];
 
 /**
- * Aktionen, die nichts verändern.
+ * Actions that do not change anything.
  *
- * Im Plan-Modus bekommt das Modell ausschließlich diese – dann kann es die
- * Aufgabe untersuchen und planen, aber nichts anfassen.
+ * In plan mode, the model receives only this – then it can
+ * Investigate and plan the task, but do not touch anything.
  */
 export const READ_ONLY_ACTIONS = new Set([
     'read_file', 'grep', 'glob', 'list_dir', 'plan', 'web_search', 'web_fetch', 'done',
-    'ask_user'
+    // `remember` writes a note, not a change to the project – allowed in plan
+    // mode, because investigating is exactly when you learn something.
+    'ask_user', 'remember'
 ]);
 
-/** Werkzeugkatalog für einen Modus: im Plan-Modus nur die lesenden Werkzeuge. */
+/** Tool catalog for a mode: in plan mode, only the read-only tools. */
 export function toolsForMode(mode: 'ask' | 'auto' | 'plan'): ToolDefinition[] {
     if (mode !== 'plan') return TOOL_DEFINITIONS;
     return TOOL_DEFINITIONS.filter(t => READ_ONLY_ACTIONS.has(t.name));
 }
 
-/** Ein vom Server geparster Werkzeugaufruf (OpenAI-Antwortformat). */
+/** A tool call (OpenAI response format) parsed by the server. */
 export interface NativeToolCall {
     name: string;
-    /** JSON-String, so wie die OpenAI-API ihn liefert */
+    /** JSON string, as provided by the OpenAI API */
     arguments: string;
     id?: string;
 }
 
 /**
- * Serverseitig geparste Werkzeugaufrufe in Aktions-Blöcke übersetzen.
+ * Translate server-side parsed tool calls into action blocks.
  *
- * Der Server hat die Modellsyntax schon aufgelöst – hier bleibt nur die
- * Abbildung auf unser Blockformat.
+ * The server has already resolved the model syntax – here only the
+ * Mapping to our block format.
  */
 export function toolCallsToActionBlocks(
     calls: NativeToolCall[],
@@ -431,21 +455,21 @@ export function toolCallsToActionBlocks(
     return toolCallsToActions(calls, logger).blocks;
 }
 
-/** Ergebnis der Übersetzung: Aktions-Blöcke plus die Ansagen des Modells. */
+/** Result of the translation: action blocks plus the model's announcements. */
 export interface ConvertedToolCalls {
-    /** Aktions-Blöcke zum Ausführen */
+    /** Action blocks for execution */
     blocks: string;
     /**
-     * Was das Modell zu jedem Aufruf gesagt hat (`absicht`).
+     * What the model said for each call (`intent`).
      *
-     * Nötig, weil Modelle bei nativen Werkzeugaufrufen `content: null` liefern:
-     * sie stecken alles in den Aufruf und schreiben keine Prosa. Ohne diese
-     * Ansagen sähe der Benutzer nur eine Liste von Aktionen ohne Begründung.
+     * Necessary because models return `content: null` for native tool calls:
+     * they put everything into the call and do not write prose. Without this
+     * The user would only see a list of actions without justification.
      */
     intents: string[];
 }
 
-/** Serverseitig geparste Werkzeugaufrufe übersetzen, inklusive Ansagen. */
+/** Translate server-side parsed tool calls, including announcements. */
 export function toolCallsToActions(
     calls: NativeToolCall[],
     logger?: ToolCallLogger
@@ -463,8 +487,8 @@ export function toolCallsToActions(
 
         const args = normalizeArgs(toStringMap(call.arguments));
 
-        // Die Ansage sammeln – renderActionBlock setzt sie vor den Block und
-        // entfernt sie aus den Argumenten.
+        // Collect the announcement – renderActionBlock places it before the block and
+        // removes it from the arguments.
         const intent = (args.absicht ?? '').replace(/\s+/g, ' ').trim();
         if (intent) intents.push(intent);
 
@@ -480,33 +504,33 @@ export function toolCallsToActions(
     return { blocks: blocks.join(''), intents };
 }
 
-/** Argumente, die als Blockinhalt (nach dem "---") gehören, nicht als Kopfzeile. */
+/** Arguments that belong as block content (after the "---"), not as a header. */
 const BODY_ARGS = new Set([
     'content', 'new_content', 'file_content', 'body', 'text', 'code',
     'patch', 'patches', 'steps', 'plan', 'items', 'command', 'cmd'
 ]);
 
 /**
- * Aktionen, deren Block AUSSCHLIESSLICH aus dem Wert besteht.
+ * Actions whose block consists EXCLUSIVELY of the value.
  *
- * `shell` gehört seit dem Shell-Wahlschalter NICHT mehr dazu: mit zwei
- * Argumenten würde `Object.values().join()` sonst „npm test\npowershell"
- * ergeben – und der Assistent versuchte, das als Befehl auszuführen.
+ * `shell` is no longer included since the shell selection switch: with two
+ * Otherwise, `Object.values().join()` would produce "npm test\npowershell"
+ * resulted – and the assistant tried to execute it as a command.
  */
 const BODY_ONLY = new Set(['plan', 'todo']);
 
-// DeepSeek nutzt Fullwidth-Balken (U+FF5C) und Lower-One-Eighth-Block (U+2581).
-// Als Escapes geschrieben, damit die Datei nicht von der Kodierung abhängt.
+// DeepSeek uses fullwidth bars (U+FF5C) and lower-one-eighth blocks (U+2581).
+// Written as escapes so that the file does not depend on the encoding.
 const DS = {
     B: '｜', // ｜
     U: '▁'  // ▁
 };
 
 /**
- * Alle nativen Tool-Call-Formate im Text durch Aktions-Blöcke ersetzen.
+ * Replace all native tool-call formats in the text with action blocks.
  *
- * @param text    Rohantwort des Modells
- * @param logger  optional, für Diagnose im Ausgabekanal
+ * @param text    Raw response from the model
+ * @param logger  optional, for diagnostics in the output channel
  */
 export function normalizeToolCalls(text: string, logger?: ToolCallLogger): string {
     if (!looksLikeToolCall(text)) return text;
@@ -527,8 +551,8 @@ export function normalizeToolCalls(text: string, logger?: ToolCallLogger): strin
     };
 
     // ── DeepSeek R1 / V3 ────────────────────────────────────────────────────
-    // Der äußere <|tool_calls_begin|>-Rahmen wird verworfen, die inneren Aufrufe
-    // einzeln übersetzt.
+    // The outer <|tool_calls_begin|> wrapper is discarded, the inner calls
+    // are translated individually.
     const dsCall = new RegExp(
         `<${DS.B}tool${DS.U}call${DS.U}begin${DS.B}>\\s*\\w*\\s*` +
         `<${DS.B}tool${DS.U}sep${DS.B}>\\s*([\\w.\\-]+)\\s*([\\s\\S]*?)` +
@@ -541,8 +565,8 @@ export function normalizeToolCalls(text: string, logger?: ToolCallLogger): strin
         new RegExp(`<${DS.B}tool${DS.U}calls?${DS.U}(begin|end)${DS.B}>`, 'g'), '');
 
     // ── Mistral Nemo: [TOOL_CALLS] [ … ] ────────────────────────────────────
-    // Klammer-Bilanz statt Regex: eine nicht-greedy Regex bricht am ersten "]",
-    // das auch mitten in einem Argumentwert wie "[a-z]" stehen kann.
+    // Bracket accounting instead of regex: a non-greedy regex breaks at the first "]",
+    // which can also appear in the middle of an argument value like "[a-z]".
     out = replaceWithBalancedJson(out, /\[TOOL_CALLS\]\s*/g, '[', ']', json => {
         const arr = tryJson(json);
         if (!Array.isArray(arr)) return '';
@@ -561,19 +585,19 @@ export function normalizeToolCalls(text: string, logger?: ToolCallLogger): strin
             emit(parseWrappedCall(inner, attrs))
     );
 
-    // ── Qwen3-Coder ohne Umschlag: <function=name>…</function> ──────────────
+    // ── Qwen3-Coder without wrapper: <function=name>…</function> ──────────────
     out = out.replace(/<function=([\w.\-]+)>([\s\S]*?)<\/function>/gi,
         (_m, name: string, inner: string) =>
             emit({ name, args: parseParameterTags(inner) }));
 
     // ── Llama 3.2 pythonic: [read_file(path="src/a.ts")] ───────────────────
-    // Nur für bekannte Aktionsnamen, sonst würde jedes Array-Literal getroffen.
+    // Only for known action names, otherwise every array literal would be matched.
     out = out.replace(/\[([\w.\-]+)\(([^)]*)\)\]/g, (full, name: string, argStr: string) => {
         if (!resolveActionName(name)) return full;
         return emit({ name, args: parsePythonicArgs(argStr) });
     });
 
-    // Verwaiste Marker aufräumen, damit kein XML im Chat landet
+    // Clean up orphaned markers so that no XML ends up in the chat
     out = out.replace(/<\/?(tool_call|function_call|tool_use|invoke|arg_key|arg_value|parameter|function)[^>]*>/gi, '');
 
     if (total > 0) {
@@ -589,15 +613,15 @@ export function normalizeToolCalls(text: string, logger?: ToolCallLogger): strin
 }
 
 /**
- * Tool-Call-Markup aus Code entfernen, der in eine Datei geschrieben werden soll.
+ * Remove tool-call markup from code that is to be written to a file.
  *
- * Modelle lassen gelegentlich Reste ihrer eigenen Serialisierung im
- * Argumentwert stehen – beobachtet: eine Zeile `</arg_value>` mitten im
- * Quellcode, die die Datei unbrauchbar machte. Solche Zeilen sind in keiner
- * Programmiersprache gültig, also raus damit, bevor geschrieben wird.
+ * Models occasionally leave remnants of their own serialization in
+ * Argument values stand – observed: a line `</arg_value>` in the middle of
+ * Source code that rendered the file unusable. Such lines are not in any
+ * Programming language is valid, so get it out before it gets written.
  *
- * Entfernt werden nur Zeilen, die AUSSCHLIESSLICH aus solchem Markup bestehen –
- * eine Zeile wie `if (a < b)` bleibt unangetastet.
+ * Only lines that consist EXCLUSIVELY of such markup are removed –
+ * a line like `if (a < b)` remains untouched.
  */
 export function stripToolMarkupFromCode(code: string): { code: string; removed: string[] } {
     const MARKUP = /^[ \t]*<\/?(tool_call|function_call|tool_use|invoke|arg_key|arg_value|parameter|function|arguments|parameters|name)\b[^>]*>[ \t]*$/i;
@@ -614,7 +638,7 @@ export function stripToolMarkupFromCode(code: string): { code: string; removed: 
     return { code: removed.length > 0 ? kept.join('\n') : code, removed };
 }
 
-/** Rohes Tool-Call-Markup aus dem Anzeigetext entfernen. */
+/** Remove raw tool-call markup from the display text. */
 export function stripToolCallMarkup(text: string): string {
     return text
         .replace(/<(tool_call|function_call|tool_use|invoke)(\s[^>]*)?>[\s\S]*?<\/\1>/gi, '')
@@ -628,7 +652,7 @@ export function stripToolCallMarkup(text: string): string {
 // Interne Helfer
 // ──────────────────────────────────────────────────────────────────────────────
 
-/** Schnelltest, damit der Normalfall (Backtick-Blöcke) keine Regex-Arbeit kostet. */
+/** Quick test, so that the normal case (backtick blocks) doesn't incur regex processing costs. */
 function looksLikeToolCall(text: string): boolean {
     return /<tool_call|<function_call|<tool_use|<invoke|<function=|\[TOOL_CALLS\]|<\|python_tag\|>/i.test(text)
         // Llama 3.2 schreibt Aufrufe pythonisch: [read_file(path="a.js")]
@@ -637,11 +661,11 @@ function looksLikeToolCall(text: string): boolean {
 }
 
 /**
- * Vorkommen von `marker` samt darauf folgendem, klammer-balancierten
+ * Occurrences of `marker` followed by a balanced bracket
  * JSON-Ausdruck ersetzen.
  *
- * Nötig, weil verschachteltes JSON eine nicht-greedy Regex aushebelt:
- * `\{[\s\S]*?\}` endet bei `{"a":{"b":1}}` schon nach dem inneren Objekt.
+ * Necessary because nested JSON undermines non-greedy regex:
+ * `\{[\s\S]*?\}` ends at `{"a":{"b":1}}` already after the inner object.
  */
 function replaceWithBalancedJson(
     text: string,
@@ -672,8 +696,8 @@ function replaceWithBalancedJson(
 }
 
 /**
- * Index der schließenden Klammer zum Öffner an `start`.
- * Zeichenketten werden übersprungen, damit eine Klammer im Wert nicht zählt.
+ * Index of the closing bracket to the opener at `start`.
+ * Strings are skipped so that a bracket in the value does not count.
  */
 function findBalancedEnd(text: string, start: number, open: string, close: string): number {
     let depth = 0;
@@ -700,7 +724,7 @@ function findBalancedEnd(text: string, start: number, open: string, close: strin
     return -1;
 }
 
-/** Werkzeugname → Aktionsname, oder null wenn unbekannt. */
+/** Tool name → action name, or null if unknown. */
 function resolveActionName(raw: string): string | null {
     const name = raw
         .replace(/^(functions?|tools?|action|default_api)[.:]/i, '')
@@ -711,7 +735,7 @@ function resolveActionName(raw: string): string | null {
     return alias && KNOWN_ACTIONS.has(alias) ? alias : null;
 }
 
-/** Argumentnamen auf unsere Feldnamen bringen. */
+/** Bring argument names in line with our field names. */
 function normalizeArgs(args: Record<string, string>): Record<string, string> {
     const out: Record<string, string> = {};
     for (const [rawKey, value] of Object.entries(args)) {
@@ -722,11 +746,11 @@ function normalizeArgs(args: Record<string, string>): Record<string, string> {
 }
 
 /**
- * Aktions-Block aus Name und Argumenten bauen.
+ * Build action block from name and arguments.
  *
- * Die `absicht` wird als normaler Text VOR den Block gesetzt, nicht als
- * Kopfzeile: sie ist für den Benutzer bestimmt und hätte im Dateiinhalt
- * oder im Shell-Befehl nichts zu suchen.
+ * The `intent` is placed as normal text BEFORE the block, not as
+ * Header: it is intended for the user and should be in the file content
+ * or should not appear in the shell command.
  */
 function renderActionBlock(name: string, argsIn: Record<string, string>): string {
     const args = { ...argsIn };
@@ -743,13 +767,13 @@ function renderActionBlock(name: string, argsIn: Record<string, string>): string
     const bodies: string[] = [];
     for (const [k, v] of Object.entries(args)) {
         if (BODY_ARGS.has(k)) bodies.push(v);
-        // Kopfzeilen sind einzeilig – ein umgebrochener Wert würde den Parser stören
+        // Header lines are single-line – a wrapped value would confuse the parser
         else headers.push(`${k}: ${v.replace(/\r?\n/g, ' ').trim()}`);
     }
 
-    // Der Trenner `---` steht nur zwischen Kopfzeilen und Rumpf. Ohne
-    // Kopfzeilen begann der Block sonst mit einer Leerzeile und einem nackten
-    // `---` – und der landete beim `shell`-Werkzeug im Befehl.
+    // The separator `---` appears only between headers and body. Without
+    // headers, the block would otherwise start with an empty line and a bare
+    // `---` – and this would end up in the command for the `shell` tool.
     const block = bodies.length > 0
         ? (headers.length > 0 ? `${headers.join('\n')}\n---\n` : '') + bodies.join('\n')
         : headers.join('\n');
@@ -761,7 +785,7 @@ function renderActionBlock(name: string, argsIn: Record<string, string>): string
 function parseWrappedCall(inner: string, attrs?: string): ToolCall | null {
     const trimmed = inner.trim();
 
-    // <invoke name="read_file"> – Name steht im Attribut
+    // <invoke name="read_file"> – Name is in the attribute
     const attrName = attrs?.match(/name\s*=\s*["']([^"']+)["']/i)?.[1];
 
     // Qwen3-Coder: <function=name><parameter=key>value</parameter>
@@ -816,7 +840,7 @@ function parseArgKeyValue(text: string): Record<string, string> {
 }
 
 /**
- * <parameter=key>value</parameter> (Qwen3-Coder) und
+ * <parameter=key>value</parameter> (Qwen3-Coder) and
  * <parameter name="key">value</parameter> (Claude-Stil).
  */
 function parseParameterTags(text: string): Record<string, string> {
@@ -836,7 +860,7 @@ function parseParameterTags(text: string): Record<string, string> {
     return args;
 }
 
-/** {"name": "x", "arguments": {…}} in einen ToolCall wandeln. */
+/** {"name": "x", "arguments": {…}} into a ToolCall. */
 function callFromJsonObject(obj: unknown): ToolCall | null {
     if (!obj || typeof obj !== 'object') return null;
     const o = obj as Record<string, unknown>;
@@ -858,7 +882,7 @@ function parseJsonArgs(json: string): Record<string, string> {
 }
 
 function toStringMap(value: unknown): Record<string, string> {
-    // arguments ist bei OpenAI ein JSON-String, bei anderen ein Objekt
+    // arguments is a JSON string with OpenAI, and an object with others
     if (typeof value === 'string') {
         const parsed = tryJson(value);
         return parsed && typeof parsed === 'object' ? toStringMap(parsed) : {};
@@ -883,12 +907,12 @@ function parsePythonicArgs(argStr: string): Record<string, string> {
     return args;
 }
 
-/** ```json … ``` Umschlag entfernen (DeepSeek legt die Argumente so ab). */
+/**  ... ``` Remove wrapper (DeepSeek stores the arguments this way). */
 function stripJsonFence(text: string): string {
     return text.replace(/```[\w]*\s*\r?\n?/g, '').replace(/```/g, '').trim();
 }
 
-/** Führende/abschließende Leerzeilen entfernen, Einrückung im Inhalt behalten. */
+/** Remove leading/trailing blank lines, keep indentation in the content. */
 function trimOuterNewlines(text: string): string {
     return text.replace(/^\r?\n/, '').replace(/\r?\n[ \t]*$/, '');
 }

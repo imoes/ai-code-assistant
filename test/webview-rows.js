@@ -233,10 +233,16 @@ if (loaded.error) {
     // ── Hinweistext ────────────────────────────────────────────────────────
     section('Hinweistext unter dem Eingabefeld');
 
+    // Waehrend eines Laufs wird eine neue Anweisung EINGEREIHT, nicht
+    // dazwischengefunkt: ein Abbruch mitten im Schritt liesse halbfertige
+    // Arbeit zurueck. Der Hinweis muss das sagen, sonst klickt der Benutzer
+    // "Abbrechen", weil er glaubt, anders komme er nicht dazwischen.
     api.setThinking(true);
     const busyHint = store.get('hint').textContent;
-    check('waehrend eines Laufs: Enter unterbricht',
-        /Enter unterbricht die laufende Aufgabe/.test(busyHint), busyHint);
+    check('waehrend eines Laufs: Enter reiht ein',
+        /Enter reiht die Anweisung ein/.test(busyHint), busyHint);
+    check('Hinweis sagt, wann sie drankommt',
+        /nach dem laufenden Schritt/.test(busyHint), busyHint);
 
     api.setThinking(false);
     const idleHint = store.get('hint').textContent;

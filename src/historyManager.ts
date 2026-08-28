@@ -27,18 +27,26 @@ export interface HistoryFile {
     version: 1;
     lastUpdated: string;
     sessions: HistorySession[];
+    /**
+     * The standing goal (`/goal`) – deliberately BESIDE the sessions, not inside one.
+     *
+     * The goal outlives the session: someone who sets out to get "all tests green"
+     * still means it tomorrow. Inside a session it would be gone after the next
+     * window reload – exactly when a long piece of work is starting.
+     */
+    goal?: string;
 }
 
 const MAX_SESSIONS = 50;        // Maximale Anzahl gespeicherter Sessions
 const MAX_MESSAGES = 200;       // Maximale Nachrichten pro Session
 
 /**
- * HistoryManager: Speichert den Konversationsverlauf als
- * `ai-code-assistant.json` im Workspace-Root.
+ * HistoryManager: Stores the conversation history as
+ * `ai-code-assistant.json` in the workspace root.
  *
- * - Neue Sessions werden beim ersten Aufruf von `startSession()` angelegt
- * - Jede Nachricht wird direkt nach dem Empfang gespeichert
- * - Älteste Sessions werden gelöscht wenn MAX_SESSIONS überschritten wird
+ * - New sessions are created on the first call to `startSession()`
+ * - Every message is saved immediately after receipt
+ * - Oldest sessions are deleted when MAX_SESSIONS is exceeded
  */
 export class HistoryManager {
     private historyPath: string;
@@ -58,17 +66,20 @@ export class HistoryManager {
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * Gesamten Verlauf löschen – Datei und Speicher.
+     * Clear entire history – file and memory.
      *
-     * Die Datei wird nicht gelöscht, sondern geleert: der Pfad steht in
-     * Log-Meldungen und ist im Explorer sichtbar, eine plötzlich fehlende
-     * Datei wirkt wie ein Fehler.
+     * The file is not deleted, but emptied: the path is in
+     * Log messages and is visible in the Explorer, a suddenly missing
+     * File appears to be an error.
      *
-     * @returns Anzahl der entfernten Sessions
+     * @returns Number of removed sessions
      */
     clearAll(): number {
         const removed = this.data.sessions.length;
-        this.data = { version: 1, lastUpdated: new Date().toISOString(), sessions: [] };
+        // The goal remains: "clear history" refers to the conversation, not the
+        // intention. To drop it, use `/goal löschen`.
+        const goal = this.data.goal;
+        this.data = { version: 1, lastUpdated: new Date().toISOString(), sessions: [], goal };
         this.currentSessionId = this.generateSessionId();
         this.startSession();
         this.logger.info(`Verlauf gelöscht: ${removed} Session(s) entfernt.`);
@@ -84,7 +95,7 @@ export class HistoryManager {
         };
         this.data.sessions.push(session);
 
-        // Älteste Sessions trimmen
+        // Trim oldest sessions
         if (this.data.sessions.length > MAX_SESSIONS) {
             this.data.sessions = this.data.sessions.slice(-MAX_SESSIONS);
         }
@@ -98,7 +109,7 @@ export class HistoryManager {
         this.addMessage({ role: 'user', content, timestamp: new Date().toISOString() });
     }
 
-    /** KI-Antwort speichern (inkl. ausgeführter Aktionen und Reasoning-Zusammenfassung) */
+    /** Save AI response (incl. executed actions and reasoning summary) */
     addAssistantMessage(content: string, actions?: HistoryAction[], reasoning?: string): void {
         this.addMessage({
             role: 'assistant',
@@ -107,6 +118,19 @@ export class HistoryManager {
             actions,
             reasoning
         });
+    }
+
+    /** Read the standing goal (empty = none set). */
+    getGoal(): string {
+        return this.data.goal ?? '';
+    }
+
+    /** Set the standing goal; empty text clears it. */
+    setGoal(text: string): void {
+        const clean = text.trim();
+        if (clean) this.data.goal = clean;
+        else delete this.data.goal;
+        this.save();
     }
 
     /** Aktuelle Session-ID */
@@ -119,7 +143,7 @@ export class HistoryManager {
         return [...this.data.sessions].reverse();
     }
 
-    /** Nachrichten der aktuellen Session */
+    /** Messages of the current session */
     getCurrentSessionMessages(): HistoryMessage[] {
         return this.currentSession()?.messages ?? [];
     }
@@ -153,7 +177,7 @@ export class HistoryManager {
         }
         if (lines.length === 0) return null;
 
-        // Von hinten auffüllen: das Zuletzt-Passierte ist das Wichtigste.
+        // Fill from the end: the most recent events are the most important.
         const kept: string[] = [];
         let used = 0;
         for (const line of lines.reverse()) {
@@ -165,11 +189,11 @@ export class HistoryManager {
     }
 
     /**
-     * Die letzte Session, die nicht die laufende ist UND Nachrichten enthält.
+     * The last session that is not the current one AND contains messages.
      *
-     * Jedes Neuladen des Fensters legt eine Session an, auch wenn danach nichts
-     * gefragt wird. Ohne die Inhaltsprüfung verdeckt so eine leere Session die
-     * letzte echte Sitzung, und der Verlauf wirkt nach zwei Reloads verloren.
+     * Every window reload creates a session, even if nothing happens afterwards.
+     * is requested. Without content validation, such an empty session hides the
+     * last real session, and the history seems lost after two reloads.
      */
     private lastFinishedSession(): HistorySession | null {
         for (let i = this.data.sessions.length - 1; i >= 0; i--) {
@@ -238,13 +262,13 @@ export class HistoryManager {
     }
 
     /**
-     * Session-Kennung – auf die Millisekunde plus Zufallsanhang.
+     * Session ID – down to the millisecond plus random suffix.
      *
-     * Mit Sekundenauflösung bekamen zwei Sitzungen, die in derselben Sekunde
-     * beginnen, dieselbe Kennung. Dann findet `currentSession()` die ALTE
-     * Sitzung und schreibt in sie hinein, und `lastFinishedSession()` hält sie
-     * für die laufende – der Verlauf der Vorsitzung verschwindet also genau
-     * dann, wenn man das Fenster schnell neu lädt.
+     * With second resolution, two sessions that occurred in the same second
+     * begin, the same identifier. Then `currentSession()` finds the OLD
+     * Session and writes into it, and `lastFinishedSession()` keeps it
+     * for the ongoing – the history of the chairing thus disappears exactly
+     * then, if you quickly reload the window.
      */
     private generateSessionId(): string {
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
