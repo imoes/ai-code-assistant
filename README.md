@@ -185,8 +185,12 @@ wsl --install
 
 ### Option A: install the .vsix directly
 
-Every push to `main` publishes the freshly built package under a fixed address, so there
-is no need to hunt for the right pipeline run:
+**Download the latest build:**
+<https://github.com/imoes/ai-code-assistant/releases/latest/download/ai-code-assistant.vsix>
+
+That address never changes. Every push to `main` builds the package and publishes it there,
+so there is no need to find the right pipeline run first — and the file name carries no
+version number, which is what keeps the link stable.
 
 ```bash
 curl -L -o ai-code-assistant.vsix \
@@ -198,9 +202,10 @@ code --install-extension ai-code-assistant.vsix
 In VS Code you can also use `Ctrl+Shift+P` → *Extensions: Install from VSIX…* and pick the
 downloaded file.
 
-The package is not committed to the repo — it is built by CI. Besides the "latest" address
-above, every run also keeps its `.vsix` as a build artefact of that run, and each version
-stays available under its own number in the package registry.
+The package is not committed to the repo — it is built by CI. Which version you got is in
+the release title and in the extension manifest inside the `.vsix`. Older versions stay
+available: each build is also published under its own version number, and every run keeps
+its `.vsix` as a build artefact.
 
 ### Option B: from source
 
