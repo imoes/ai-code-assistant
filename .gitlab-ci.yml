@@ -8,6 +8,7 @@
 stages:
   - build
   - package
+  - publish
 
 default:
   # Der Runner wird über seinen Tag gewählt. Ohne Tag nimmt GitLab nur Runner,
@@ -67,3 +68,70 @@ package:
     paths:
       - "*.vsix"
     expire_in: 30 days
+
+# ── Immer dieselbe Adresse für den neuesten Build ───────────────────────────
+#
+# Ein Job-Artefakt liegt hinter der Pipeline, verlangt ein Login und läuft nach
+# 30 Tagen ab. Wer die Extension installieren will, soll nicht erst die
+# richtige Pipeline suchen müssen. Die Paketregistry hat einen festen Pfad:
+#
+#   $CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/
+#       ai-code-assistant/latest/ai-code-assistant.vsix
+#
+# Der Dateiname trägt bewusst KEINE Versionsnummer, sonst ändert sich die
+# Adresse mit jeder Version. Die Version steht im Paketnamen "latest" nicht,
+# aber im Manifest der .vsix und in der zusätzlich abgelegten Version.
+#
+# Zwei Ablagen, mit Absicht: "latest" wird bei jedem Lauf überschrieben,
+# die Version daneben bleibt stehen. Ohne die zweite gäbe es keinen Weg
+# zurück zu einem älteren Stand, sobald das Artefakt abgelaufen ist.
+publish:
+  stage: publish
+  needs: [package]
+  rules:
+    # Nur der Hauptzweig. Ein Feature-Zweig, der "latest" überschreibt, wäre
+    # eine stille Falle für jeden, der von dieser Adresse installiert.
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  before_script: *node_check
+  script:
+    # Ist "test-deploy" ein Shell-Runner, ist curl nicht gesetzt. Ohne diese
+    # Zeile endet der Job mit einem nackten "curl: command not found".
+    - curl --version > /dev/null || { echo "FEHLER curl fehlt auf diesem Runner"; exit 1; }
+    - VERSION=$(node -p "require('./package.json').version")
+    - VSIX=$(ls -1 *.vsix | head -1)
+    - echo "Veroeffentliche $VSIX als Version $VERSION"
+    - BASE="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ai-code-assistant"
+    # Unter der Version - bleibt stehen
+    - |
+      curl --fail --silent --show-error --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --upload-file "$VSIX" \
+        "${BASE}/${VERSION}/ai-code-assistant.vsix"
+    # Und unter "latest" - wird bei jedem Lauf überschrieben
+    - |
+      curl --fail --silent --show-error --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --upload-file "$VSIX" \
+        "${BASE}/latest/ai-code-assistant.vsix"
+    - echo "Neuester Build:" "${BASE}/latest/ai-code-assistant.vsix"
+
+# Ein Release-Eintrag macht eine Version in der Oberfläche sichtbar. Er hängt
+# an einem Git-Tag – NICHT an "latest": ein Release auf einen festen Tag lässt
+# sich nicht überschreiben, der Job wäre ab dem zweiten Lauf dauerhaft rot.
+# Für "immer der neueste Build" ist die Paketregistry oben zuständig; hier
+# geht es um benannte Stände, die stehen bleiben sollen.
+#
+#   git tag v0.11.9 && git push gitlab v0.11.9
+release:
+  stage: publish
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - echo "Release fuer $CI_COMMIT_TAG"
+  release:
+    tag_name: "$CI_COMMIT_TAG"
+    name: "$CI_COMMIT_TAG"
+    description: "Gebaut aus $CI_COMMIT_SHORT_SHA."
+    assets:
+      links:
+        - name: "ai-code-assistant.vsix (neuester Build)"
+          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ai-code-assistant/latest/ai-code-assistant.vsix"

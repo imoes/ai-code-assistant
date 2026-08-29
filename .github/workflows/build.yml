@@ -15,6 +15,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  # Für das "latest"-Release weiter unten. Ohne dieses Recht hat der
+  # GITHUB_TOKEN nur Lesezugriff und `gh release` scheitert mit 403.
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -46,3 +51,43 @@ jobs:
           path: '*.vsix'
           if-no-files-found: error
           retention-days: 30
+
+      # ── Immer dieselbe Adresse für den neuesten Build ────────────────────
+      #
+      # Ein Job-Artefakt liegt hinter dem Lauf, verlangt ein Login und ist
+      # nach 30 Tagen weg. Wer die Extension installieren will, soll nicht
+      # erst den richtigen Lauf suchen müssen. Das Release "latest" hat einen
+      # festen Download-Pfad:
+      #
+      #   https://github.com/<owner>/<repo>/releases/latest/download/ai-code-assistant.vsix
+      #
+      # Der Dateiname im Release trägt bewusst KEINE Versionsnummer, sonst
+      # ändert sich die Adresse mit jeder Version. Die Version steht in der
+      # Release-Beschreibung und im Manifest der .vsix selbst.
+      #
+      # Tag und Release werden bei jedem Lauf neu gesetzt, damit "latest"
+      # wirklich auf den aktuellen Commit zeigt und nicht auf den, bei dem
+      # das Release einmal angelegt wurde.
+      - name: Latest-Release aktualisieren
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VSIX=$(ls -1 *.vsix | head -1)
+          VERSION=$(node -p "require('./package.json').version")
+          cp "$VSIX" ai-code-assistant.vsix
+
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest ai-code-assistant.vsix \
+            --title "Letzter Build – v$VERSION" \
+            --target "$GITHUB_SHA" \
+            --latest \
+            --notes "Version $VERSION, gebaut aus ${GITHUB_SHA:0:7}.
+
+          Installation:
+
+              code --install-extension ai-code-assistant.vsix
+
+          Diese Adresse zeigt immer auf den neuesten Build:
+          https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/ai-code-assistant.vsix"

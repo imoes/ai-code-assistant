@@ -45,13 +45,23 @@ export class FileManager {
     }
 
     resolvePath(relOrAbsPath: string): string {
-        // Strip the leading slash FIRST, then test for "absolute": on Windows
-        // `path.isAbsolute` considers `/src/x` absolute, so the check would
-        // never reach this case.
+        const root = path.resolve(this.getWorkspaceRoot());
+
+        // A genuine absolute path that points INTO the workspace is taken as
+        // it is. This has to come first: on Linux the workspace itself starts
+        // with a slash (/home/runner/…), and stripping that would turn every
+        // absolute path into a relative one. On Windows the same test simply
+        // does not match for `/src/x`, so the case below takes over.
+        if (path.isAbsolute(relOrAbsPath)) {
+            const direct = path.resolve(relOrAbsPath);
+            if (direct === root || direct.startsWith(root + path.sep)) return direct;
+        }
+
+        // Otherwise a leading slash means "from the project root".
         const cleaned = FileManager.stripRootSlash(relOrAbsPath);
         const p = path.isAbsolute(cleaned)
             ? cleaned
-            : path.join(this.getWorkspaceRoot(), cleaned);
+            : path.join(root, cleaned);
         this.assertInsideWorkspace(p);
         return p;
     }

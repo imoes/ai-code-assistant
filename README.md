@@ -185,13 +185,22 @@ wsl --install
 
 ### Option A: install the .vsix directly
 
+Every push to `main` publishes the freshly built package under a fixed address, so there
+is no need to hunt for the right pipeline run:
+
 ```bash
-# In VS Code / VSCodium:
-# Ctrl+Shift+P → "Extensions: Install from VSIX..."
-# → pick ai-code-assistant-<version>.vsix
+curl -L -o ai-code-assistant.vsix \
+  https://github.com/imoes/ai-code-assistant/releases/latest/download/ai-code-assistant.vsix
+
+code --install-extension ai-code-assistant.vsix
 ```
 
-Prebuilt packages come from CI as build artefacts; they are not committed to the repo.
+In VS Code you can also use `Ctrl+Shift+P` → *Extensions: Install from VSIX…* and pick the
+downloaded file.
+
+The package is not committed to the repo — it is built by CI. Besides the "latest" address
+above, every run also keeps its `.vsix` as a build artefact of that run, and each version
+stays available under its own number in the package registry.
 
 ### Option B: from source
 
@@ -200,7 +209,7 @@ git clone <repo>
 cd ai-code-assistant
 npm install          # on Windows via WSL: wsl npm install
 npm run compile      # on Windows via WSL: wsl npm run compile
-npm test             # 779 checks, no network and no model server needed
+npm test             # 782 checks, no network and no model server needed
 npm run package
 ```
 

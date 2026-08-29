@@ -117,6 +117,28 @@ section('CodeAnalyzer: read_file');
                 .FileManager.stripRootSlash('\\src\\index.ts') === 'src\\index.ts');
     }
 
+    // Ein absoluter Pfad IN den Workspace bleibt ein absoluter Pfad.
+    //
+    // Das ist der Fall, der die Pipeline zerlegt hat: unter WSL beginnt der
+    // Workspace mit /mnt/d/, und den verschont die Regel ohnehin - auf dem
+    // GitHub-Runner heisst er /home/runner/work/..., und da wurde der
+    // fuehrende Schraegstrich abgetrennt. Aus dem absoluten Pfad wurde ein
+    // relativer, und zwei Tests fielen um, die lokal auf beiden Systemen
+    // gruen waren. Deshalb hier ausdruecklich mit der ECHTEN Wurzel geprueft.
+    const { FileManager } = require(path.join(PROJECT, 'out', 'fileManager.js'));
+    const fm = FileManager.getInstance();
+    const echtAbsolut = path.join(SANDBOX, 'src', 'index.ts');
+    check('absoluter Pfad in den Workspace bleibt unveraendert',
+        fm.resolvePath(echtAbsolut) === path.resolve(echtAbsolut),
+        `${fm.resolvePath(echtAbsolut)} != ${path.resolve(echtAbsolut)}`);
+    check('und die Datei ist darueber lesbar',
+        analyzer.readFile(echtAbsolut).success);
+
+    // Auch die Wurzel selbst
+    check('die Wurzel selbst ist erlaubt',
+        fm.resolvePath(SANDBOX) === path.resolve(SANDBOX),
+        fm.resolvePath(SANDBOX));
+
     // Ein ECHTER absoluter Pfad bleibt abgelehnt - der Schutz darf nicht fallen
     let abs;
     try { abs = analyzer.readFile('C:\\Windows\\win.ini'); }
