@@ -72,7 +72,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
 
             // ── Neuer Chat ──────────────────────────────────────────────────
             new SidebarItem(
-                '➕  Neue Chat-Session',
+                '➕  New chat session',
                 vscode.TreeItemCollapsibleState.None,
                 'aiAssistant.openPanel',
                 new vscode.ThemeIcon('add'),
@@ -88,9 +88,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
                 true
             ),
 
-            // ── Modus ───────────────────────────────────────────────────────
+            // ── Mode ───────────────────────────────────────────────────────
             new SidebarItem(
-                `Modus: ${current.label}`,
+                `Mode: ${current.label}`,
                 vscode.TreeItemCollapsibleState.None,
                 'aiAssistant.setMode',
                 new vscode.ThemeIcon(current.icon),
@@ -101,7 +101,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
 
             // ── Auto-Test ───────────────────────────────────────────────────
             new SidebarItem(
-                `Auto-Test: ${autoTest ? 'Aktiv' : 'Inaktiv'}`,
+                `Auto-test: ${autoTest ? 'on' : 'off'}`,
                 vscode.TreeItemCollapsibleState.None,
                 'aiAssistant.toggleAutoTest',
                 new vscode.ThemeIcon(autoTest ? 'beaker' : 'circle-outline'),
@@ -130,9 +130,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
                 true
             ),
 
-            // ── Einstellungen ───────────────────────────────────────────────
+            // ── Settings ───────────────────────────────────────────────
             new SidebarItem(
-                '⚙  Einstellungen',
+                '⚙  Settings',
                 vscode.TreeItemCollapsibleState.None,
                 'aiAssistant.openSettings',
                 new vscode.ThemeIcon('settings-gear'),
@@ -140,7 +140,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
             ),
         ];
 
-        return items.filter(i => i.label !== '');  // Leere Trennzeilen rausfiltern
+        return items.filter(i => i.label !== '');  // filter out empty separator rows
     }
 }
 

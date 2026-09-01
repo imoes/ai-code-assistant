@@ -217,10 +217,10 @@ export class PracticeStore {
                 '# Best Practices',
                 '',
                 'Rules the AI Code Assistant derived from runs that worked.',
-                'Sie gehen in jede Anfrage ein.',
+                'They go into every request.',
                 '',
-                'Diese Datei darf von Hand bearbeitet werden: eine Regel, die nicht stimmt,',
-                'just delete it. Newest first.',
+                'This file may be edited by hand: a rule that is wrong can simply',
+                'be deleted. Newest first.',
                 '',
                 ...this.all().map(e =>
                     `- ${e.rule}${e.why ? ` (${e.why})` : ''}`

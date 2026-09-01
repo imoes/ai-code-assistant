@@ -473,8 +473,8 @@ export class WebSearcher {
             data = JSON.parse(raw);
         } catch {
             throw new Error(
-                'Instanz liefert kein JSON. In settings.yml unter search.formats '
-                + 'auch "json" eintragen (Standard ist nur "html") und neu starten.'
+                'The instance returns no JSON. Add "json" to search.formats in '
+                + 'settings.yml (the default is "html" only) and restart it.'
             );
         }
         return {
@@ -852,7 +852,7 @@ export class WebSearcher {
             });
 
             req.on('error', reject);
-            req.on('timeout', () => req.destroy(new Error('Timeout nach 20s')));
+            req.on('timeout', () => req.destroy(new Error('Timed out after 20s')));
             req.write(data);
             req.end();
         });
@@ -883,7 +883,7 @@ export class WebSearcher {
                 res.on('error', reject);
             });
             req.on('error', reject);
-            req.on('timeout', () => reject(new Error('Timeout nach 15s')));
+            req.on('timeout', () => reject(new Error('Timed out after 15s')));
             req.write(body);
             req.end();
         });

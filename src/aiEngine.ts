@@ -686,7 +686,7 @@ and append it as the last action:shell block.` : '';
                 toolIntents = converted.intents;
             }
         } catch (err) {
-            this.logger.error('KI-Anfrage fehlgeschlagen', err);
+            this.logger.error('The AI request failed', err);
             throw new Error(`The AI is not reachable: ${(err as Error).message}`);
         }
 
@@ -746,7 +746,7 @@ and append it as the last action:shell block.` : '';
             const looksLikeExample = hasCodeBlock && /beispiel|example|so könnte|hier ist wie|du kannst|you can|hier ein|so würde/i.test(actionSource);
             if (looksLikeExample) {
                 this.logger.info('Example detection: the AI showed an example without an action → correction prompt');
-                onIteration?.(1, 'Beispiel erkannt – fordere direkte Umsetzung…');
+                onIteration?.(1, 'Example detected – demanding real action…');
                 const correctionPrompt =
                     `You only showed an example instead of changing the code.\n` +
                     `Implement the task NOW using action blocks (action:edit_file or action:create_file).\n` +
@@ -1672,7 +1672,7 @@ and append it as the last action:shell block.` : '';
             .replace(/(>>>+REPLACE>*[ \t]*\r?\n)[ \t]*```[\w-]*[ \t]*\r?\n/g, '$1');
 
         if (cleaned !== text) {
-            this.logger.info('Patch-Parser: überzählige Backtick-Zäune im SEARCH/REPLACE-Block entfernt.');
+            this.logger.info('Patch parser: removed surplus backtick fences from the SEARCH/REPLACE block.');
         }
         return cleaned;
     }
@@ -1738,7 +1738,7 @@ and append it as the last action:shell block.` : '';
         }
 
         if (changed) {
-            this.logger.info('Aktions-Parser: zaunlose Aktions-Kopfzeile eingezäunt.');
+            this.logger.info('Action parser: fenced an unfenced action header.');
             return out.join('\n');
         }
         return text;
@@ -1816,7 +1816,7 @@ and append it as the last action:shell block.` : '';
         if (open) { out.push('```'); changed = true; }
 
         if (changed) {
-            this.logger.info('Aktions-Parser: fehlenden Schluss-Zaun ergänzt.');
+            this.logger.info('Action parser: added the missing closing fence.');
             return out.join('\n');
         }
         return text;
@@ -2586,13 +2586,13 @@ and append it as the last action:shell block.` : '';
             case 'read_file': {
                 // The path can be provided as "path: x" or as a bare first line
                 const p = field('path') ?? field('file') ?? content.split('\n')[0].trim();
-                if (!p) throw new Error('Kein "path:" im read_file Block gefunden');
+                if (!p) throw new Error('No "path:" found in the read_file block');
                 result = this.analyzer.readFile(p, numField('offset') ?? 1, numField('limit') ?? 400);
                 break;
             }
             case 'grep': {
                 const pattern = field('pattern') ?? field('query') ?? content.split('\n')[0].trim();
-                if (!pattern) throw new Error('Kein "pattern:" im grep Block gefunden');
+                if (!pattern) throw new Error('No "pattern:" found in the grep block');
                 result = this.analyzer.grep(
                     pattern,
                     field('glob') ?? field('include'),
@@ -2603,7 +2603,7 @@ and append it as the last action:shell block.` : '';
             }
             case 'glob': {
                 const pattern = field('pattern') ?? content.split('\n')[0].trim();
-                if (!pattern) throw new Error('Kein "pattern:" im glob Block gefunden');
+                if (!pattern) throw new Error('No "pattern:" found in the glob block');
                 result = this.analyzer.glob(pattern);
                 break;
             }

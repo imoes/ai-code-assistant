@@ -1920,7 +1920,7 @@ function runPracticeTests() {
     const raw = fs.readFileSync(file, 'utf-8');
     check('Datei nennt ihren Zweck', /Best Practices/.test(raw), raw.slice(0, 60));
     check('Datei sagt, dass man sie bearbeiten darf',
-        /von Hand bearbeitet/.test(raw), raw.slice(0, 300));
+        /edited by hand/.test(raw), raw.slice(0, 300));
     check('Regeln als Liste', /^- Shell-Befehle/m.test(raw), raw);
 
     // Neu geladen muss dasselbe herauskommen - sonst waere die Datei nur Deko
