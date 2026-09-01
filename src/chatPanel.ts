@@ -108,9 +108,9 @@ export class ChatPanel {
         try {
             const root = this.fileManager.getWorkspaceRoot();
             const files = this.fileManager.listFiles();
-            this.postSystem(`📁 Workspace: ${root} — ${files.length} Datei(en) gefunden`);
+            this.postSystem(`📁 Workspace: ${root} — ${files.length} file(s) found`);
         } catch {
-            this.postSystem('⚠ Kein Workspace geöffnet. Bitte einen Ordner öffnen.');
+            this.postSystem('⚠ No workspace is open. Please open a folder.');
         }
 
         // A set goal extends beyond the session – therefore, it belongs in the
@@ -214,41 +214,41 @@ export class ChatPanel {
 
             case 'undoLast':
                 await this.actionHistory.undoLast();
-                this.postSystem('↩ Letzte KI-Aktion rückgängig gemacht.');
+                this.postSystem('↩ Last AI action undone.');
                 break;
 
             case 'undoAll':
                 await this.actionHistory.undoAll();
-                this.postSystem('↩ Alle KI-Aktionen rückgängig gemacht.');
+                this.postSystem('↩ All AI actions undone.');
                 break;
 
             case 'resetConversation':
                 this.aiEngine.resetConversation();
                 for (const [, resolve] of this.pendingConfirmations) {
-                    resolve('Ablehnen');
+                    resolve('Reject');
                 }
                 this.pendingConfirmations.clear();
                 this.pendingDiffs.clear();
-                this.postSystem('Konversation zurückgesetzt.');
+                this.postSystem('Conversation reset.');
                 break;
 
             case 'clearHistory': {
                 // Deletes the persisted history – irreversible, therefore ask.
                 const answer = await vscode.window.showWarningMessage(
-                    'Gesamten Chat-Verlauf löschen?\n'
-                    + 'Alle gespeicherten Sessions in ai-code-assistant.json werden entfernt. '
-                    + 'Bereits angewandte Codeänderungen bleiben bestehen.',
+                    'Delete the entire chat history?\n'
+                    + 'Every saved session in ai-code-assistant.json will be removed. '
+                    + 'Code changes that were already applied stay as they are.',
                     { modal: true },
-                    'Verlauf löschen',
-                    'Abbrechen'
+                    'Clear history',
+                    'Cancel'
                 );
-                if (answer !== 'Verlauf löschen') break;
+                if (answer !== 'Clear history') break;
 
                 const removed = this.aiEngine.clearHistory();
                 this.pendingConfirmations.clear();
                 this.pendingDiffs.clear();
                 this.post({ type: 'clearChat' });
-                this.postSystem(`🗑 Verlauf gelöscht (${removed} Session(s)). Neue Session gestartet.`);
+                this.postSystem(`🗑 History cleared (${removed} session(s)). A new session has started.`);
                 break;
             }
 
@@ -317,8 +317,8 @@ export class ChatPanel {
 
             if (result.actions.length > 0) {
                 const title = result.iterations > 1
-                    ? `Ausgeführte Aktionen (${result.iterations} Schritte)`
-                    : 'Ausgeführte Aktionen';
+                    ? `Actions taken (${result.iterations} steps)`
+                    : 'Actions taken';
                 this.post({ type: 'actions', actions: this.summarizeActions(result.actions), title });
             }
 
@@ -335,7 +335,7 @@ export class ChatPanel {
             this.post({ type: 'inputEnabled', value: true });
             const msg = err instanceof Error ? err.message : String(err);
             this.post({ type: 'errorMessage', text: msg });
-            this.logger.error('Fehler bei KI-Verarbeitung', err);
+            this.logger.error('The AI request failed', err);
         }
     }
 
@@ -355,7 +355,7 @@ export class ChatPanel {
             if (a.output && a.output.length > LIMIT) {
                 return {
                     ...a,
-                    output: `${a.output.slice(0, LIMIT)}\n… [${a.output.length - LIMIT} Zeichen gekürzt – vollständig im Log]`
+                    output: `${a.output.slice(0, LIMIT)}\n… [${a.output.length - LIMIT} characters cut – in full in the log]`
                 };
             }
             return a;
@@ -363,7 +363,7 @@ export class ChatPanel {
     }
 
     private async runConnectionTest(): Promise<void> {
-        this.postSystem('Verbindung wird getestet...');
+        this.postSystem('Testing the connection...');
         const { success, info } = await MCPClient.getInstance().testConnection();
         const url = vscode.workspace.getConfiguration('aiAssistant')
             .get<string>('serverUrl', 'http://localhost:8080');
@@ -403,7 +403,7 @@ export class ChatPanel {
      *
      * The loop used to pass an empty callback, on the reasoning that the round's
      * text arrives as the announcement afterwards anyway. What that looked like
-     * in the window: "Antwort wird erzeugt… 1.6k Tok" for two minutes and not one
+     * in the window: "Writing the answer… 1.6k Tok" for two minutes and not one
      * character in the chat. A reasoning model spends most of its output on
      * thinking, which reaches the panel as a `<think>` block and is rendered as a
      * collapsed "🧠 Reasoning" section – so there IS something to show, and in the
@@ -527,24 +527,24 @@ export class ChatPanel {
                 this.post({
                     type: 'assistantMessage',
                     text: goal
-                        ? `**Aktuelles Ziel**\n\n${goal}`
-                        : 'Kein Ziel gesetzt. `/goal <Text>` setzt eins.'
+                        ? `**Current goal**\n\n${goal}`
+                        : 'No goal is set. `/goal <text>` sets one.'
                 });
                 return true;
             }
             if (/^(l[öo]schen|clear|weg|none|aus)$/i.test(cmd.rest)) {
                 this.aiEngine.setGoal('');
                 this.post({ type: 'goalChanged', goal: '' });
-                this.post({ type: 'assistantMessage', text: 'Ziel gelöscht.' });
+                this.post({ type: 'assistantMessage', text: 'Goal cleared.' });
                 return true;
             }
             this.aiEngine.setGoal(cmd.rest);
             this.post({ type: 'goalChanged', goal: cmd.rest });
             this.post({
                 type: 'assistantMessage',
-                text: `**Ziel gesetzt**\n\n${cmd.rest}\n\n`
-                    + 'Es geht ab jetzt in jede Anfrage ein und überlebt die Sitzung. '
-                    + 'Mit `/loop <Budget>` arbeite ich wiederholt darauf hin.'
+                text: `**Goal set**\n\n${cmd.rest}\n\n`
+                    + 'From now on it goes into every request and outlives the session. '
+                    + 'With `/loop <budget>` I work towards it repeatedly.'
             });
             return true;
         }
@@ -556,9 +556,9 @@ export class ChatPanel {
         if (!task && !goal) {
             this.post({
                 type: 'assistantMessage',
-                text: 'Für `/loop` brauche ich ein Ziel oder eine Aufgabe.\n\n'
-                    + 'Entweder `/goal <Text>` setzen, oder direkt '
-                    + '`/loop 15m <was zu tun ist>`.'
+                text: 'For `/loop` I need a goal or a task.\n\n'
+                    + 'Either set `/goal <text>`, or go straight to '
+                    + '`/loop 15m <what needs doing>`.'
             });
             return true;
         }
@@ -581,17 +581,17 @@ export class ChatPanel {
         const goal = this.aiEngine.getGoal();
         this.post({
             type: 'assistantMessage',
-            text: `**Schleife gestartet** – Budget ${budget.label}, höchstens `
-                + `${budget.rounds} Runde(n).\n\n`
-                + (goal ? `Ziel: ${goal}\n\n` : '')
-                + `Aufgabe: ${task}\n\n`
-                + 'Sie endet, wenn das Ziel erreicht ist, das Budget aufgebraucht ist '
-                + 'oder du auf **Abbrechen** klickst. Tippen kannst du jederzeit – '
-                + 'die Anweisung kommt nach dem laufenden Schritt dran.'
+            text: `**Loop started** – budget ${budget.label}, at most `
+                + `${budget.rounds} round(s).\n\n`
+                + (goal ? `Goal: ${goal}\n\n` : '')
+                + `Task: ${task}\n\n`
+                + 'It ends when the goal is reached, the budget is spent '
+                + 'or you click **Cancel**. You can type at any time – '
+                + 'the instruction comes up after the current step.'
         });
         this.post({ type: 'thinking', value: true });
 
-        // Alle Rückmeldewege, nicht nur zwei – siehe bindEngineCallbacks.
+        // Every feedback path, not just two – see bindEngineCallbacks.
         this.bindEngineCallbacks();
 
         try {
@@ -609,8 +609,8 @@ export class ChatPanel {
 
             this.post({
                 type: 'assistantMessage',
-                text: `**Schleife beendet** – ${result.rounds} Runde(n), `
-                    + `${result.actions} Aktion(en). Grund: ${result.stopped}.`
+                text: `**Loop finished** – ${result.rounds} round(s), `
+                    + `${result.actions} action(s). Reason: ${result.stopped}.`
             });
 
             // What happened across the rounds, in one piece. The rows from
@@ -619,14 +619,14 @@ export class ChatPanel {
                 this.post({
                     type: 'actions',
                     actions: this.summarizeActions(result.log),
-                    title: `Ausgeführte Aktionen (${result.rounds} `
-                        + `${result.rounds === 1 ? 'Runde' : 'Runden'})`
+                    title: `Actions taken (${result.rounds} `
+                        + `${result.rounds === 1 ? 'round' : 'rounds'})`
                 });
             }
         } catch (err) {
             this.post({
                 type: 'errorMessage',
-                text: `Schleife abgebrochen: ${(err as Error).message}`
+                text: `Loop aborted: ${(err as Error).message}`
             });
         } finally {
             this.post({ type: 'thinking', value: false });
@@ -1077,8 +1077,8 @@ constantly away. Here they remain standing over the entire task. */
       padding: 8px 12px;
       font-size: 12px;
     }
-    .diff-card.diffgelscht { border-left-color: #f77; }
-    .diff-card.differstellt { border-left-color: #8bf; }
+    .diff-card.diff-deleted { border-left-color: #f77; }
+    .diff-card.diff-created { border-left-color: #8bf; }
     .diff-card-head {
       font-weight: 600;
       font-family: var(--font-mono);
@@ -1502,15 +1502,15 @@ stand out: the assistant waits for the user at this point. */
 <body>
 
 <div id="toolbar">
-  <button id="btn-test"     class="tb-btn">🔌 Verbindung</button>
-  <button id="btn-reset"    class="tb-btn">🔄 Neu</button>
-  <button id="btn-clear"    class="tb-btn danger">🗑 Verlauf löschen</button>
+  <button id="btn-test"     class="tb-btn">🔌 Connection</button>
+  <button id="btn-reset"    class="tb-btn">🔄 New</button>
+  <button id="btn-clear"    class="tb-btn danger">🗑 Clear history</button>
   <span class="tb-spacer"></span>
-  <label id="mode-label" for="mode-select">Modus</label>
+  <label id="mode-label" for="mode-select">Mode</label>
   <select id="mode-select" title="Arbeitsmodus des Assistenten">
-    <option value="ask">🔒 Ask – jede Änderung bestätigen</option>
-    <option value="auto">⚡ Auto – ohne Rückfragen</option>
-    <option value="plan">📋 Plan – nur lesen und planen</option>
+    <option value="ask">🔒 Ask – confirm every change</option>
+    <option value="auto">⚡ Auto – no questions asked</option>
+    <option value="plan">📋 Plan – read and plan only</option>
   </select>
   <button id="btn-undo"     class="tb-btn">↩ Undo</button>
   <button id="btn-undo-all" class="tb-btn danger">↩↩ Undo All</button>
@@ -1527,18 +1527,18 @@ stand out: the assistant waits for the user at this point. */
 <div id="thinking">
   <div class="dot"></div><div class="dot"></div><div class="dot"></div>
   <span id="thinking-label">KI denkt...</span>
-  <button id="btn-abort">⏹ Abbrechen</button>
+  <button id="btn-abort">⏹ Cancel</button>
 </div>
 
 <div id="input-area">
   <div id="input-row">
     <textarea id="prompt-input"
-      placeholder="Anweisung eingeben… (z.B. 'Erstelle eine REST API mit Express')"
+      placeholder="Type an instruction… (e.g. 'Build a REST API with Express')"
       rows="1"></textarea>
     <button id="send-btn" title="Senden (Enter)">➤</button>
   </div>
   <div id="input-footer">
-    <span id="hint">Enter zum Senden &nbsp;·&nbsp; Shift+Enter für Zeilenumbruch</span>
+    <span id="hint">Enter to send &nbsp;·&nbsp; Shift+Enter for a line break</span>
     <span id="stats-bar">
       <span id="stats-progress"><span id="stats-progress-fill"></span></span>
       <span id="stats-text"></span>
@@ -1558,9 +1558,9 @@ const hintEl        = document.getElementById('hint');
 const modeSelect    = document.getElementById('mode-select');
 
 const MODE_HINTS = {
-  ask:  'Jede Dateiänderung und jeder Shell-Befehl wird im Chat bestätigt.',
-  auto: 'Der Assistent arbeitet ohne Rückfragen durch. Alles bleibt per Undo rücknehmbar.',
-  plan: 'Nur lesen und planen – Änderungen und Shell-Befehle sind gesperrt.'
+  ask:  'Every file change and every shell command is confirmed in the chat.',
+  auto: 'The assistant works through without asking. Everything stays undoable.',
+  plan: 'Read and plan only – changes and shell commands are blocked.'
 };
 
 function setMode(mode) {
@@ -1804,14 +1804,14 @@ function makeConfirmCard(requestId, message, choices, diffText, hasDiff, stats) 
     if (stats) {
       statsEl.innerHTML =
         '<span style="color:#c66">−' + stats[0] + '</span> ' +
-        '<span style="color:#6c6">+' + stats[1] + '</span> Zeilen';
+        '<span style="color:#6c6">+' + stats[1] + '</span> lines';
     }
     footer.appendChild(statsEl);
 
     if (hasDiff) {
       const openBtn = document.createElement('button');
       openBtn.className = 'diff-open-btn';
-      openBtn.textContent = '↗ In Editor öffnen';
+      openBtn.textContent = '↗ Open in editor';
       openBtn.addEventListener('click', () => {
         vscode.postMessage({ type: 'openDiff', requestId });
       });
@@ -1891,7 +1891,7 @@ function updateBanner() {
   if (pendingCount > 0) {
     pendingBanner.className = 'visible';
     pendingBanner.textContent =
-      '⏳ ' + pendingCount + ' Bestätigung' + (pendingCount > 1 ? 'en' : '') + ' ausstehend – scrolle nach unten';
+      '⏳ ' + pendingCount + ' Confirmation' + (pendingCount > 1 ? 'en' : '') + ' ausstehend – scrolle nach unten';
     pendingBanner.style.display = 'flex';
   } else {
     pendingBanner.style.display = 'none';
@@ -1958,8 +1958,8 @@ function makeQueuedMsg(text, count) {
   const note = document.createElement('div');
   note.className = 'queued-note';
   note.textContent = count > 1
-    ? '\\u23f3 eingereiht (' + count + ') \\u2013 kommt nach dem laufenden Schritt'
-    : '\\u23f3 eingereiht \\u2013 kommt nach dem laufenden Schritt';
+    ? '\\u23f3 queued (' + count + ') \\u2013 comes up after the current step'
+    : '\\u23f3 queued \\u2013 comes up after the current step';
   d.appendChild(note);
   return d;
 }
@@ -1968,7 +1968,7 @@ function makeQueuedMsg(text, count) {
 function makeLoopRoundMsg(round, total, note) {
   const d = document.createElement('div');
   d.className = 'msg-iteration msg-loop';
-  d.textContent = '\\u21bb Schleife: Runde ' + round + ' von h\\u00f6chstens '
+  d.textContent = '\\u21bb Loop: round ' + round + ' of at most '
     + total + (note ? ' \\u00b7 ' + note : '');
   return d;
 }
@@ -1977,7 +1977,7 @@ function makeLoopRoundMsg(round, total, note) {
 function setGoalBar(goal) {
   if (!goalBar) return;
   const text = String(goal || '').trim();
-  goalBar.textContent = text ? '\\u25ce Ziel: ' + text : '';
+  goalBar.textContent = text ? '\\u25ce Goal: ' + text : '';
   goalBar.classList.toggle('visible', !!text);
 }
 function makeErrorMsg(text) {
@@ -2017,16 +2017,16 @@ function setThinkingPhase(text) {
 /** Was der Assistent gerade schreibt, in Worten statt im Werkzeugnamen. */
 function TOOL_VERB(tool) {
   const verbs = {
-    create_file: 'Datei wird geschrieben', edit_file: 'Datei wird geändert',
-    patch_file: 'Patch wird geschrieben', replace_lines: 'Zeilen werden ersetzt',
-    delete_file: 'Datei wird gelöscht', shell: 'Befehl wird formuliert',
-    read_file: 'Datei wird gelesen', grep: 'Suche wird formuliert',
-    glob: 'Suche wird formuliert', list_dir: 'Verzeichnis wird gelesen',
-    web_search: 'Suche wird formuliert', web_fetch: 'Abruf wird vorbereitet',
-    plan: 'Plan wird geschrieben', done: 'Zusammenfassung wird geschrieben',
-    ask_user: 'Frage wird formuliert', remember: 'Regel wird notiert'
+    create_file: 'Writing a file', edit_file: 'Changing a file',
+    patch_file: 'Writing a patch', replace_lines: 'Replacing lines',
+    delete_file: 'Deleting a file', shell: 'Composing a command',
+    read_file: 'Reading a file', grep: 'Composing a search',
+    glob: 'Composing a search', list_dir: 'Reading a directory',
+    web_search: 'Composing a search', web_fetch: 'Preparing a fetch',
+    plan: 'Writing the plan', done: 'Writing the summary',
+    ask_user: 'Composing a question', remember: 'Noting a rule'
   };
-  return verbs[tool] || (tool + ' wird geschrieben');
+  return verbs[tool] || (tool + ' in progress');
 }
 
 function renderStats(s) {
@@ -2041,8 +2041,8 @@ function renderStats(s) {
     statsProgress.classList.add('visible');
     statsFill.style.width = Math.round(p.fraction * 100) + '%';
     const pct = Math.round(p.fraction * 100);
-    parts.push('Eingabe ' + pct + '% (' + fmtNum(p.processed) + '/' + fmtNum(p.total) + ')');
-    setThinkingPhase('Eingabe wird ausgewertet… ' + pct + '%');
+    parts.push('Prompt ' + pct + '% (' + fmtNum(p.processed) + '/' + fmtNum(p.total) + ')');
+    setThinkingPhase('Reading the prompt… ' + pct + '%');
   } else {
     statsProgress.classList.remove('visible');
     if (s.predictedTokens > 0) {
@@ -2051,7 +2051,7 @@ function renderStats(s) {
       // erzeugt… 2.1k Tok" for minutes and nothing else.
       setThinkingPhase(s.tool
         ? TOOL_VERB(s.tool) + '… ' + fmtNum(s.predictedTokens) + ' Tok'
-        : 'Antwort wird erzeugt… ' + fmtNum(s.predictedTokens) + ' Tok');
+        : 'Writing the answer… ' + fmtNum(s.predictedTokens) + ' Tok');
     }
   }
 
@@ -2165,12 +2165,12 @@ function fillOutput(box, text) {
   const rest = lines.length - OUTPUT_PREVIEW_LINES;
   const more = document.createElement('button');
   more.className = 'tool-more';
-  more.textContent = '▸ ' + rest + ' weitere Zeilen';
+  more.textContent = '▸ ' + rest + ' more lines';
   let open = false;
   more.addEventListener('click', () => {
     open = !open;
     pre.textContent = open ? clean : lines.slice(0, OUTPUT_PREVIEW_LINES).join('\\n');
-    more.textContent = (open ? '▾ ' : '▸ ') + rest + ' weitere Zeilen';
+    more.textContent = (open ? '▾ ' : '▸ ') + rest + ' more lines';
     scrollBottom();
   });
   box.appendChild(more);
@@ -2193,7 +2193,7 @@ function buildToolRow(meta, description) {
 
   const name = document.createElement('span');
   name.className = 'tool-name';
-  name.textContent = (meta && meta.tool) || 'Aktion';
+  name.textContent = (meta && meta.tool) || 'Action';
   head.appendChild(name);
 
   const target = document.createElement('span');
@@ -2225,7 +2225,7 @@ function styleToolRow(row, meta) {
   const detail = row.querySelector('.tool-detail');
   if (detail) {
     detail.textContent = (meta && meta.detail) ? meta.detail
-      : (meta && meta.running) ? 'läuft…' : '';
+      : (meta && meta.running) ? 'running…' : '';
   }
 }
 
@@ -2289,13 +2289,13 @@ function renderFileDiff(change) {
   if (!change) return;
 
   const card = document.createElement('div');
-  card.className = 'diff-card diff-' + change.kind.replace(/[^a-z]/gi, '');
+  card.className = 'diff-card diff-' + change.kind;
 
   const head = document.createElement('div');
   head.className = 'diff-card-head';
   const [removed, added] = change.stats || [0, 0];
-  const icon = change.kind === 'erstellt' ? '📄'
-    : change.kind === 'gelöscht' ? '🗑' : '✏';
+  const icon = change.kind === 'created' ? '📄'
+    : change.kind === 'deleted' ? '🗑' : '✏';
   head.textContent = icon + ' ' + change.path + '  ' + change.kind
     + '   −' + removed + ' / +' + added;
   card.appendChild(head);
@@ -2304,7 +2304,7 @@ function renderFileDiff(change) {
     const details = document.createElement('details');
     details.open = true;
     const summary = document.createElement('summary');
-    summary.textContent = 'Diff anzeigen';
+    summary.textContent = 'Show diff';
     details.appendChild(summary);
     details.appendChild(buildDiffView(change.diffText));
     card.appendChild(details);
@@ -2387,7 +2387,7 @@ function makeActionsPanel(actions, title) {
 
   const h = document.createElement('div');
   h.className = 'actions-summary-line';
-  h.textContent = (title || 'Ausgeführte Aktionen')
+  h.textContent = (title || 'Actions taken')
     + '  \\u00b7  ' + ok + ' erfolgreich'
     + (failed.length ? ', ' + failed.length + ' fehlgeschlagen' : '');
   p.appendChild(h);
@@ -2418,8 +2418,8 @@ function setThinking(v) {
   isBusy = v;
   thinking.classList.toggle("visible", v);
   if (hintEl) hintEl.textContent = v
-    ? "Enter reiht die Anweisung ein \u2013 sie kommt nach dem laufenden Schritt dran"
-    : "Enter zum Senden \\u00b7 Shift+Enter f\\u00fcr Zeilenumbruch";
+    ? "Enter queues the instruction \u2013 it comes up after the current step"
+    : "Enter to send \\u00b7 Shift+Enter for a line break";
   if (v) scrollBottom();
 }
 function setInputEnabled(v) {

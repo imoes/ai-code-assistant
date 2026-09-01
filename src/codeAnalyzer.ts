@@ -81,11 +81,11 @@ export class CodeAnalyzer {
             // Offer a helpful alternative instead of just "not found"
             const suggestions = this.findSimilarPaths(relPath);
             const hint = suggestions.length
-                ? `\n\nMeintest du eine dieser Dateien?\n${suggestions.join('\n')}`
+                ? `\n\nDid you mean one of these files?\n${suggestions.join('\n')}`
                 : '';
             return {
                 description: `read_file: ${relPath}`,
-                output: `Datei nicht gefunden: ${relPath}${hint}`,
+                output: `File not found: ${relPath}${hint}`,
                 success: false,
                 error: true
             };
@@ -98,7 +98,7 @@ export class CodeAnalyzer {
         if (stat.size > MAX_FILE_BYTES) {
             return {
                 description: `read_file: ${relPath}`,
-                output: `Datei zu groß (${Math.round(stat.size / 1024)} KB). Nutze grep um gezielt zu suchen.`,
+                output: `File too large (${Math.round(stat.size / 1024)} KB). Use grep to search for what you need.`,
                 success: false,
                 error: true
             };
@@ -114,16 +114,16 @@ export class CodeAnalyzer {
             .join('\n');
 
         const footer = end < lines.length
-            ? `\n… [Zeile ${end + 1}–${lines.length} nicht angezeigt – read_file mit offset: ${end + 1} fortsetzen]`
+            ? `\n… [lines ${end + 1}–${lines.length} not shown – continue with read_file offset: ${end + 1}]`
             : '';
 
-        this.logger.info(`read_file: ${relPath} (Zeile ${start}–${end} von ${lines.length})`);
+        this.logger.info(`read_file: ${relPath} (lines ${start}–${end} of ${lines.length})`);
 
         // The output does NOT repeat the path: the display already shows it in
         // the header, and otherwise it would appear twice in the chat. The total number
         // of lines moves to the description, where it belongs.
         const range = end < lines.length || start > 1
-            ? `L${start}–${end} von ${lines.length}`
+            ? `L${start}–${end} of ${lines.length}`
             : `${lines.length} Zeilen`;
         return {
             description: `read_file: ${relPath} (${range})`,
@@ -142,7 +142,7 @@ export class CodeAnalyzer {
      * @param globPattern   optionaler Datei-Filter, z.B. "*.ts"
      * @param searchPath    optionaler Unterordner
      * @param ignoreCase    ignore case
-     * @param maxResults    Trefferlimit
+     * @param maxResults    limit on the number of hits
      */
     grep(
         pattern: string,
@@ -158,7 +158,7 @@ export class CodeAnalyzer {
         try {
             regex = new RegExp(pattern, ignoreCase ? 'i' : '');
         } catch (err) {
-            return { description: label, output: `Ungültiges Regex-Muster: ${(err as Error).message}`, success: false, error: true };
+            return { description: label, output: `Invalid regular expression: ${(err as Error).message}`, success: false, error: true };
         }
 
         let root: string;
@@ -187,7 +187,7 @@ export class CodeAnalyzer {
                 if (fs.statSync(abs).size > MAX_FILE_BYTES) continue;
                 content = fs.readFileSync(abs, 'utf-8');
             } catch { continue; }
-            if (this.looksBinary(content)) continue;   // Binärdatei überspringen
+            if (this.looksBinary(content)) continue;   // skip binary files
 
             const lines = content.split('\n');
             let fileHit = false;
@@ -200,20 +200,20 @@ export class CodeAnalyzer {
             if (fileHit) filesWithHits++;
         }
 
-        this.logger.info(`grep "${pattern}" → ${hits.length} Treffer in ${filesWithHits} Datei(en)`);
+        this.logger.info(`grep "${pattern}" → ${hits.length} match(es) in ${filesWithHits} file(s)`);
 
         if (hits.length === 0) {
             return {
                 description: label,
-                output: `Keine Treffer für /${pattern}/${scope ? ` in ${scope}` : ""}.`,
+                output: `No matches for /${pattern}/${scope ? ` in ${scope}` : ""}.`,
                 success: false
             };
         }
 
         const footer = truncated ? `\n… [Limit ${maxResults} erreicht – Muster verfeinern]` : '';
         return {
-            description: `${label} → ${hits.length} Treffer`,
-            output: `${hits.length} Treffer in ${filesWithHits} Datei(en):\n${hits.join('\n')}${footer}`,
+            description: `${label} → ${hits.length} match(es)`,
+            output: `${hits.length} match(es) in ${filesWithHits} file(s):\n${hits.join('\n')}${footer}`,
             success: true
         };
     }
@@ -240,13 +240,13 @@ export class CodeAnalyzer {
             }
         }
 
-        this.logger.info(`glob "${globPattern}" → ${matches.length} Datei(en)`);
+        this.logger.info(`glob "${globPattern}" → ${matches.length} file(s)`);
         if (matches.length === 0) {
-            return { description: label, output: `Keine Datei passt auf "${globPattern}".`, success: false };
+            return { description: label, output: `No file matches "${globPattern}".`, success: false };
         }
         return {
-            description: `${label} → ${matches.length} Datei(en)`,
-            output: `${matches.length} Datei(en):\n${matches.join('\n')}`,
+            description: `${label} → ${matches.length} file(s)`,
+            output: `${matches.length} file(s):\n${matches.join('\n')}`,
             success: true
         };
     }
@@ -264,7 +264,7 @@ export class CodeAnalyzer {
         catch (err) { return { description: label, output: (err as Error).message, success: false, error: true }; }
 
         if (!fs.existsSync(abs)) {
-            return { description: label, output: `Verzeichnis nicht gefunden: ${relPath}`, success: false, error: true };
+            return { description: label, output: `Directory not found: ${relPath}`, success: false, error: true };
         }
 
         const entries: string[] = [];
@@ -275,7 +275,7 @@ export class CodeAnalyzer {
             });
             for (const e of sorted) {
                 if (e.isDirectory()) {
-                    entries.push(`${e.name}/${IGNORE_DIRS.has(e.name) ? '   (übersprungen)' : ''}`);
+                    entries.push(`${e.name}/${IGNORE_DIRS.has(e.name) ? '   (skipped)' : ''}`);
                 } else {
                     let size = '';
                     try { size = `  ${Math.max(1, Math.round(fs.statSync(path.join(abs, e.name)).size / 1024))} KB`; }
@@ -288,8 +288,8 @@ export class CodeAnalyzer {
         }
 
         return {
-            description: `${label} → ${entries.length} Einträge`,
-            output: `Inhalt von ${relPath}:\n${entries.join('\n')}`,
+            description: `${label} → ${entries.length} entries`,
+            output: `Contents of ${relPath}:\n${entries.join('\n')}`,
             success: true
         };
     }
@@ -305,7 +305,7 @@ export class CodeAnalyzer {
     projectOverview(maxFiles = 400): string {
         let root: string;
         try { root = this.fileManager.getWorkspaceRoot(); }
-        catch { return '(Kein Workspace geöffnet)'; }
+        catch { return '(no workspace open)'; }
 
         const files = [...this.walk(root)].slice(0, maxFiles)
             .map(f => path.relative(root, f).replace(/\\/g, '/'));
@@ -345,7 +345,7 @@ export class CodeAnalyzer {
 
         return [
             `Workspace: ${root}`,
-            detected.length ? `\n\nErkanntes Projekt:\n${detected.join('\n')}` : '',
+            detected.length ? `\n\nProject detected:\n${detected.join('\n')}` : '',
             `\n\nDateistruktur (${files.length}${files.length >= maxFiles ? '+' : ''} Dateien):\n${treeLines.join('\n')}`
         ].join('');
     }

@@ -11,7 +11,7 @@ server or a cloud provider such as OpenRouter).
 
 - Source: `src/*.ts`, entry point `src/extension.ts`
 - Build: `npm run compile` (TypeScript → `out/`)
-- Tests: `npm test` — 782 checks, no network and no model server needed. The suite runs
+- Tests: `npm test` — 793 checks, no network and no model server needed. The suite runs
   the real engine against a `vscode` stub (`test/vscode-stub.js`) and local test servers.
   New feature → add a test under `test/` and register it in `test/run-all.js`.
 - Packaging: `npm run package` (produces `ai-code-assistant-<version>.vsix`)
@@ -153,8 +153,14 @@ reliably, and the tool catalogue is in the prompt on every request.
 
 The answer is unaffected. `LANGUAGE_RULE` sits at the start of every system prompt and is
 repeated wherever a slip back into English would be immediately obvious: the announcement
-before each action, the plan items and the closing summary. The user interface, the log
-and the action descriptions stay German.
+before each action, the plan items and the closing summary.
+
+The interface itself is English, and so are the log and the action descriptions. Only two
+kinds of German are left in the code, both on purpose: the **input aliases** (`/ziel`,
+`/schleife`, `30 Minuten`, `3 Runden`) so someone typing German is still understood, and
+the **recognition patterns** for German requests ("suche im internet", the stop-word lists
+in `webSearch.ts` and `practices.ts`). Those are data. Translated, they would simply stop
+working.
 
 ## Goal, loop and queued instructions
 
@@ -220,8 +226,9 @@ broken escape sequence showed up as `00b7`. If you change the display, add a che
 
 ## Conventions
 
-- **Comments and code identifiers in English**, user-facing texts in **German** (chat, log
-  messages, settings labels, action descriptions).
+- **Everything the user reads is English**: buttons, settings labels, log messages, action
+  descriptions, error texts. So are comments and identifiers. The exceptions are input
+  aliases and language-recognition data – see "Prompts in English" above.
 - Prompts to the model are English – see "Prompts in English" above.
 - Singleton pattern: services offer `static getInstance()` (see `AIEngine`, `FileManager`).
 - No file access outside the workspace – always through `FileManager.resolvePath()`.

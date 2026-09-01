@@ -10,7 +10,7 @@ import { FileManager } from './fileManager';
 
 export function activate(context: vscode.ExtensionContext): void {
     const logger = Logger.getInstance();
-    logger.info('AI Code Assistant wird aktiviert...');
+    logger.info('AI Code Assistant is activating...');
 
     // ── Sidebar (linke Leiste: Modus, Tests, neue Session) ────────────────────
     const sidebar = new SidebarProvider(context.extensionUri);
@@ -33,11 +33,11 @@ export function activate(context: vscode.ExtensionContext): void {
             if (editor && !editor.selection.isEmpty) {
                 const sel = editor.document.getText(editor.selection);
                 const lang = editor.document.languageId;
-                prefill = `Analysiere und verbessere folgenden ${lang}-Code:\n\`\`\`${lang}\n${sel}\n\`\`\`\n\n`;
+                prefill = `Analyse and improve the following ${lang} code:\n\`\`\`${lang}\n${sel}\n\`\`\`\n\n`;
             }
             const input = await vscode.window.showInputBox({
-                prompt: 'KI-Anweisung eingeben',
-                placeHolder: 'z.B. "Füge Unit-Tests hinzu", "Erstelle eine REST API"',
+                prompt: 'Enter an instruction for the AI',
+                placeHolder: 'e.g. "Add unit tests", "Build a REST API"',
                 value: prefill,
                 ignoreFocusOut: true
             });
@@ -49,9 +49,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // ── Arbeitsmodus setzen (ask / auto / plan) ──────────────────────────────
     const MODE_LABELS: Record<AssistantMode, string> = {
-        ask: 'Ask 🔒 – jede Änderung wird bestätigt',
-        auto: 'Auto ⚡ – ohne Rückfragen',
-        plan: 'Plan 📋 – nur lesen und planen'
+        ask: 'Ask 🔒 – every change is confirmed',
+        auto: 'Auto ⚡ – no questions asked',
+        plan: 'Plan 📋 – read and plan only'
     };
 
     const applyMode = async (mode: AssistantMode, notify = true) => {
@@ -84,7 +84,7 @@ export function activate(context: vscode.ExtensionContext): void {
                         mode: m,
                         picked: m === getAssistantMode()
                     })),
-                    { title: 'AI Assistant – Arbeitsmodus', placeHolder: 'Modus wählen' }
+                    { title: 'AI Assistant – working mode', placeHolder: 'Choose a mode' }
                 );
                 if (!picked) return;
                 target = picked.mode;
@@ -134,12 +134,12 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         vscode.commands.registerCommand('aiAssistant.undoAllActions', async () => {
             const answer = await vscode.window.showWarningMessage(
-                'Alle KI-generierten Änderungen rückgängig machen?',
+                'Undo every change the AI made?',
                 { modal: true },
-                'Ja, alle rückgängig',
-                'Abbrechen'
+                'Yes, undo all',
+                'Cancel'
             );
-            if (answer === 'Ja, alle rückgängig') {
+            if (answer === 'Yes, undo all') {
                 await ActionHistory.getInstance().undoAll();
             }
         })
@@ -157,13 +157,13 @@ export function activate(context: vscode.ExtensionContext): void {
             const url = vscode.workspace.getConfiguration('aiAssistant')
                 .get<string>('serverUrl', 'http://localhost:8080');
             await vscode.window.withProgress(
-                { location: vscode.ProgressLocation.Notification, title: `Verbinde mit ${url}…`, cancellable: false },
+                { location: vscode.ProgressLocation.Notification, title: `Connecting to ${url}…`, cancellable: false },
                 async () => {
                     const { success, info } = await MCPClient.getInstance().testConnection();
                     if (success) {
                         vscode.window.showInformationMessage(`✅ llama.cpp erreichbar: ${info}`);
                     } else {
-                        vscode.window.showErrorMessage(`❌ Nicht erreichbar: ${info}`, 'Einstellungen').then(sel => {
+                        vscode.window.showErrorMessage(`❌ Not reachable: ${info}`, 'Einstellungen').then(sel => {
                             if (sel === 'Einstellungen') {
                                 SettingsPanel.open(context.extensionUri);
                             }
@@ -178,7 +178,7 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('aiAssistant')) {
-                logger.info(`Konfiguration geändert: serverUrl=${
+                logger.info(`Configuration changed: serverUrl=${
                     vscode.workspace.getConfiguration('aiAssistant').get('serverUrl')
                 }`);
             }
@@ -198,7 +198,7 @@ export function activate(context: vscode.ExtensionContext): void {
             ask: '$(robot) AI Ask'
         };
         statusBar.text = icons[mode];
-        statusBar.tooltip = `AI Assistant – Modus ${mode}: ${MODE_LABELS[mode]}\n(klicken für neuen Chat)`;
+        statusBar.tooltip = `AI Assistant – mode ${mode}: ${MODE_LABELS[mode]}\n(click for a new chat)`;
     };
     updateStatusBar();
     statusBar.show();
@@ -216,19 +216,19 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
         logger.info(`Workspace: ${FileManager.getInstance().getWorkspaceRoot()}`);
     } catch {
-        logger.warn('Kein Workspace geöffnet.');
+        logger.warn('No workspace is open.');
     }
 
-    logger.info('AI Code Assistant aktiviert ✓');
+    logger.info('AI Code Assistant activated ✓');
 
     const firstRun = context.globalState.get<boolean>('aiAssistant.firstRun', true);
     if (firstRun) {
         context.globalState.update('aiAssistant.firstRun', false);
         vscode.window.showInformationMessage(
-            'AI Code Assistant bereit! Roboter-Icon links → Neue Chat-Session',
-            'Chat öffnen'
+            'AI Code Assistant is ready. Robot icon on the left → new chat session',
+            'Open chat'
         ).then(sel => {
-            if (sel === 'Chat öffnen') ChatPanel.open(context.extensionUri);
+            if (sel === 'Open chat') ChatPanel.open(context.extensionUri);
         });
     }
 }

@@ -48,7 +48,7 @@ export function computeDiff(
  * Is passed as the `detail` string to the Confirm card.
  */
 export function formatDiff(hunks: DiffHunk[]): string {
-    if (hunks.length === 0) return '(keine Änderungen)';
+    if (hunks.length === 0) return '(no changes)';
 
     const lines: string[] = [];
     for (const hunk of hunks) {

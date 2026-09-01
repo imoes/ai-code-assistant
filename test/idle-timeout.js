@@ -78,7 +78,7 @@ function listen(server) {
     check('haengender Server fuehrt zu einem Fehler', error !== null,
         error ? '' : 'kein Fehler geworfen');
     check('Meldung nennt die Ursache',
-        !!error && /nichts mehr gesendet/i.test(error.message), error && error.message);
+        !!error && /sent nothing for/i.test(error.message), error && error.message);
     check('Meldung nennt die Einstellung',
         !!error && /streamIdleTimeoutSeconds/.test(error.message), error && error.message);
     check('bricht nach etwa der eingestellten Zeit ab',

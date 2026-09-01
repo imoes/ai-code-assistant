@@ -108,7 +108,7 @@ export class MCPClient {
     cancel(): void {
         this.abortFlag = true;
         if (this.currentReq) {
-            this.currentReq.destroy(new Error('Vom Benutzer abgebrochen'));
+            this.currentReq.destroy(new Error('Cancelled by the user'));
             this.currentReq = null;
         }
     }
@@ -208,11 +208,11 @@ export class MCPClient {
 
             if (typeof n === 'number' && n > 0) {
                 this.ctxCache.set(baseUrl, n);
-                this.logger.info(`Kontextgröße des Modells: ${n} Tokens`);
+                this.logger.info(`Model context size: ${n} tokens`);
                 return n;
             }
         } catch (err) {
-            this.logger.warn(`Kontextgröße nicht abfragbar: ${(err as Error).message}`);
+            this.logger.warn(`Could not query the context size: ${(err as Error).message}`);
         }
         return undefined;
     }
@@ -233,7 +233,7 @@ export class MCPClient {
      */
     async testConnection(): Promise<{ success: boolean; info: string }> {
         const baseUrl = this.getServerUrl();
-        const auth = this.getApiKey() ? ' (mit API-Key)' : '';
+        const auth = this.getApiKey() ? ' (with API key)' : '';
 
         // ── /v1/models: works with llama.cpp AND with cloud providers ────
         // OpenRouter provides >300 models – hence only the first few.
@@ -247,7 +247,7 @@ export class MCPClient {
                 modelsOk = true;
                 const shown = ids.slice(0, 5).join(', ');
                 const more = ids.length > 5 ? ` … (+${ids.length - 5})` : '';
-                modelInfo = ` | ${ids.length} Modell(e): ${shown}${more}`;
+                modelInfo = ` | ${ids.length} model(s): ${shown}${more}`;
             }
         } catch (err) {
             modelInfo = ` | /v1/models: ${(err as Error).message.slice(0, 120)}`;
@@ -466,7 +466,7 @@ export class MCPClient {
                     if (settled) return;
                     settled = true;
                     this.logger.warn(
-                        `Server antwortet seit ${Math.round(idleMs / 1000)}s nicht mehr – Anfrage abgebrochen.`
+                        `The server has not answered for ${Math.round(idleMs / 1000)}s – request aborted.`
                     );
                     onIdle();
                 }, idleMs);
@@ -512,8 +512,8 @@ export class MCPClient {
                     req.destroy();
                     onStream('', true);
                     reject(new Error(
-                        `Der Server hat ${Math.round(idleMs / 1000)}s lang nichts mehr gesendet. ` +
-                        `Ist das Modell überlastet? (aiAssistant.streamIdleTimeoutSeconds erhöht die Wartezeit)`
+                        `The server sent nothing for ${Math.round(idleMs / 1000)}s. ` +
+                        `Is the model overloaded? (aiAssistant.streamIdleTimeoutSeconds raises the wait)`
                     ));
                 });
 
@@ -525,8 +525,8 @@ export class MCPClient {
                             req.destroy();
                             onStream('', true);
                             reject(new Error(
-                                `Der Server hat ${Math.round(idleMs / 1000)}s lang nichts mehr gesendet. ` +
-                                `Ist das Modell überlastet? (aiAssistant.streamIdleTimeoutSeconds erhöht die Wartezeit)`
+                                `The server sent nothing for ${Math.round(idleMs / 1000)}s. ` +
+                                `Is the model overloaded? (aiAssistant.streamIdleTimeoutSeconds raises the wait)`
                             ));
                         });
                     }
@@ -661,7 +661,7 @@ export class MCPClient {
             const parsed = JSON.parse(responseText);
 
             if (parsed.error) {
-                throw new Error(`MCP Fehler: ${parsed.error.message ?? JSON.stringify(parsed.error)}`);
+                throw new Error(`MCP error: ${parsed.error.message ?? JSON.stringify(parsed.error)}`);
             }
 
             const result = parsed.result;
@@ -680,7 +680,7 @@ export class MCPClient {
             };
         } catch (err) {
             // Fallback: MCP not reachable → try OpenAI API
-            this.logger.warn(`MCP nicht erreichbar (${(err as Error).message}), Fallback auf OpenAI-API...`);
+            this.logger.warn(`MCP not reachable (${(err as Error).message}), falling back to the OpenAI API...`);
             return this.completeOpenAI(messages, options, onStream);
         }
     }
@@ -747,7 +747,7 @@ export class MCPClient {
 
             req.on('error', reject);
             req.on('timeout', () => {
-                req.destroy(new Error('Request Timeout nach 120s'));
+                req.destroy(new Error('Request timed out after 120s'));
             });
             req.write(postData);
             req.end();

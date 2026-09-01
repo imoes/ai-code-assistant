@@ -2,7 +2,7 @@
   "name": "ai-code-assistant",
   "displayName": "AI Code Assistant (llama.cpp MCP)",
   "description": "Autonomous coding assistant powered by llama.cpp or any OpenAI-compatible endpoint - reads, plans, writes and tests code in your workspace.",
-  "version": "0.11.8",
+  "version": "0.12.0",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -31,45 +31,45 @@
     "commands": [
       {
         "command": "aiAssistant.openPanel",
-        "title": "AI Assistant: Panel öffnen",
+        "title": "AI Assistant: Open Panel",
         "icon": "$(robot)"
       },
       {
         "command": "aiAssistant.sendPrompt",
-        "title": "AI Assistant: Anweisung senden"
+        "title": "AI Assistant: Send Instruction"
       },
       {
         "command": "aiAssistant.undoLastAction",
-        "title": "AI Assistant: Letzte KI-Aktion rückgängig machen",
+        "title": "AI Assistant: Undo Last AI Action",
         "icon": "$(discard)"
       },
       {
         "command": "aiAssistant.undoAllActions",
-        "title": "AI Assistant: Alle KI-Aktionen rückgängig machen"
+        "title": "AI Assistant: Undo All AI Actions"
       },
       {
         "command": "aiAssistant.showLog",
-        "title": "AI Assistant: Log anzeigen"
+        "title": "AI Assistant: Show Log"
       },
       {
         "command": "aiAssistant.testConnection",
-        "title": "AI Assistant: llama.cpp Verbindung testen"
+        "title": "AI Assistant: Test Connection"
       },
       {
         "command": "aiAssistant.setMode",
-        "title": "AI Assistant: Arbeitsmodus wählen (Ask / Auto / Plan)"
+        "title": "AI Assistant: Select Mode (Ask / Auto / Plan)"
       },
       {
         "command": "aiAssistant.toggleMode",
-        "title": "AI Assistant: Modus weiterschalten (Ask → Auto → Plan)"
+        "title": "AI Assistant: Cycle Mode (Ask → Auto → Plan)"
       },
       {
         "command": "aiAssistant.toggleAutoTest",
-        "title": "AI Assistant: Auto-Test umschalten"
+        "title": "AI Assistant: Toggle Auto-Test"
       },
       {
         "command": "aiAssistant.openSettings",
-        "title": "AI Assistant: Einstellungen öffnen"
+        "title": "AI Assistant: Open Settings"
       }
     ],
     "viewsContainers": {
@@ -93,7 +93,7 @@
     "viewsWelcome": [
       {
         "view": "aiAssistant.sessionsView",
-        "contents": "Öffne einen neuen AI-Chat als Editor-Tab.\n\n[➕  Neue Chat-Session](command:aiAssistant.openPanel)\n\nJeder Klick öffnet eine eigene Session."
+        "contents": "Open a new AI chat as an editor tab.\n\n[➕  New chat session](command:aiAssistant.openPanel)\n\nEvery click opens a session of its own."
       }
     ],
     "menus": {
@@ -122,178 +122,178 @@
         "aiAssistant.serverUrl": {
           "type": "string",
           "default": "http://localhost:8080",
-          "description": "URL des llama.cpp Servers (z.B. http://localhost:8080)"
+          "description": "URL of the llama.cpp server (e.g. http://localhost:8080)"
         },
         "aiAssistant.mcpEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "MCP-Protokoll statt direkter HTTP-API verwenden"
+          "description": "Use the MCP protocol instead of the direct HTTP API"
         },
         "aiAssistant.apiKey": {
           "type": "string",
           "default": "",
-          "markdownDescription": "**Optionaler** API-Key für den Endpunkt. Wird als `Authorization: Bearer <key>` gesendet.\n\n- Lokaler llama.cpp-Server: **leer lassen**\n- OpenRouter: `sk-or-v1-…` (Server-URL: `https://openrouter.ai/api`)\n- OpenAI / Groq / Together: entsprechender Key"
+          "markdownDescription": "**Optional** API key for the endpoint. Sent as `Authorization: Bearer <key>`.\n\n- Local llama.cpp server: **leave empty**\n- OpenRouter: `sk-or-v1-…` (server URL: `https://openrouter.ai/api`)\n- OpenAI / Groq / Together: the matching key"
         },
         "aiAssistant.model": {
           "type": "string",
           "default": "",
-          "description": "Modellname (leer = Serverstandard). Bei OpenRouter z.B. anthropic/claude-sonnet-4.5"
+          "description": "Model name (empty = the server's default). On OpenRouter e.g. anthropic/claude-sonnet-4.5"
         },
         "aiAssistant.maxTokens": {
           "type": "number",
           "default": 2048,
-          "description": "Maximale Token-Anzahl pro Antwort"
+          "description": "Maximum number of tokens per answer"
         },
         "aiAssistant.temperature": {
           "type": "number",
           "default": 0.2,
           "minimum": 0,
           "maximum": 2,
-          "description": "Kreativitäts-Faktor (0 = deterministisch, 2 = sehr kreativ)"
+          "description": "Creativity factor (0 = deterministic, 2 = very creative)"
         },
         "aiAssistant.mode": {
           "type": "string",
           "default": "ask",
           "enum": ["ask", "auto", "plan"],
           "enumDescriptions": [
-            "Fragen – jede Dateiänderung und jeder Shell-Befehl wird im Chat bestätigt (mit Diff).",
-            "Automatisch – der Assistent arbeitet ohne Rückfragen durch. Alles bleibt per Undo rücknehmbar.",
-            "Planen – der Assistent darf nur lesen und planen. Keine Dateiänderungen, keine Shell-Befehle."
+            "Ask – every file change and every shell command is confirmed in the chat (with a diff).",
+            "Auto – the assistant works through without asking. Everything stays undoable.",
+            "Plan – the assistant may only read and plan. No file changes, no shell commands."
           ],
-          "description": "Arbeitsmodus des Assistenten. Umschaltbar über die Listbox in der Chat-Toolbar."
+          "description": "The assistant's working mode. Switchable from the list box in the chat toolbar."
         },
         "aiAssistant.autoApply": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "**Veraltet** – nutze `aiAssistant.mode`. Wird nur noch gelesen, wenn `mode` nicht gesetzt ist (`true` entspricht dann dem Modus *auto*)."
+          "markdownDescription": "**Deprecated** – use `aiAssistant.mode`. Only read when `mode` is unset (`true` then means mode *auto*)."
         },
         "aiAssistant.allowShellCommands": {
           "type": "boolean",
           "default": true,
-          "description": "Shell-Befehle durch die KI erlauben"
+          "description": "Allow the AI to run shell commands"
         },
         "aiAssistant.shell": {
           "type": "string",
           "default": "auto",
           "enum": ["auto", "wsl", "powershell"],
           "enumDescriptions": [
-            "Automatisch – unter Windows WSL/bash, sonst die System-Shell. Der Assistent darf pro Befehl auf PowerShell wechseln, wenn es Windows braucht.",
-            "Immer WSL/bash (unter Linux und macOS die System-Shell).",
-            "Immer Windows PowerShell. Achtung: Build- und Testbefehle erwarten meist eine POSIX-Shell."
+            "Auto – WSL/bash on Windows, the system shell elsewhere. The assistant may switch to PowerShell per command when the task needs Windows.",
+            "Always WSL/bash (the system shell on Linux and macOS).",
+            "Always Windows PowerShell. Careful: build and test commands usually expect a POSIX shell."
           ],
-          "markdownDescription": "Welche Shell der Assistent standardmäßig benutzt.\n\nUnabhängig davon kann er pro Befehl die andere wählen – manche Aufgaben gehen nur in einer: `npm test` gehört nach WSL, ein `Get-Service` oder das Ansprechen eines Windows-Programms nur in die PowerShell. Der Assistent bekommt beide Wege im Prompt genannt und ist angewiesen, WSL zu bevorzugen."
+          "markdownDescription": "Which shell the assistant uses by default.\n\nIt may still pick the other one per command – some tasks only work in one: `npm test` belongs in WSL, a `Get-Service` or talking to a Windows program only in PowerShell. The assistant is told about both in its prompt and is instructed to prefer WSL.\n\nWhen a command could go either way you are asked: the confirmation offers **Run in PowerShell** / **Run in WSL** next to **Run**, so switching costs one click."
         },
         "aiAssistant.allowPowerShell": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "PowerShell-Befehle erlauben.\n\nAusgeschaltet lehnt der Assistent sie ab und bekommt gesagt, dass er WSL nehmen soll. `aiAssistant.allowShellCommands` schaltet beide Shells zusammen ab."
+          "markdownDescription": "Allow PowerShell commands.\n\nSwitched off, the assistant refuses them and is told to use WSL instead. `aiAssistant.allowShellCommands` turns off both shells together."
         },
         "aiAssistant.confirmDangerousOps": {
           "type": "boolean",
           "default": true,
-          "description": "Vor potenziell gefährlichen Operationen warnen"
+          "description": "Warn before potentially dangerous operations"
         },
         "aiAssistant.systemPrompt": {
           "type": "string",
           "default": "You are an experienced software developer and coding assistant. You have access to the user's workspace and can create, edit and delete files and run shell commands. Be precise and explain your actions. Always answer in the language the user used in their request.",
-          "markdownDescription": "System-Prompt für den Assistenten.\n\nDie Anweisungen an das Modell sind **englisch** – Modelle folgen englischen Instruktionen zuverlässiger, und der Prompt fällt kürzer aus. Die **Antwort** kommt trotzdem in der Sprache der Anfrage: fragst du auf Deutsch, antwortet der Assistent auf Deutsch. Der Assistent bekommt diese Regel bei jeder Anfrage ausdrücklich mitgeteilt.\n\nWer lieber deutsche Prompts will, kann hier deutschen Text eintragen – das Werkzeug-Handbuch bleibt davon unberührt."
+          "markdownDescription": "System prompt for the assistant.\n\nThe instructions to the model are **English** – models follow English instructions more reliably, and the prompt comes out shorter. The **answer** still arrives in the language of the request: ask in German and the assistant replies in German. It is told this rule explicitly with every request.\n\nIf you would rather prompt in another language, put that text here – the tool manual is unaffected."
         },
         "aiAssistant.autoTest": {
           "type": "boolean",
           "default": false,
-          "description": "Nach KI-Dateiänderungen automatisch Tests ausführen. Die KI erkennt den Testbefehl (npm test, pytest, cargo test usw.) anhand der Projektstruktur selbst."
+          "description": "Run tests automatically after the AI changes a file. The AI works out the test command (npm test, pytest, cargo test, …) from the project structure itself."
         },
         "aiAssistant.autoFixOnError": {
           "type": "boolean",
           "default": true,
-          "description": "KI analysiert Shell-Fehlerausgaben automatisch und versucht den Code zu korrigieren."
+          "description": "The AI reads failing shell output and tries to fix the code."
         },
         "aiAssistant.autoFixIterations": {
           "type": "number",
           "default": 3,
           "minimum": 1,
           "maximum": 10,
-          "description": "Maximale Anzahl automatischer Korrektur-Iterationen bei Shell-Fehlern."
+          "description": "Maximum number of automatic repair rounds after a shell error."
         },
         "aiAssistant.contextWarningThreshold": {
           "type": "number",
           "default": 6000,
           "minimum": 1000,
-          "description": "Schwellenwert (in Token) ab dem eine Kontext-Warnung angezeigt wird."
+          "description": "Threshold (in tokens) above which a context warning is shown."
         },
         "aiAssistant.streamIdleTimeoutSeconds": {
           "type": "number",
           "default": 180,
           "minimum": 30,
           "maximum": 3600,
-          "description": "Abbrechen, wenn der Server so lange nichts mehr sendet. Gemessen wird die Pause zwischen zwei Antwortteilen, nicht die Gesamtdauer – eine lange Antwort ist also in Ordnung. Bei einem ausgelasteten Server höher setzen."
+          "description": "Give up when the server has sent nothing for this long. What is measured is the pause between two parts of the answer, not the total duration – so a long answer is fine. Raise it for a busy server."
         },
         "aiAssistant.searchProvider": {
           "type": "string",
           "default": "auto",
           "enum": ["auto", "keyless", "tavily", "brave", "google", "searxng", "duckduckgo", "ddglite", "stackexchange", "wikipedia"],
           "enumDescriptions": [
-            "Automatisch – Anbieter mit API-Key zuerst, danach die schlüssellosen Quellen gebündelt.",
-            "Ohne Schlüssel – fragt DuckDuckGo, DuckDuckGo Lite, Stack Overflow und Wikipedia gleichzeitig und führt die Treffer zusammen. Fällt eine Quelle aus, tragen die anderen.",
-            "Tavily – für KI-Nutzung gemacht, liefert Textauszüge statt nur Links. API-Key nötig, kostenloses Kontingent.",
-            "Brave Search API – API-Key nötig (seit Februar 2026 kostenpflichtig, ab 5 $/Monat).",
-            "Google Programmable Search – API-Key und Such-ID (cx) in searchEndpoint nötig. 100 Abfragen/Tag frei.",
-            "SearXNG – eigene Instanz (Adresse in searchEndpoint). Braucht `json` in search.formats. Hebt die Grenzen NICHT auf: SearXNG befragt Google und Bing für dich, deren Sperren gelten weiter.",
-            "Nur DuckDuckGo (HTML) – schlüssellos, bei mehr Anfragen gesperrt.",
-            "Nur DuckDuckGo Lite – zweite, unabhängige Oberfläche derselben Suche.",
-            "Nur Stack Overflow – offizielle API, ohne Schlüssel 300 Abfragen/Tag. Für Programmierfragen oft die beste Quelle.",
-            "Nur Wikipedia – offizielle MediaWiki-API, schlüssellos, hohe Grenzen. Gut für Begriffe, nicht für Code."
+            "Auto – a provider with an API key first, then the keyless sources bundled.",
+            "Keyless – asks DuckDuckGo, DuckDuckGo Lite, Stack Overflow and Wikipedia at the same time and merges the hits. If one source drops out, the others carry.",
+            "Tavily – built for AI use, returns text excerpts rather than just links. Needs an API key, has a free quota.",
+            "Brave Search API – needs an API key (paid since February 2026, from $5/month).",
+            "Google Programmable Search – needs an API key and the search id (cx) in searchEndpoint. 100 queries/day free.",
+            "SearXNG – your own instance (address in searchEndpoint). Needs `json` in search.formats. Does NOT lift the limits: SearXNG queries Google and Bing for you, and their blocks still apply.",
+            "DuckDuckGo only (HTML) – keyless, blocked once you ask too often.",
+            "DuckDuckGo Lite only – a second, independent front end to the same search.",
+            "Stack Overflow only – the official API, 300 queries/day without a key. Often the best source for programming questions.",
+            "Wikipedia only – the official MediaWiki API, keyless, generous limits. Good for concepts, not for code."
           ],
-          "markdownDescription": "Suchdienst für `web_search`.\n\n**Es gibt keine kostenlose, unbegrenzte allgemeine Websuche.** Jeder Weg ist entweder ein Anbieter mit Kontingent oder kratzt eine HTML-Seite ab und wird ab einem gewissen Volumen gesperrt. Die Bing-Such-API ist seit dem 11.08.2025 abgeschaltet. Ein eigener SearXNG hilft nicht: er verlagert das Abkratzen nur.\n\nDeshalb ist `keyless` ein **Bündel unabhängiger Quellen** – DuckDuckGo, DuckDuckGo Lite, Stack Overflow und Wikipedia werden gleichzeitig gefragt und die Treffer zusammengeführt. Fällt eine aus, tragen die anderen.\n\nUnbegrenzt ist nur `web_fetch`: eine bekannte Adresse direkt abrufen und lesen. Das ist für Dokumentation der verlässlichste Weg."
+          "markdownDescription": "Search service for `web_search`.\n\n**There is no free, unlimited general web search.** Every route is either a provider with a quota or scrapes an HTML page and gets blocked past a certain volume. The Bing search API was shut down on 2025-08-11. Running your own SearXNG does not help: it only moves the scraping.\n\nThat is why `keyless` is a **bundle of independent sources** – DuckDuckGo, DuckDuckGo Lite, Stack Overflow and Wikipedia are asked at the same time and their hits are merged. If one drops out, the others carry.\n\nThe only unlimited route is `web_fetch`: fetch and read a known address directly. For documentation that is the most reliable way."
         },
         "aiAssistant.searchApiKey": {
           "type": "string",
           "default": "",
-          "markdownDescription": "API-Key des Suchdienstes (Tavily, Brave oder Google). Leer = nur DuckDuckGo."
+          "markdownDescription": "API key for the search service (Tavily, Brave or Google). Empty = DuckDuckGo only."
         },
         "aiAssistant.searchEndpoint": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Zusatzangabe je Anbieter:\n\n- **SearXNG**: Adresse der Instanz, z.B. `https://searx.example.org`\n- **Google**: die Such-ID (`cx`) der Programmable Search Engine"
+          "markdownDescription": "Extra value, depending on the provider:\n\n- **SearXNG**: the address of the instance, e.g. `https://searx.example.org`\n- **Google**: the search id (`cx`) of the Programmable Search Engine"
         },
         "aiAssistant.showConsole": {
           "type": "boolean",
           "default": true,
-          "description": "Arbeitsprotokoll in einem Terminal \"AI Assistant\" mitschreiben: jeder Schritt, jede Aktion, jede Ausgabe. Dort wird nichts ausgeführt, nur angezeigt."
+          "description": "Write a work log into a terminal named \"AI Assistant\": every step, every action, every output. Nothing is executed there, it only displays."
         },
         "aiAssistant.autoCompact": {
           "type": "boolean",
           "default": true,
-          "description": "Verlauf automatisch zusammenfassen, wenn er den Kontext des Modells zu füllen droht. Ohne das bricht die Anfrage bei langen Sitzungen ab."
+          "description": "Summarise the history automatically when it threatens to fill the model's context. Without this, a long session eventually fails outright."
         },
         "aiAssistant.compactThresholdPercent": {
           "type": "number",
           "default": 89,
           "minimum": 50,
           "maximum": 99,
-          "description": "Ab welchem Füllstand des Modell-Kontexts (in Prozent) der Verlauf zusammengefasst wird."
+          "description": "At what fill level of the model context (in percent) the history is summarised."
         },
         "aiAssistant.nativeToolCalls": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Werkzeuge im OpenAI-Schema an den Server senden (`tools` / `tool_calls`).\n\nDamit übernimmt der Server das modellspezifische Format – so funktioniert der Assistent mit Qwen, Gemma, Kimi, laguna, DeepSeek und Mistral gleichermaßen. Setzt bei llama.cpp `--jinja` voraus.\n\nAusschalten nur, wenn der Server keine Werkzeuge unterstützt: dann werden die Aufrufe aus dem Antworttext geparst."
+          "markdownDescription": "Send tools to the server in the OpenAI schema (`tools` / `tool_calls`).\n\nThe server then handles the model-specific format – which is what makes the assistant work with Qwen, Gemma, Kimi, laguna, DeepSeek and Mistral alike. Requires `--jinja` on llama.cpp.\n\nTurn it off only when the server has no tool support: the calls are then parsed out of the answer text."
         },
         "aiAssistant.agentLoop": {
           "type": "boolean",
           "default": true,
-          "description": "Agenten-Schleife: Der Assistent arbeitet selbständig weiter (analysieren → planen → ändern → testen → korrigieren), bis die Aufgabe erledigt ist."
+          "description": "Agent loop: the assistant keeps working on its own (analyse → plan → change → test → fix) until the task is done."
         },
         "aiAssistant.maxAgentSteps": {
           "type": "number",
           "default": 12,
           "minimum": 1,
           "maximum": 50,
-          "description": "Maximale Anzahl Schritte, die der Assistent in einer Agenten-Schleife selbständig ausführt."
+          "description": "Maximum number of steps the assistant takes on its own inside one agent loop."
         },
         "aiAssistant.planningEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "Planungsfunktion: Bei mehrschrittigen Aufgaben erstellt der Assistent zuerst einen Plan (Todo-Liste) und arbeitet ihn Schritt für Schritt ab."
+          "description": "Planning: for a multi-step task the assistant first writes a plan (a todo list) and works through it step by step."
         },
         "aiAssistant.instructionFiles": {
           "type": "array",
@@ -304,7 +304,7 @@
         "aiAssistant.autoAnalyze": {
           "type": "boolean",
           "default": true,
-          "description": "Vor Codeänderungen zuerst den bestehenden Code analysieren (read_file / grep / glob), statt sofort zu schreiben."
+          "description": "Read the existing code first (read_file / grep / glob) instead of writing straight away."
         }
       }
     }

@@ -42,7 +42,7 @@ const DANGEROUS_PS_PATTERNS = [
     /Clear-Disk/i,
     /Stop-Computer|Restart-Computer/i,
     /Set-ExecutionPolicy\s+Unrestricted/i,
-    /iex\s*\(|Invoke-Expression\s*\(/i,       // Download-und-ausführen
+    /iex\s*\(|Invoke-Expression\s*\(/i,       // download-and-run
     /Invoke-WebRequest.*\|\s*iex/i,
     /reg\s+delete/i,
     /Remove-ItemProperty\s+.*HKLM/i,
@@ -118,8 +118,8 @@ export class ShellRunner {
         if (shell === 'powershell' && !config.get<boolean>('allowPowerShell', true)) {
             return {
                 stdout: '',
-                stderr: 'PowerShell ist abgeschaltet (aiAssistant.allowPowerShell). '
-                    + 'Nutze WSL oder bitte den Benutzer, die Einstellung zu ändern.',
+                stderr: 'PowerShell is switched off (aiAssistant.allowPowerShell). '
+                    + 'Use WSL, or ask the user to change the setting.',
                 exitCode: -1, command, timedOut: false
             };
         }
@@ -138,10 +138,10 @@ export class ShellRunner {
         // Always confirm dangerous commands
         if (isDangerous && confirmDangerous && confirmFn) {
             const choice = await confirmFn(
-                `⚠ Potenziell gefährlicher Befehl erkannt:\n\`${command}\``,
-                ['Ausführen', 'Ablehnen']
+                `⚠ Potentially dangerous command detected:\n\`${command}\``,
+                ['Run', 'Reject']
             );
-            if (choice !== 'Ausführen') {
+            if (choice !== 'Run') {
                 return {
                     stdout: '', stderr: 'Befehl durch Benutzer abgebrochen.',
                     exitCode: -1, command, timedOut: false
@@ -204,12 +204,12 @@ export class ShellRunner {
                 clearTimeout(timer);
                 const msg = err.message.includes('ENOENT')
                     ? (shell === 'wsl'
-                        ? 'WSL nicht gefunden. Bitte WSL installieren (wsl --install).'
+                        ? 'WSL not found. Please install it (wsl --install).'
                         : shell === 'powershell'
-                            ? 'PowerShell nicht gefunden (powershell.exe fehlt im PATH).'
-                            : 'bash nicht gefunden.')
+                            ? 'PowerShell not found (powershell.exe is not on PATH).'
+                            : 'bash not found.')
                     : err.message;
-                this.logger.error('Shell-Prozess Fehler', err);
+                this.logger.error('Shell process error', err);
                 resolve({ stdout: '', stderr: msg, exitCode: -1, command, timedOut: false });
             });
         });

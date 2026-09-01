@@ -48,22 +48,22 @@ export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
         // worse than just one.
         const MODES: Record<AssistantMode, { label: string; icon: string; tip: string }> = {
             ask: {
-                label: 'Ask – jede Änderung bestätigen',
+                label: 'Ask – confirm every change',
                 icon: 'shield',
-                tip: 'Jede Dateiänderung und jeder Shell-Befehl wird im Chat bestätigt.\n'
-                    + 'Klicken für den nächsten Modus.'
+                tip: 'Every file change and every shell command is confirmed in the chat.\n'
+                    + 'Click for the next mode.'
             },
             auto: {
-                label: 'Auto – ohne Rückfragen',
+                label: 'Auto – no questions asked',
                 icon: 'zap',
-                tip: 'Der Assistent arbeitet ohne Rückfragen durch. Alles bleibt per Undo rücknehmbar.\n'
-                    + 'Klicken für den nächsten Modus.'
+                tip: 'The assistant works through without asking. Everything stays undoable.\n'
+                    + 'Click for the next mode.'
             },
             plan: {
-                label: 'Plan – nur lesen und planen',
+                label: 'Plan – read and plan only',
                 icon: 'checklist',
-                tip: 'Der Assistent darf nur lesen und planen. Änderungen und Shell-Befehle sind gesperrt.\n'
-                    + 'Klicken für den nächsten Modus.'
+                tip: 'The assistant may only read and plan. Changes and shell commands are blocked.\n'
+                    + 'Click for the next mode.'
             }
         };
         const current = MODES[mode];
@@ -76,7 +76,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
                 vscode.TreeItemCollapsibleState.None,
                 'aiAssistant.openPanel',
                 new vscode.ThemeIcon('add'),
-                'Öffnet einen neuen AI-Chat-Tab im Editor'
+                'Opens a new AI chat tab in the editor'
             ),
 
             new SidebarItem(
@@ -106,19 +106,19 @@ export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
                 'aiAssistant.toggleAutoTest',
                 new vscode.ThemeIcon(autoTest ? 'beaker' : 'circle-outline'),
                 autoTest
-                    ? 'KI erkennt Testframework automatisch und führt Tests nach Änderungen aus. Klicken zum Deaktivieren.'
-                    : 'Tests werden NICHT automatisch ausgeführt. Klicken zum Aktivieren.',
+                    ? 'The AI detects the test framework and runs tests after changes. Click to switch off.'
+                    : 'Tests are NOT run automatically. Click to switch on.',
                 false,
                 autoTest ? 'active' : 'inactive'
             ),
 
             // ── Hinweis: KI erkennt Test-Befehl automatisch ─────────────────
             ...(autoTest ? [new SidebarItem(
-                'Befehl: von KI erkannt',
+                'Command: detected by the AI',
                 vscode.TreeItemCollapsibleState.None,
                 undefined,
                 new vscode.ThemeIcon('info'),
-                'Die KI erkennt anhand von package.json, Cargo.toml, pytest.ini usw. automatisch den richtigen Test-Befehl.'
+                'The AI works out the right test command from package.json, Cargo.toml, pytest.ini and so on.'
             )] : []),
 
             new SidebarItem(
@@ -136,7 +136,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
                 vscode.TreeItemCollapsibleState.None,
                 'aiAssistant.openSettings',
                 new vscode.ThemeIcon('settings-gear'),
-                'Alle Einstellungen öffnen'
+                'Open all settings'
             ),
         ];
 

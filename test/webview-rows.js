@@ -294,19 +294,19 @@ if (loaded.error) {
     api.dispatch({ type: 'stats', stats: {
         promptTokens: 14600, promptPerSecond: 86, cachedTokens: 6200,
         predictedTokens: 2100, predictedPerSecond: 20.7 } });
-    check('ohne Werkzeug: der alte Text', /Antwort wird erzeugt/.test(phase()), phase());
+    check('ohne Werkzeug: der alte Text', /Writing the answer/.test(phase()), phase());
 
     api.dispatch({ type: 'stats', stats: {
         promptTokens: 14600, promptPerSecond: 86, cachedTokens: 6200,
         predictedTokens: 2100, predictedPerSecond: 20.7, tool: 'create_file' } });
     check('mit Werkzeug: es steht da, was geschrieben wird',
-        /Datei wird geschrieben/.test(phase()), phase());
+        /Writing a file/.test(phase()), phase());
     check('und die Tokenzahl bleibt', /2\.1k Tok|2100 Tok/.test(phase()), phase());
 
     api.dispatch({ type: 'stats', stats: {
         promptTokens: 100, promptPerSecond: 80, cachedTokens: 0,
         predictedTokens: 50, predictedPerSecond: 20, tool: 'shell' } });
-    check('shell wird als Befehl benannt', /Befehl wird formuliert/.test(phase()), phase());
+    check('shell wird als Befehl benannt', /Composing a command/.test(phase()), phase());
 
     // Ein unbekanntes Werkzeug faellt nicht auf die Nase
     api.dispatch({ type: 'stats', stats: {
@@ -352,18 +352,18 @@ if (loaded.error) {
     api.setThinking(true);
     const busyHint = store.get('hint').textContent;
     check('waehrend eines Laufs: Enter reiht ein',
-        /Enter reiht die Anweisung ein/.test(busyHint), busyHint);
+        /Enter queues the instruction/.test(busyHint), busyHint);
     check('Hinweis sagt, wann sie drankommt',
-        /nach dem laufenden Schritt/.test(busyHint), busyHint);
+        /after the current step/.test(busyHint), busyHint);
 
     api.setThinking(false);
     const idleHint = store.get('hint').textContent;
-    check('im Ruhezustand: Enter zum Senden',
-        /^Enter zum Senden/.test(idleHint), idleHint);
+    check('im Ruhezustand: Enter sendet',
+        /^Enter to send/.test(idleHint), idleHint);
     check('Trennzeichen ist ein Mittelpunkt, keine rohe Escape-Ziffer',
         idleHint.includes('·') && !/00b7/.test(idleHint), idleHint);
-    check('Umlaut im Hinweis ist echt',
-        idleHint.includes('für'), idleHint);
+    check('Hinweis nennt beide Tasten',
+        /Enter/.test(idleHint) && /Shift\+Enter/.test(idleHint), idleHint);
 
     // Keine rohen Escape-Reste im ganzen Skript: dieselbe Panne kann jede
     // andere Zeichenkette treffen.

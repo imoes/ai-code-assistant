@@ -82,7 +82,7 @@ export class HistoryManager {
         this.data = { version: 1, lastUpdated: new Date().toISOString(), sessions: [], goal };
         this.currentSessionId = this.generateSessionId();
         this.startSession();
-        this.logger.info(`Verlauf gelöscht: ${removed} Session(s) entfernt.`);
+        this.logger.info(`History cleared: ${removed} session(s) removed.`);
         return removed;
     }
 
@@ -241,7 +241,7 @@ export class HistoryManager {
                 }
             }
         } catch (err) {
-            this.logger.warn(`History-Datei konnte nicht geladen werden: ${(err as Error).message}`);
+            this.logger.warn(`Could not load the history file: ${(err as Error).message}`);
         }
         return { version: 1, lastUpdated: new Date().toISOString(), sessions: [] };
     }
@@ -257,7 +257,7 @@ export class HistoryManager {
             const session = this.currentSession();
             this.logger.info(`History gespeichert: ${this.historyPath} (${session?.messages.length ?? 0} Nachrichten in aktueller Session)`);
         } catch (err) {
-            this.logger.warn(`History konnte nicht gespeichert werden: ${this.historyPath} — ${(err as Error).message}`);
+            this.logger.warn(`Could not save the history: ${this.historyPath} — ${(err as Error).message}`);
         }
     }
 

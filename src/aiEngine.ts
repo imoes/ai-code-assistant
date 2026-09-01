@@ -259,7 +259,7 @@ export class AIEngine {
         this.taskComplete = false;
         this.historyLoaded = true; // Kein erneutes Laden nach Reset
         this.historyManager?.startSession(); // Neue Session beginnen
-        this.logger.info('Konversationsverlauf zurückgesetzt.');
+        this.logger.info('Conversation history reset.');
     }
 
     /** Register a callback that reports plan changes to the chat. */
@@ -312,7 +312,7 @@ export class AIEngine {
         this.goal = text.trim();
         this.ensureHistoryManager();
         this.historyManager?.setGoal(this.goal);
-        this.logger.info(this.goal ? `Ziel gesetzt: ${this.goal}` : 'Ziel gelöscht.');
+        this.logger.info(this.goal ? `Goal set: ${this.goal}` : 'Goal cleared.');
     }
 
     /**
@@ -353,13 +353,13 @@ export class AIEngine {
         // what was actually done. A single run gets that panel; the loop only
         // reported "7 Runden, 23 Aktionen" and the detail scrolled away.
         const log: ExecutedAction[] = [];
-        let stopped = 'Budget aufgebraucht';
+        let stopped = 'budget spent';
 
         this.loopActive = true;
         try {
             while (rounds < budget.rounds) {
-                if (this.cancelled) { stopped = 'abgebrochen'; break; }
-                if (Date.now() >= deadline) { stopped = 'Zeit aufgebraucht'; break; }
+                if (this.cancelled) { stopped = 'cancelled'; break; }
+                if (Date.now() >= deadline) { stopped = 'time spent'; break; }
 
                 rounds++;
                 const left = Math.max(0, Math.round((deadline - Date.now()) / 60_000));
@@ -370,8 +370,8 @@ export class AIEngine {
                 // Labeling of the budget.
                 const boundByRounds = /Runde/i.test(budget.label);
                 onRound?.(rounds, budget.rounds, boundByRounds
-                    ? `noch ${budget.rounds - rounds} Runde(n)`
-                    : `noch ~${left} Minute(n)`);
+                    ? `${budget.rounds - rounds} round(s) left`
+                    : `~${left} minute(s) left`);
 
                 // What the user types in between takes precedence over the
                 // loop prompt – they are watching and adjusting.
@@ -387,12 +387,12 @@ export class AIEngine {
                 actions += result.actions.length;
                 log.push(...result.actions);
 
-                if (this.cancelled) { stopped = 'abgebrochen'; break; }
+                if (this.cancelled) { stopped = 'cancelled'; break; }
 
                 // Nothing done: once is chance, twice is stagnation.
                 if (result.actions.length === 0) {
                     idleRounds++;
-                    if (idleRounds >= 2) { stopped = 'keine Aktionen mehr'; break; }
+                    if (idleRounds >= 2) { stopped = 'no actions left'; break; }
                 } else {
                     idleRounds = 0;
                 }
@@ -400,7 +400,7 @@ export class AIEngine {
                 // Reported as complete AND no open planning step: then it is done.
                 const openSteps = this.plan.filter(s => s.status !== 'done').length;
                 if (this.taskComplete && openSteps === 0) {
-                    stopped = 'Ziel erreicht';
+                    stopped = 'goal reached';
                     break;
                 }
             }
@@ -409,7 +409,7 @@ export class AIEngine {
         }
 
         this.logger.info(
-            `Schleife beendet nach ${rounds} Runde(n), ${actions} Aktion(en): ${stopped}`);
+            `Loop finished after ${rounds} round(s), ${actions} action(s): ${stopped}`);
         return { rounds, actions, stopped, log };
     }
 
@@ -475,7 +475,7 @@ export class AIEngine {
     cancel(): void {
         this.cancelled = true;
         this.mcpClient.cancel();
-        this.logger.info('Abbruch vom Benutzer: Anfrage und Agenten-Schleife werden beendet.');
+        this.logger.info('Cancelled by the user: request and agent loop are stopping.');
     }
 
     /** Is a task currently running? */
@@ -509,7 +509,7 @@ export class AIEngine {
         const autoApply = mode === 'auto';
         const systemPromptBase = config.get<string>(
             'systemPrompt',
-            'Du bist ein erfahrener Software-Entwickler und AI Code Assistant.'
+            'You are an experienced software developer and AI coding assistant.'
         );
 
         const confirm: ConfirmFn = autoApply
@@ -519,7 +519,7 @@ export class AIEngine {
         // Check for cancellation before a new round begins. The user should
         // be able to exit between iterations, not only at the step limit.
         if (this.cancelled) {
-            this.logger.info('Agenten-Schleife abgebrochen (Benutzer).');
+            this.logger.info('Agent loop cancelled (by the user).');
             return { text: '', actions: [], iterations: _depth };
         }
 
@@ -557,7 +557,7 @@ export class AIEngine {
         try {
             const root = this.fileManager.getWorkspaceRoot();
             const allFilesList = this.fileManager.listFiles();
-            this.logger.info(`Workspace-Scan: ${allFilesList.length} Datei(en) in ${root}`);
+            this.logger.info(`Workspace scan: ${allFilesList.length} file(s) in ${root}`);
             workspaceContext = `\n\n## Project\n${this.analyzer.projectOverview()}`;
 
             // Include the active editor file and files mentioned in the prompt in advance.
@@ -624,7 +624,7 @@ and append it as the last action:shell block.` : '';
         // Compress history BEFORE sending the request – otherwise it will blow up.
         const compactNote = await this.compactHistoryIfNeeded(fullSystemPrompt);
         if (compactNote) {
-            onActionProgress?.('🗜 Verlauf komprimiert', compactNote);
+            onActionProgress?.('🗜 History compacted', compactNote);
         }
 
         const contextWarning = this.checkContextSize(fullSystemPrompt, userPrompt);
@@ -632,17 +632,17 @@ and append it as the last action:shell block.` : '';
         // ── Automatic web search for keywords ───────────────────────
         let searchContext = '';
         if (_depth === 0 && this.detectSearchIntent(userPrompt)) {
-            onActionProgress?.('🔍 Suchbegriff wird optimiert…', userPrompt.slice(0, 80));
+            onActionProgress?.('🔍 Refining the search terms…', userPrompt.slice(0, 80));
             const searchQuery = await this.extractSearchQuery(userPrompt);
-            onActionProgress?.('🔍 Web-Suche läuft…', searchQuery);
+            onActionProgress?.('🔍 Searching the web…', searchQuery);
             try {
                 const searcher = WebSearcher.getInstance();
                 const searchResult = await searcher.search(searchQuery, 5);
                 searchContext = '\n\n' + searcher.formatForAI(searchResult);
-                onActionProgress?.('🔍 Web-Suche abgeschlossen', `${searchResult.results.length} Ergebnis(se) für "${searchQuery}"`);
-                this.logger.info(`Auto-Suche: "${searchQuery}" → ${searchResult.results.length} Ergebnis(se)`);
+                onActionProgress?.('🔍 Web search finished', `${searchResult.results.length} result(s) for "${searchQuery}"`);
+                this.logger.info(`Auto search: "${searchQuery}" → ${searchResult.results.length} result(s)`);
             } catch (err) {
-                this.logger.warn(`Auto-Suche fehlgeschlagen: ${(err as Error).message}`);
+                this.logger.warn(`Auto search failed: ${(err as Error).message}`);
             }
         }
 
@@ -687,7 +687,7 @@ and append it as the last action:shell block.` : '';
             }
         } catch (err) {
             this.logger.error('KI-Anfrage fehlgeschlagen', err);
-            throw new Error(`KI nicht erreichbar: ${(err as Error).message}`);
+            throw new Error(`The AI is not reachable: ${(err as Error).message}`);
         }
 
         // Reasoning models (laguna, DeepSeek R1, Qwen, etc.) often design action blocks in the <think> block
@@ -745,7 +745,7 @@ and append it as the last action:shell block.` : '';
             const hasCodeBlock = /```[\w\s]*\n[\s\S]+?```/.test(actionSource);
             const looksLikeExample = hasCodeBlock && /beispiel|example|so könnte|hier ist wie|du kannst|you can|hier ein|so würde/i.test(actionSource);
             if (looksLikeExample) {
-                this.logger.info('Beispiel-Erkennung: KI hat Beispiel ohne Aktion gegeben → Korrektur-Prompt');
+                this.logger.info('Example detection: the AI showed an example without an action → correction prompt');
                 onIteration?.(1, 'Beispiel erkannt – fordere direkte Umsetzung…');
                 const correctionPrompt =
                     `You only showed an example instead of changing the code.\n` +
@@ -765,7 +765,7 @@ and append it as the last action:shell block.` : '';
 
         // ── History speichern ─────────────────────────────────────────────────
         if (!this.historyManager) {
-            this.logger.warn('History: HistoryManager ist null – kein Eintrag gespeichert.');
+            this.logger.warn('History: HistoryManager is null – nothing was stored.');
         } else {
             if (_depth === 0) {
                 this.historyManager.addUserMessage(userPrompt);
@@ -785,8 +785,8 @@ and append it as the last action:shell block.` : '';
         // the step that the loop itself would have planned.
         const queued = this.takeQueuedPrompt();
         if (queued) {
-            const note = 'Neue Anweisung erhalten – setze sie um…';
-            this.logger.info(`Eingereihte Anweisung wird eingeschoben (Runde ${_depth + 1}).`);
+            const note = 'New instruction received – carrying it out…';
+            this.logger.info(`Queued instruction is being inserted (round ${_depth + 1}).`);
             this.console.step(_depth + 1, note);
             onIteration?.(_depth + 1, note);
 
@@ -807,7 +807,7 @@ and append it as the last action:shell block.` : '';
         const step = this.planNextStep(actions, _depth, config);
 
         if (step) {
-            this.logger.info(`Agenten-Schleife Schritt ${_depth + 1}: ${step.reason}`);
+            this.logger.info(`Agent loop step ${_depth + 1}: ${step.reason}`);
             this.console.step(_depth + 1, step.reason);
             onIteration?.(_depth + 1, step.reason);
 
@@ -864,18 +864,18 @@ and append it as the last action:shell block.` : '';
 
         // User has canceled – do not continue
         if (this.cancelled) {
-            this.logger.info('Agenten-Schleife beendet: vom Benutzer abgebrochen.');
+            this.logger.info('Agent loop finished: cancelled by the user.');
             return null;
         }
 
         // The AI has reported the task as completed itself
         if (this.taskComplete) {
-            this.logger.info('Agenten-Schleife beendet: action:done erhalten.');
+            this.logger.info('Agent loop finished: action:done received.');
             return null;
         }
 
         if (depth >= maxSteps) {
-            this.logger.warn(`Agenten-Schleife beendet: Schrittlimit ${maxSteps} erreicht.`);
+            this.logger.warn(`Agent loop finished: step limit ${maxSteps} reached.`);
             return null;
         }
 
@@ -917,8 +917,8 @@ and append it as the last action:shell block.` : '';
         }
         if (this.repeatCount >= 2) {
             this.logger.warn(
-                `Agenten-Schleife beendet: dieselbe Runde ${this.repeatCount + 1}× wiederholt ` +
-                `(${signature.slice(0, 160)}). Das Modell kommt nicht weiter.`
+                `Agent loop finished: the same round repeated ${this.repeatCount + 1}× ` +
+                `(${signature.slice(0, 160)}). The model is not getting anywhere.`
             );
             return null;
         }
@@ -936,23 +936,23 @@ and append it as the last action:shell block.` : '';
         // bekommt das Modell nach jeder Änderung dieselbe Seite erneut vorgelegt.
         const successfulWithOutput = actions.filter(a =>
             a.success && a.output?.trim()
-            && !a.description.startsWith('Datei gelesen:')
+            && !a.description.startsWith('File read:')
             && (a.type === 'shell' || (a.type === 'web_search' && !hasFileActions)));
 
         // ── 1. Fehlgeschlagene Shell-Befehle: Fehler beheben ──────────────────
         if (failedShells.length > 0 && autoFix) {
-            const userInstruction = failedShells.find(a => a.output?.startsWith('Benutzer-Anweisung:'));
+            const userInstruction = failedShells.find(a => a.output?.startsWith('Instruction from the user:'));
             const ctx = this.formatOutputs(failedShells);
 
             if (userInstruction) {
                 return {
-                    reason: 'Benutzer-Anweisung erhalten – setze um…',
+                    reason: 'Instruction from the user – carrying it out…',
                     prompt: `${task}THE USER GAVE YOU AN INSTRUCTION:\n\n${ctx}\n\n` +
                         `Carry it out right away, using action blocks.`
                 };
             }
             return {
-                reason: `${failedShells.length} Fehler gefunden – analysiere…`,
+                reason: `${failedShells.length} error(s) found – analysing…`,
                 prompt:
                     `${task}ERROR ANALYSIS REQUIRED:\n\n${ctx}\n\n` +
                     `Read the error output closely. What is the cause? ` +
@@ -965,7 +965,7 @@ and append it as the last action:shell block.` : '';
         // ── 1b. Change did not go through: Report the cause ────────
         if (failedFileActions.length > 0 && autoFix) {
             return {
-                reason: `${failedFileActions.length} Änderung(en) nicht angewendet – korrigiere…`,
+                reason: `${failedFileActions.length} change(s) not applied – fixing…`,
                 prompt:
                     `${task}A CHANGE WAS NOT APPLIED:\n\n` +
                     `${this.formatOutputs(failedFileActions)}\n\n` +
@@ -982,7 +982,7 @@ and append it as the last action:shell block.` : '';
             const ctx = this.formatOutputs(analyses);
             const labels = analyses.map(a => a.description).join(', ');
             return {
-                reason: `Analyse ausgewertet (${labels.slice(0, 90)}) – arbeite weiter…`,
+                reason: `Analysis read (${labels.slice(0, 90)}) – carrying on…`,
                 prompt:
                     `${task}RESULTS OF YOUR CODE ANALYSIS:\n\n${ctx}\n\n` +
                     `You have seen the code now. Continue working on exactly the task above:\n` +
@@ -996,7 +996,7 @@ and append it as the last action:shell block.` : '';
         // ── 3. Befehlsausgabe: darauf reagieren ───────────────────────────────
         if (successfulWithOutput.length > 0 && autoFix) {
             return {
-                reason: 'Ausgaben empfangen – analysiere…',
+                reason: 'Output received – analysing…',
                 prompt:
                     `${task}COMMAND OUTPUT – ANALYSIS AND ACTION REQUIRED:\n\n` +
                     `${this.formatOutputs(successfulWithOutput)}\n\n` +
@@ -1020,7 +1020,7 @@ and append it as the last action:shell block.` : '';
             && actions.every(a => a.type === 'plan' || (a.type === 'info' && !this.taskComplete));
         if (onlyBookkeeping && agentLoop) {
             return {
-                reason: 'Nur der Plan wurde bewegt – Schritt ausführen…',
+                reason: 'Only the plan moved – carry out the step…',
                 prompt:
                     `${task}THAT ROUND ONLY UPDATED BOOKKEEPING – no work was done.\n` +
                     `A plan is an announcement, not an execution. Marking a step as done ` +
@@ -1038,7 +1038,7 @@ and append it as the last action:shell block.` : '';
             && this.plan.length > 0 && openSteps.length > 0 && actions.length > 0) {
             const next = openSteps[0];
             return {
-                reason: `Plan: ${this.plan.length - openSteps.length}/${this.plan.length} erledigt – nächster Schritt…`,
+                reason: `Plan: ${this.plan.length - openSteps.length}/${this.plan.length} done – next step…`,
                 prompt:
                     `${task}CONTINUE THE PLAN. Still open:\n` +
                     openSteps.map(s => `- [${s.status === 'doing' ? '>' : ' '}] ${s.text}`).join('\n') +
@@ -1059,7 +1059,7 @@ and append it as the last action:shell block.` : '';
         if (agentLoop && autoFix && changedOk && !ranShell
             && config.get<boolean>('autoTest', false)) {
             return {
-                reason: 'Änderung noch ungeprüft – Tests anstoßen…',
+                reason: 'Change not verified yet – starting the tests…',
                 prompt:
                     `${task}YOU CHANGED SOMETHING BUT VERIFIED NOTHING:\n` +
                     `${actions.filter(a => isFileAction(a.type) && a.success)
@@ -1078,7 +1078,7 @@ and append it as the last action:shell block.` : '';
     /** Format action outputs as a context block for the next round. */
     private formatOutputs(actions: ExecutedAction[]): string {
         return actions.map(a => {
-            if (a.output?.startsWith('Benutzer-Anweisung:')) {
+            if (a.output?.startsWith('Instruction from the user:')) {
                 return `**${a.output}**`;
             }
             const status = a.success ? '✅' : '❌';
@@ -1109,8 +1109,8 @@ and append it as the last action:shell block.` : '';
         const tail = max - head;
         const dropped = text.length - max;
         return text.slice(0, head)
-            + `\n\n[… ${dropped} Zeichen ausgelassen. Brauchst du die Mitte: `
-            + `read_file mit offset/limit, oder grep mit einem Suchmuster. …]\n\n`
+            + `\n\n[… ${dropped} characters omitted. If you need the middle: `
+            + `read_file with offset/limit, or grep with a pattern. …]\n\n`
             + text.slice(-tail);
     }
 
@@ -1242,7 +1242,14 @@ and append it as the last action:shell block.` : '';
             `registry, drivers, WinGet, Windows-only executables, COM). Mind the ` +
             `syntax: no \`&&\`, use \`;\` – and \`Get-ChildItem\`, not \`ls\`:\n` +
             `\`\`\`action:shell\nshell: powershell\n---\nGet-Service -Name Spooler | Select-Object Status, Name\n\`\`\`\n` +
-            `Prefer WSL. Only reach for PowerShell when WSL cannot do the job.\n\n` +
+            `Prefer WSL. Only reach for PowerShell when WSL cannot do the job.\n` +
+            `If a command could sensibly run in EITHER and the answer changes what you ` +
+            `do next, ask with action:ask_user instead of guessing — one round of asking ` +
+            `beats three rounds of a command failing in the wrong shell:\n` +
+            `\`\`\`action:ask_user\nheader: Shell\nquestion: Which shell should run this?\n` +
+            `options:\n` +
+            `- WSL — POSIX tools, the project's build and test commands\n` +
+            `- PowerShell — Windows services, registry, Windows-only programs\n\`\`\`\n\n` +
             `Web search (returns title, address and a short excerpt):\n` +
             `\`\`\`action:web_search\nquery: search terms\n\`\`\`\n\n` +
             `Fetch and read a page – almost always needed after a search, because the\n` +
@@ -1383,7 +1390,7 @@ and append it as the last action:shell block.` : '';
         if (!store) {
             return {
                 type: 'info',
-                description: 'Kein Workspace – nichts gemerkt',
+                description: 'No workspace – nothing remembered',
                 success: false,
                 output: 'There is no workspace open, so there is nowhere to store the rule.'
             };
@@ -1393,8 +1400,8 @@ and append it as the last action:shell block.` : '';
         return {
             type: 'info',
             description: added
-                ? `💡 Gelernt: ${ruleText.slice(0, 60)}`
-                : `💡 Schon bekannt: ${ruleText.slice(0, 60)}`,
+                ? `💡 Learned: ${ruleText.slice(0, 60)}`
+                : `💡 Already known: ${ruleText.slice(0, 60)}`,
             success: true,
             output: added
                 ? 'Stored. It will be part of every future request in this project.'
@@ -1422,7 +1429,7 @@ and append it as the last action:shell block.` : '';
         const clean = text.trim();
         if (!clean) return this.pendingInputs.length;
         this.pendingInputs.push(clean);
-        this.logger.info(`Anweisung eingereiht (${this.pendingInputs.length} in der Warteschlange): `
+        this.logger.info(`Instruction queued (${this.pendingInputs.length} waiting): `
             + clean.slice(0, 80));
         return this.pendingInputs.length;
     }
@@ -1494,10 +1501,10 @@ and append it as the last action:shell block.` : '';
                 if (!content) continue;
                 // Shorten very large instruction files so that the context does not overflow
                 const clipped = content.length > 8000
-                    ? content.slice(0, 8000) + '\n… [gekürzt]'
+                    ? content.slice(0, 8000) + '\n… [cut]'
                     : content;
                 blocks.push(`### ${name}\n${clipped}`);
-                this.logger.info(`Projekt-Anweisungen geladen: ${name} (${content.length} Zeichen)`);
+                this.logger.info(`Project instructions loaded: ${name} (${content.length} characters)`);
             } catch { /* Datei nicht lesbar → überspringen */ }
         }
         return blocks.join('\n\n');
@@ -1546,8 +1553,8 @@ and append it as the last action:shell block.` : '';
         if (fold.length === 0) return undefined;
 
         this.logger.info(
-            `Verlauf wird komprimiert: ~${estimated} von ${ctx} Tokens (${percent}%-Grenze: ${limit}), ` +
-            `${fold.length} Nachricht(en) werden zusammengefasst.`
+            `Compacting the history: ~${estimated} of ${ctx} tokens (${percent}% limit: ${limit}), ` +
+            `${fold.length} message(s) are being summarised.`
         );
 
         const transcript = fold
@@ -1579,15 +1586,15 @@ and append it as the last action:shell block.` : '';
         } catch (err) {
             // Summarization failed → hard truncate instead of letting the request
             // fail. A truncated history is better than none.
-            this.logger.warn(`Komprimieren fehlgeschlagen (${(err as Error).message}) – kürze hart.`);
+            this.logger.warn(`Compacting failed (${(err as Error).message}) – falling back to a hard cut.`);
             this.conversationHistory = keep;
-            return `⚠ Verlauf gekürzt: ${before - keep.length} Nachricht(en) entfernt `
-                + `(Zusammenfassung nicht möglich).`;
+            return `⚠ History shortened: ${before - keep.length} message(s) removed `
+                + `(no summary possible).`;
         }
 
         if (!summary) {
             this.conversationHistory = keep;
-            return `⚠ Verlauf gekürzt: ${before - keep.length} Nachricht(en) entfernt.`;
+            return `⚠ History shortened: ${before - keep.length} message(s) removed.`;
         }
 
         this.conversationHistory = [
@@ -1599,9 +1606,9 @@ and append it as the last action:shell block.` : '';
             + this.conversationHistory.reduce((sum, m) => sum + m.content.length, 0);
         const afterTokens = Math.round(afterChars / 4);
 
-        this.logger.info(`Verlauf komprimiert: ~${estimated} → ~${afterTokens} Tokens.`);
-        return `🗜 Verlauf komprimiert: ${fold.length} Nachricht(en) zusammengefasst `
-            + `(~${estimated} → ~${afterTokens} Tokens, Grenze ${percent}% von ${ctx}).`;
+        this.logger.info(`History compacted: ~${estimated} → ~${afterTokens} tokens.`);
+        return `🗜 History compacted: ${fold.length} message(s) summarised `
+            + `(~${estimated} → ~${afterTokens} tokens, limit ${percent}% of ${ctx}).`;
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1619,12 +1626,12 @@ and append it as the last action:shell block.` : '';
         const totalChars = systemPrompt.length + historyChars + userPrompt.length;
         const estimatedTokens = Math.round(totalChars / 4);
 
-        this.logger.info(`Kontext-Schätzung: ~${estimatedTokens} Tokens (History: ${this.conversationHistory.length} Nachrichten)`);
+        this.logger.info(`Context estimate: ~${estimatedTokens} tokens (history: ${this.conversationHistory.length} messages)`);
 
         if (estimatedTokens > warnThreshold) {
             const percent = Math.round((estimatedTokens / warnThreshold) * 100);
-            return `⚠ Kontext-Limit: ~${estimatedTokens} Tokens geschätzt (${percent}% des Schwellenwerts ${warnThreshold}). ` +
-                   `Erwäge die Konversation zurückzusetzen (🔄 Neu) um Qualität zu erhalten.`;
+            return `⚠ Context limit: ~${estimatedTokens} tokens estimated (${percent}% of the threshold ${warnThreshold}). ` +
+                   `Consider resetting the conversation (🔄 New) to keep the quality up.`;
         }
         return undefined;
     }
@@ -1829,8 +1836,8 @@ and append it as the last action:shell block.` : '';
             create_file: 'Write', edit_file: 'Write', patch_file: 'Patch',
             replace_lines: 'Patch', delete_file: 'Delete',
             shell: 'Bash', web_search: 'Search', web_fetch: 'Fetch',
-            plan: 'Plan', todo: 'Plan', done: 'Fertig', finish: 'Fertig',
-            remember: 'Gelernt', ask_user: 'Frage'
+            plan: 'Plan', todo: 'Plan', done: 'Done', finish: 'Done',
+            remember: 'Learned', ask_user: 'Question'
         };
         return labels[actionType] ?? actionType;
     }
@@ -1895,7 +1902,7 @@ and append it as the last action:shell block.` : '';
             const blockKey = `${actionType} ${blockContent}`;
             if (seenBlocks.has(blockKey)) {
                 this.logger.info(
-                    `Aktions-Parser: '${actionType}' doppelt geschickt – zweiter Aufruf übersprungen.`);
+                    `Action parser: '${actionType}' sent twice – second call skipped.`);
                 continue;
             }
             seenBlocks.add(blockKey);
@@ -1916,14 +1923,14 @@ and append it as the last action:shell block.` : '';
             // a filtered tool catalog – here is
             // the hard limit, not in the prompt.
             if (this.planModeActive && !READ_ONLY_ACTIONS.has(actionType)) {
-                this.logger.warn(`Plan-Modus: Aktion '${actionType}' blockiert.`);
+                this.logger.warn(`Plan mode: action '${actionType}' blocked.`);
                 executed.push({
                     type: 'info',
-                    description: `🔒 Plan-Modus: '${actionType}' nicht ausgeführt`,
+                    description: `🔒 Plan mode: '${actionType}' not carried out`,
                     success: false,
-                    output: `Im Plan-Modus sind Änderungen gesperrt. Erstelle den Plan fertig `
-                        + `(action:plan) und schließe mit action:done ab. Der Benutzer wechselt `
-                        + `dann selbst in den Modus "auto" oder "ask", um ihn umzusetzen.`
+                    output: `Changes are blocked in plan mode. Finish the plan `
+                        + `(action:plan) and finish with action:done. The user then switches `
+                        + `to mode "auto" or "ask" themselves to carry it out.`
                 });
                 continue;
             }
@@ -2002,14 +2009,14 @@ and append it as the last action:shell block.` : '';
                 }
             } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
-                this.logger.error(`Aktion '${actionType}' fehlgeschlagen: ${errMsg}`);
+                this.logger.error(`Action '${actionType}' failed: ${errMsg}`);
                 executed.push({
                     type: 'info',
-                    description: `Fehler bei Aktion '${actionType}': ${errMsg}`,
+                    description: `Action '${actionType}' failed: ${errMsg}`,
                     success: false,
                     output: errMsg
                 });
-                this.console.problem(`Aktion '${actionType}': ${errMsg}`);
+                this.console.problem(`Action '${actionType}': ${errMsg}`);
 
                 // A thrown error needs its row too – this is the case that
                 // matters most. A patch whose search text does not match throws,
@@ -2041,8 +2048,8 @@ and append it as the last action:shell block.` : '';
         const { code, removed } = stripToolMarkupFromCode(content);
         if (removed.length > 0) {
             this.logger.warn(
-                `${where}: ${removed.length} Zeile(n) Tool-Call-Markup aus dem Dateiinhalt ` +
-                `entfernt: ${removed.slice(0, 3).join(', ')}`
+                `${where}: removed ${removed.length} line(s) of tool-call markup from the ` +
+                `file content: ${removed.slice(0, 3).join(', ')}`
             );
             this.console.problem(
                 `Markup-Reste im Inhalt entfernt (${removed.slice(0, 2).join(', ')})`
@@ -2098,9 +2105,9 @@ and append it as the last action:shell block.` : '';
 
     private async handleFileAction(type: 'create_file' | 'edit_file', content: string, confirm: ConfirmFn): Promise<ExecutedAction> {
         const { header, body } = AIEngine.splitHeaderAndBody(content);
-        if (!header) throw new Error('Kein "---" Trenner im Aktionsblock gefunden');
+        if (!header) throw new Error('No "---" separator found in the action block');
         const pathMatch = header.match(/^path:\s*(.+)$/m);
-        if (!pathMatch) throw new Error('Kein "path:" gefunden');
+        if (!pathMatch) throw new Error('No "path:" found');
         const filePath = pathMatch[1].trim();
         const fileContent = this.cleanCodeForWrite(body, `${type}`);
 
@@ -2113,13 +2120,13 @@ and append it as the last action:shell block.` : '';
                 const newLines = fileContent.split('\n').length;
                 if (newLines < existingLines * 0.50 && existingLines > 20) {
                     this.logger.warn(
-                        `edit_file: Neue Version hat ${newLines} Zeilen, Original hat ${existingLines}. ` +
-                        `Starte Smart-Merge um ungewollte Löschungen zu verhindern.`
+                        `edit_file: the new version has ${newLines} lines, the original has ${existingLines}. ` +
+                        `Starting a smart merge to avoid unintended deletions.`
                     );
                     const ok = await this.fileManager.smartMergeEdit(filePath, fileContent, confirm);
                     return {
                         type: 'file_edit',
-                        description: `${ok ? 'Smart-Merge' : 'Abgelehnt'}: ${filePath}`,
+                        description: `${ok ? 'Smart merge' : 'Rejected'}: ${filePath}`,
                         success: ok
                     };
                 }
@@ -2131,7 +2138,7 @@ and append it as the last action:shell block.` : '';
         const fileExists = !!this.fileManager.readFile(filePath);
         let actualType = type;
         if (type === 'edit_file' && !fileExists) {
-            this.logger.warn(`edit_file auf nicht-existierende Datei "${filePath}" – erstelle stattdessen.`);
+            this.logger.warn(`edit_file on a file that does not exist, "${filePath}" – creating it instead.`);
             actualType = 'create_file';
         }
 
@@ -2140,8 +2147,8 @@ and append it as the last action:shell block.` : '';
             : await this.fileManager.editFile(filePath, fileContent, confirm);
 
         const verb = ok
-            ? (actualType === 'create_file' ? 'Erstellt' : 'Bearbeitet')
-            : 'Abgelehnt';
+            ? (actualType === 'create_file' ? 'Created' : 'Edited')
+            : 'Rejected';
         return {
             type: actualType === 'create_file' ? 'file_create' : 'file_edit',
             description: `${verb}: ${filePath}`,
@@ -2151,47 +2158,47 @@ and append it as the last action:shell block.` : '';
 
     private async handleReplaceLinesAction(content: string, confirm: ConfirmFn): Promise<ExecutedAction> {
         const { header, body } = AIEngine.splitHeaderAndBody(content);
-        if (!header) throw new Error('Kein "---" Trenner gefunden');
+        if (!header) throw new Error('No "---" separator found');
 
         const pathMatch      = header.match(/^path:\s*(.+)$/m);
         const startLineMatch = header.match(/^start_line:\s*(\d+)$/m);
         const endLineMatch   = header.match(/^end_line:\s*(\d+)$/m);
 
-        if (!pathMatch) throw new Error('Kein "path:" gefunden');
+        if (!pathMatch) throw new Error('No "path:" found');
 
         const filePath   = pathMatch[1].trim();
         const newContent = this.cleanCodeForWrite(body, 'replace_lines');
 
         // Fallback: file does not exist → create
         if (!this.fileManager.readFile(filePath)) {
-            this.logger.warn(`replace_lines auf nicht-existierende Datei "${filePath}" – erstelle stattdessen.`);
+            this.logger.warn(`replace_lines on a file that does not exist, "${filePath}" – creating it instead.`);
             const ok = await this.fileManager.createFile(filePath, newContent, { overwrite: false, confirmFn: confirm });
-            return { type: 'file_create', description: `${ok ? 'Erstellt' : 'Abgelehnt'}: ${filePath}`, success: ok };
+            return { type: 'file_create', description: `${ok ? 'Created' : 'Rejected'}: ${filePath}`, success: ok };
         }
 
-        if (!startLineMatch) throw new Error('Kein "start_line:" gefunden');
-        if (!endLineMatch)   throw new Error('Kein "end_line:" gefunden');
+        if (!startLineMatch) throw new Error('No "start_line:" found');
+        if (!endLineMatch)   throw new Error('No "end_line:" found');
 
         const startLine = parseInt(startLineMatch[1], 10);
         const endLine   = parseInt(endLineMatch[1], 10);
 
         if (isNaN(startLine) || isNaN(endLine) || startLine < 1 || endLine < startLine) {
-            throw new Error(`Ungültige Zeilennummern: start=${startLine}, end=${endLine}`);
+            throw new Error(`Invalid line numbers: start=${startLine}, end=${endLine}`);
         }
 
         const ok = await this.fileManager.replaceLines(filePath, startLine, endLine, newContent, confirm);
         return {
             type: 'file_edit',
-            description: `${ok ? 'Ersetzt' : 'Abgelehnt'} L${startLine}-${endLine}: ${filePath}`,
+            description: `${ok ? 'Replaced' : 'Rejected'} L${startLine}-${endLine}: ${filePath}`,
             success: ok
         };
     }
 
     private async handlePatchAction(content: string, confirm: ConfirmFn): Promise<ExecutedAction> {
         const { header, body: patchBody } = AIEngine.splitHeaderAndBody(content);
-        if (!header) throw new Error('Kein "---" Trenner gefunden');
+        if (!header) throw new Error('No "---" separator found');
         const pathMatch = header.match(/^path:\s*(.+)$/m);
-        if (!pathMatch) throw new Error('Kein "path:" gefunden');
+        if (!pathMatch) throw new Error('No "path:" found');
         const filePath = pathMatch[1].trim();
 
         // Parsing SEARCH/REPLACE blocks: <<<SEARCH\n...\n>>>REPLACE\n...\n (end = next block or EOF)
@@ -2216,7 +2223,7 @@ and append it as the last action:shell block.` : '';
         }
 
         if (patches.length === 0) {
-            throw new Error('Keine gültigen <<<SEARCH...>>>REPLACE Blöcke gefunden');
+            throw new Error('No valid <<<SEARCH...>>>REPLACE blocks found');
         }
 
         let allSuccess = true;
@@ -2232,7 +2239,7 @@ and append it as the last action:shell block.` : '';
 
         return {
             type: 'file_edit',
-            description: `${allSuccess ? 'Gepacht' : 'Patch fehlgeschlagen'}: ${filePath} (${patches.length} Änderung${patches.length > 1 ? 'en' : ''})`,
+            description: `${allSuccess ? 'Patched' : 'Patch failed'}: ${filePath} (${patches.length} change${patches.length > 1 ? 's' : ''})`,
             success: allSuccess,
             output: errors.length > 0 ? errors.join('\n') : undefined
         };
@@ -2258,11 +2265,11 @@ and append it as the last action:shell block.` : '';
 
     private async handleDeleteAction(content: string, confirm: ConfirmFn): Promise<ExecutedAction> {
         const pathMatch = content.match(/^path:\s*(.+)$/m);
-        if (!pathMatch) throw new Error('Kein "path:" gefunden');
+        if (!pathMatch) throw new Error('No "path:" found');
         const ok = await this.fileManager.deleteFile(pathMatch[1].trim(), confirm);
         return {
             type: 'file_delete',
-            description: `${ok ? 'Gelöscht' : 'Abgelehnt'}: ${pathMatch[1].trim()}`,
+            description: `${ok ? 'Deleted' : 'Rejected'}: ${pathMatch[1].trim()}`,
             success: ok
         };
     }
@@ -2270,7 +2277,7 @@ and append it as the last action:shell block.` : '';
     private async handleShellAction(command: string, confirm: ConfirmFn, onActionProgress?: ActionProgressCallback): Promise<ExecutedAction> {
         const config = vscode.workspace.getConfiguration('aiAssistant');
         if (!config.get<boolean>('allowShellCommands', true)) {
-            return { type: 'shell', description: 'Shell deaktiviert', success: false, output: 'Shell-Befehle sind deaktiviert.' };
+            return { type: 'shell', description: 'Shell disabled', success: false, output: 'Shell commands are switched off.' };
         }
 
         // The block can have a header `shell: powershell`. Without it,
@@ -2284,66 +2291,94 @@ and append it as the last action:shell block.` : '';
         if (workDirEarly) {
             const intercepted = ShellRunner.interceptFileReadCommand(trimmed, workDirEarly, this.logger);
             if (intercepted) {
-                this.logger.info(`Dateilese-Befehl abgefangen (kein WSL): ${trimmed}`);
+                this.logger.info(`File-read command intercepted (no WSL): ${trimmed}`);
                 return {
                     type: 'shell',
-                    description: `Datei gelesen: ${trimmed}`,
+                    description: `File read: ${trimmed}`,
                     success: intercepted.exitCode === 0,
                     output: intercepted.stdout || intercepted.stderr
                 };
             }
         }
 
-        const shellLabel = ShellRunner.resolveShell(shellKind, config) === 'powershell'
-            ? 'PowerShell' : 'WSL';
+        // Which shell it WOULD be, and which one the user could switch to.
+        //
+        // The choice is offered with every command, not just asked once in the
+        // settings: it depends on the command, not on a preference. `npm test`
+        // belongs in WSL, `Get-Service` only works in PowerShell, and which of
+        // the two a command needs is often clear to the user a moment before it
+        // is clear to the model. Switching here costs one click; the detour
+        // through "Etwas anderes" costs a whole round.
+        const resolved = ShellRunner.resolveShell(shellKind, config);
+        const usingPowerShell = resolved === 'powershell';
+        const shellLabel = usingPowerShell ? 'PowerShell' : 'WSL';
+
+        // The other shell is only worth offering where it exists and is allowed.
+        const otherAvailable = process.platform === 'win32'
+            && (usingPowerShell || config.get<boolean>('allowPowerShell', true));
+        const switchLabel = usingPowerShell ? 'Run in WSL' : 'Run in PowerShell';
+
+        const choices = otherAvailable
+            ? ['Run', switchLabel, 'Something else', 'Reject']
+            : ['Run', 'Something else', 'Reject'];
+
         const choice = await confirm(
-            `Shell-Befehl ausführen (${shellLabel}):\n\`${trimmed}\``,
-            ['Ausführen', 'Etwas anderes', 'Ablehnen']
+            `Run shell command (${shellLabel}):\n\`${trimmed}\``,
+            choices
         );
 
         let commandToRun = trimmed;
+        // The user's choice beats both the block header and the setting.
+        let effectiveKind: ShellKind = shellKind;
+        if (choice === switchLabel) {
+            effectiveKind = usingPowerShell ? 'wsl' : 'powershell';
+            this.logger.info(`Shell: the user switches to ${effectiveKind} for: ${trimmed}`);
+        }
 
-        if (choice === 'Etwas anderes') {
+        if (choice === 'Something else') {
             const userInstruction = await vscode.window.showInputBox({
-                prompt: 'Anweisung an die KI eingeben',
+                prompt: 'Enter an instruction for the AI',
                 placeHolder: 'z.B. Nutze stattdessen npm ci',
                 ignoreFocusOut: true
             });
             if (!userInstruction?.trim()) {
-                return { type: 'shell', description: `Abgelehnt: ${trimmed}`, success: false };
+                return { type: 'shell', description: `Rejected: ${trimmed}`, success: false };
             }
-            this.logger.info(`Shell: Benutzer-Anweisung an KI: ${userInstruction.trim()}`);
+            this.logger.info(`Shell: instruction from the user to the AI: ${userInstruction.trim()}`);
             // Return as a failed shell action → triggers repair loop with user context
             return {
                 type: 'shell',
-                description: `Abgelehnt: ${trimmed}`,
+                description: `Rejected: ${trimmed}`,
                 success: false,
-                output: `Benutzer-Anweisung: ${userInstruction.trim()}\n\n(Der vorgeschlagene Befehl \`${trimmed}\` wurde abgelehnt.)`
+                output: `Instruction from the user: ${userInstruction.trim()}\n\n(The proposed command \`${trimmed}\` was rejected.)`
             };
-        } else if (choice !== 'Ausführen') {
-            return { type: 'shell', description: `Abgelehnt: ${trimmed}`, success: false };
+        } else if (choice !== 'Run' && choice !== switchLabel) {
+            return { type: 'shell', description: `Rejected: ${trimmed}`, success: false };
         }
 
         let workDir: string;
         try { workDir = this.fileManager.getWorkspaceRoot(); }
-        catch { return { type: 'shell', description: 'Kein Workspace', success: false }; }
+        catch { return { type: 'shell', description: 'No workspace', success: false }; }
 
         // Report as "running" at startup, then overwrite with the result –
         // the same card, so you don't have to read the command twice.
         // The tool name shows the shell: otherwise you can't tell from the line whether
         // the command ran under WSL or in PowerShell – in case of errors, that's
         // the first question.
-        const toolName = shellLabel === 'PowerShell' ? 'PowerShell' : 'Bash';
+        // Named after the shell that ACTUALLY runs it - if the user switched,
+        // the row has to say so, otherwise the log claims something untrue.
+        const runShell = ShellRunner.resolveShell(effectiveKind, config);
+        const toolName = runShell === 'powershell' ? 'PowerShell' : 'Bash';
 
         onActionProgress?.(`Shell: ${commandToRun}`, '', {
             tool: toolName, target: commandToRun, running: true
         });
 
-        const result = await this.shellRunner.run(commandToRun, workDir, 120_000, confirm, shellKind);
+        const result = await this.shellRunner.run(commandToRun, workDir, 120_000, confirm, effectiveKind);
         const output = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, 4000);
         const ok = result.exitCode === 0;
 
-        onActionProgress?.(`Shell: ${commandToRun}`, output || '(keine Ausgabe)', {
+        onActionProgress?.(`Shell: ${commandToRun}`, output || '(no output)', {
             tool: toolName,
             target: commandToRun,
             detail: ok ? undefined : `Exit ${result.exitCode}`,
@@ -2354,7 +2389,7 @@ and append it as the last action:shell block.` : '';
             type: 'shell',
             description: `Shell: ${commandToRun.slice(0, 60)}`,
             success: result.exitCode === 0,
-            output: output || '(keine Ausgabe)'
+            output: output || '(no output)'
         };
     }
 
@@ -2377,14 +2412,14 @@ and append it as the last action:shell block.` : '';
     ): Promise<ExecutedAction> {
         const request = AIEngine.parseAskBlock(content);
         if (!request.question || request.options.length === 0) {
-            throw new Error('ask_user braucht "question:" und mindestens eine Option');
+            throw new Error('ask_user needs "question:" and at least one option');
         }
 
-        this.logger.info(`Frage an den Benutzer: ${request.question} `
+        this.logger.info(`Question to the user: ${request.question} `
             + `(${request.options.length} Optionen${request.multi ? ', Mehrfachauswahl' : ''})`);
 
-        onActionProgress?.(`Frage: ${request.question}`, '', {
-            tool: 'Frage', target: request.question, running: true
+        onActionProgress?.(`Question: ${request.question}`, '', {
+            tool: 'Question', target: request.question, running: true
         });
 
         // Without dialog callback (headless, tests, sidebar) ask via the
@@ -2399,22 +2434,22 @@ and append it as the last action:shell block.` : '';
 
         const clean = (answer ?? '').trim();
 
-        onActionProgress?.(`Frage: ${request.question}`, clean || '(abgebrochen)', {
-            tool: 'Frage', target: request.question,
+        onActionProgress?.(`Question: ${request.question}`, clean || '(abgebrochen)', {
+            tool: 'Question', target: request.question,
             detail: clean ? undefined : 'abgebrochen', ok: !!clean
         });
 
         if (!clean) {
             return {
                 type: 'shell',
-                description: `Frage unbeantwortet: ${request.question.slice(0, 50)}`,
+                description: `Question left unanswered: ${request.question.slice(0, 50)}`,
                 success: false,
                 output: 'The user did not answer. Do not ask again – decide yourself, '
                     + 'state your assumption in one sentence and carry on.'
             };
         }
 
-        this.logger.info(`Antwort des Benutzers: ${clean}`);
+        this.logger.info(`The user answered: ${clean}`);
         return {
             type: 'shell',
             description: `Entscheidung: ${clean.slice(0, 60)}`,
@@ -2635,7 +2670,7 @@ and append it as the last action:shell block.` : '';
         }
 
         if (steps.length === 0) {
-            throw new Error('Kein gültiger Plan-Eintrag gefunden (erwartet: "- [ ] Schritt")');
+            throw new Error('No valid plan entry found (expected: "- [ ] step")');
         }
 
         this.plan = steps;
@@ -2643,12 +2678,12 @@ and append it as the last action:shell block.` : '';
         this.console.plan(steps);
 
         const done = steps.filter(s => s.status === 'done').length;
-        this.logger.info(`Plan aktualisiert: ${done}/${steps.length} erledigt`);
+        this.logger.info(`Plan updated: ${done}/${steps.length} done`);
 
         const marks = { done: '[x]', doing: '[>]', todo: '[ ]' };
         return {
             type: 'plan',
-            description: `Plan: ${done}/${steps.length} erledigt`,
+            description: `Plan: ${done}/${steps.length} done`,
             success: true,
             output: steps.map(s => `${marks[s.status]} ${s.text}`).join('\n')
         };
@@ -2659,7 +2694,7 @@ and append it as the last action:shell block.` : '';
         this.taskComplete = true;
         const summary = content.match(/^(?:zusammenfassung|summary):\s*([\s\S]+)$/mi);
         const text = (summary ? summary[1] : content).trim();
-        this.logger.info('KI meldet Aufgabe abgeschlossen.');
+        this.logger.info('The AI reports the task as complete.');
 
         // The summary is the final answer, not a tool output.
         // As `output`, it ended up in a monospace box with four visible
@@ -2669,7 +2704,7 @@ and append it as the last action:shell block.` : '';
 
         return {
             type: 'info',
-            description: '✅ Aufgabe abgeschlossen',
+            description: '✅ Task complete',
             success: true,
             output: text || undefined
         };
@@ -2688,7 +2723,7 @@ and append it as the last action:shell block.` : '';
     ): Promise<ExecutedAction> {
         const urlMatch = content.match(/^url:\s*(\S+)$/m)
             ?? content.match(/(https?:\/\/\S+)/);
-        if (!urlMatch) throw new Error('Keine URL im web_fetch Block gefunden');
+        if (!urlMatch) throw new Error('No URL found in the web_fetch block');
         const url = urlMatch[1].trim().replace(/[).,]+$/, '');
 
         onActionProgress?.(`Fetch: ${url}`, '', { tool: 'Fetch', target: url, running: true });
@@ -2716,24 +2751,24 @@ and append it as the last action:shell block.` : '';
             });
             return {
                 type: 'web_search',
-                description: `Seite nicht abrufbar: ${url}`,
+                description: `Page could not be fetched: ${url}`,
                 success: false,
-                output: `${msg}\n\nPrüfe die Adresse oder nutze web_search, um eine andere Quelle zu finden.`
+                output: `${msg}\n\nCheck the address, or use web_search to find another source.`
             };
         }
     }
 
     private async handleWebSearchAction(content: string, onActionProgress?: ActionProgressCallback): Promise<ExecutedAction> {
         const queryMatch = content.match(/^query:\s*(.+)$/m);
-        if (!queryMatch) throw new Error('Kein "query:" in web_search Block gefunden');
+        if (!queryMatch) throw new Error('No "query:" found in the web_search block');
         const query = queryMatch[1].trim();
 
-        onActionProgress?.(`Web-Suche: ${query}`, '', { tool: 'Search', target: query, running: true });
+        onActionProgress?.(`Web search: ${query}`, '', { tool: 'Search', target: query, running: true });
         const searcher = WebSearcher.getInstance();
         const searchResult = await searcher.search(query, 5);
         const formatted = searcher.formatForAI(searchResult);
 
-        onActionProgress?.(`Web-Suche: ${query}`, formatted.slice(0, 4000), {
+        onActionProgress?.(`Web search: ${query}`, formatted.slice(0, 4000), {
             tool: 'Search', target: query,
             detail: `${searchResult.results.length} Ergebnis(se)`, ok: true
         });
@@ -2741,7 +2776,7 @@ and append it as the last action:shell block.` : '';
 
         return {
             type: 'web_search',
-            description: `Web-Suche: "${query}"`,
+            description: `Web search: "${query}"`,
             success: searchResult.results.length > 0 || !!searchResult.abstract,
             output: formatted
         };
@@ -2761,7 +2796,7 @@ and append it as the last action:shell block.` : '';
             .map((l, i) => `${String(i + 1).padStart(width)} | ${l}`)
             .join('\n');
         return truncated
-            ? numbered + `\n... [${lines.length - maxLines} weitere Zeilen gekürzt]`
+            ? numbered + `\n... [${lines.length - maxLines} more lines cut]`
             : numbered;
     }
 
@@ -2781,7 +2816,7 @@ and append it as the last action:shell block.` : '';
         // Starting from round 1, `userPrompt` is the loop's continuation prompt, not
         // the task. The task must be included in the summary.
         const task = this.currentTask || userPrompt;
-        parts.push(`Aufgabe: "${task.slice(0, 200).replace(/\n/g, ' ')}"`);
+        parts.push(`Task: "${task.slice(0, 200).replace(/\n/g, ' ')}"`);
 
         if (thinking) {
             // Shorten the thinking block to a maximum of 600 characters to control history size
@@ -2796,14 +2831,14 @@ and append it as the last action:shell block.` : '';
                 const status = a.success ? '✓' : '✗';
                 return `${status} ${a.description}`;
             }).join('; ');
-            parts.push(`Ausgeführte Aktionen: ${actionSummary}`);
+            parts.push(`Actions taken: ${actionSummary}`);
 
             const failed = actions.filter(a => !a.success);
             if (failed.length > 0) {
                 parts.push(`Fehlgeschlagen: ${failed.map(a => a.description).join('; ')}`);
             }
         } else {
-            parts.push('Keine Datei- oder Shell-Aktionen ausgeführt (nur Antwort generiert).');
+            parts.push('No file or shell actions were carried out (an answer only).');
         }
 
         return parts.join('\n');
@@ -2826,8 +2861,8 @@ and append it as the last action:shell block.` : '';
         const openIdx = text.search(/<think>/i);
         if (openIdx !== -1) {
             this.logger.warn(
-                'Antwort endet im <think>-Block (abgeschnitten) – keine Aktionen ausgeführt. ' +
-                'Erhöhe aiAssistant.maxTokens.'
+                'The answer ends inside the <think> block (cut off) – no actions were carried out. ' +
+                'Raise aiAssistant.maxTokens.'
             );
             return text.slice(0, openIdx);
         }
@@ -2891,7 +2926,7 @@ and append it as the last action:shell block.` : '';
                 }
             }
         } catch (err) {
-            this.logger.warn(`HistoryManager konnte nicht initialisiert werden: ${(err as Error).message}`);
+            this.logger.warn(`Could not initialise the HistoryManager: ${(err as Error).message}`);
         }
     }
 

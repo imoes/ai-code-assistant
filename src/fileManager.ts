@@ -28,7 +28,7 @@ export class FileManager {
     getWorkspaceRoot(): string {
         const folders = vscode.workspace.workspaceFolders;
         if (!folders || folders.length === 0) {
-            throw new Error('Kein Workspace-Ordner geöffnet.');
+            throw new Error('No workspace folder is open.');
         }
         return folders[0].uri.fsPath;
     }
@@ -38,8 +38,8 @@ export class FileManager {
         const resolved = path.resolve(filePath);
         if (!resolved.startsWith(path.resolve(root))) {
             throw new Error(
-                `Sicherheitsfehler: Zugriff außerhalb des Workspace verweigert.\n` +
-                `Angefragt: ${resolved}`
+                `Security error: access outside the workspace was refused.\n` +
+                `Requested: ${resolved}`
             );
         }
     }
@@ -129,17 +129,17 @@ export class FileManager {
             const diff = this.makeDiffMeta(abs, existing, content);
             const [rm, add] = diff.stats;
             const choice = await options.confirmFn(
-                `Datei überschreiben: **${rel}**\n−${rm} / +${add} Zeilen`,
-                ['Überschreiben', 'Ablehnen'],
+                `Overwrite file: **${rel}**\n−${rm} / +${add} lines`,
+                ['Overwrite', 'Reject'],
                 diff
             );
-            if (choice !== 'Überschreiben') return false;
+            if (choice !== 'Overwrite') return false;
         }
 
         const previousContent = exists ? fs.readFileSync(abs, 'utf-8') : undefined;
         this.history.record({
             type: exists ? 'file_edit' : 'file_create',
-            description: exists ? 'Datei überschrieben' : 'Datei erstellt',
+            description: exists ? 'File overwritten' : 'File created',
             filePath: abs,
             previousContent
         });
@@ -170,7 +170,7 @@ export class FileManager {
         const rel = this.relDisplay(abs);
 
         if (!fs.existsSync(abs)) {
-            throw new Error(`Datei nicht gefunden: ${rel}`);
+            throw new Error(`File not found: ${rel}`);
         }
 
         const previousContent = fs.readFileSync(abs, 'utf-8');
@@ -179,16 +179,16 @@ export class FileManager {
             const diff = this.makeDiffMeta(abs, previousContent, newContent);
             const [rm, add] = diff.stats;
             const choice = await confirmFn(
-                `Datei bearbeiten: **${rel}**\n−${rm} / +${add} Zeilen`,
-                ['Anwenden', 'Ablehnen'],
+                `Edit file: **${rel}**\n−${rm} / +${add} lines`,
+                ['Apply', 'Reject'],
                 diff
             );
-            if (choice !== 'Anwenden') return false;
+            if (choice !== 'Apply') return false;
         }
 
         this.history.record({
             type: 'file_edit',
-            description: 'Datei bearbeitet',
+            description: 'File edited',
             filePath: abs,
             previousContent
         });
@@ -211,20 +211,20 @@ export class FileManager {
         const rel = this.relDisplay(abs);
 
         if (!fs.existsSync(abs)) {
-            this.logger.warn(`Datei zum Löschen nicht gefunden: ${abs}`);
+            this.logger.warn(`File to delete not found: ${abs}`);
             return false;
         }
 
         if (confirmFn) {
             const choice = await confirmFn(
-                `⚠ Datei löschen: **${rel}**\n(Kann mit "Undo All" wiederhergestellt werden)`,
-                ['Löschen', 'Ablehnen']
+                `⚠ Delete file: **${rel}**\n(Can be brought back with "Undo All")`,
+                ['Delete', 'Reject']
             );
-            if (choice !== 'Löschen') return false;
+            if (choice !== 'Delete') return false;
         }
 
         const previousContent = fs.readFileSync(abs, 'utf-8');
-        this.history.record({ type: 'file_delete', description: 'Datei gelöscht', filePath: abs, previousContent });
+        this.history.record({ type: 'file_delete', description: 'File deleted', filePath: abs, previousContent });
 
         fs.unlinkSync(abs);
         this.logger.action('FILE_DELETE', abs);
@@ -247,20 +247,20 @@ export class FileManager {
         const relNew = this.relDisplay(absNew);
 
         if (!fs.existsSync(absOld)) {
-            throw new Error(`Quelldatei nicht gefunden: ${relOld}`);
+            throw new Error(`Source file not found: ${relOld}`);
         }
 
         if (confirmFn) {
             const choice = await confirmFn(
-                `Datei umbenennen:\n**${relOld}** → **${relNew}**`,
-                ['Umbenennen', 'Ablehnen']
+                `Rename file:\n**${relOld}** → **${relNew}**`,
+                ['Rename', 'Reject']
             );
-            if (choice !== 'Umbenennen') return false;
+            if (choice !== 'Rename') return false;
         }
 
         this.history.record({
             type: 'file_rename',
-            description: `Umbenannt nach ${relNew}`,
+            description: `Renamed to ${relNew}`,
             filePath: absOld,
             newFilePath: absNew
         });
@@ -293,7 +293,7 @@ export class FileManager {
             'vscode.diff',
             oldUri,
             newUri,
-            `${label} (KI-Änderung)`,
+            `${label} (AI change)`,
             { preview: true, preserveFocus: true }
         );
 
@@ -353,7 +353,7 @@ export class FileManager {
     ): Promise<boolean> {
         const abs = this.resolvePath(filePath);
         const rel = this.relDisplay(abs);
-        if (!fs.existsSync(abs)) throw new Error(`Datei nicht gefunden: ${rel}`);
+        if (!fs.existsSync(abs)) throw new Error(`File not found: ${rel}`);
 
         const originalContent = fs.readFileSync(abs, 'utf-8');
         const lines = originalContent.split('\n');
@@ -375,10 +375,10 @@ export class FileManager {
             const [rm, add] = diff.stats;
             const choice = await confirmFn(
                 `Zeilen ${startLine}–${endLine} ersetzen: **${rel}**\n−${rm} / +${add} Zeilen`,
-                ['Anwenden', 'Ablehnen'],
+                ['Apply', 'Reject'],
                 diff
             );
-            if (choice !== 'Anwenden') return false;
+            if (choice !== 'Apply') return false;
         }
 
         this.history.record({
@@ -413,7 +413,7 @@ export class FileManager {
     ): Promise<boolean> {
         const abs = this.resolvePath(filePath);
         const rel = this.relDisplay(abs);
-        if (!fs.existsSync(abs)) throw new Error(`Datei nicht gefunden: ${rel}`);
+        if (!fs.existsSync(abs)) throw new Error(`File not found: ${rel}`);
 
         const originalContent = fs.readFileSync(abs, 'utf-8');
         const sequence = computeMergeSequence(originalContent, aiContent);
@@ -435,7 +435,7 @@ export class FileManager {
         if (!confirmFn) {
             // No confirm function: be sure → only apply additions
             if (additionsOnlyContent === originalContent) return true;
-            this.history.record({ type: 'file_edit', description: 'Smart-Merge (nur Additions)', filePath: abs, previousContent: originalContent });
+            this.history.record({ type: 'file_edit', description: 'Smart merge (additions only)', filePath: abs, previousContent: originalContent });
             fs.writeFileSync(abs, additionsOnlyContent, 'utf-8');
             this.reportChange(abs, originalContent, additionsOnlyContent);
             this.logger.action('FILE_SMART_MERGE', rel);
@@ -447,17 +447,17 @@ export class FileManager {
         const [rm, add] = diff.stats;
 
         const choice = await confirmFn(
-            `⚠ KI hat ${removedLines.length} Zeile(n) entfernt und ${addedLines.length} hinzugefügt in **${rel}**.\n\n` +
-            `**"Nur Additions"** übernimmt nur die neuen Zeilen (sicher).\n` +
-            `**"Komplett ersetzen"** wendet alles an inkl. Löschungen.\n\n` +
-            `Diff zeigt "Nur Additions" (−${rm} / +${add}):`,
-            ['Nur Additions', 'Komplett ersetzen', 'Ablehnen'],
+            `⚠ The AI removed ${removedLines.length} line(s) and added ${addedLines.length} in **${rel}**.\n\n` +
+            `**"Additions only"** takes just the new lines (safe).\n` +
+            `**"Replace whole file"** applies everything, deletions included.\n\n` +
+            `The diff shows additions only (−${rm} / +${add}):`,
+            ['Additions only', 'Replace whole file', 'Reject'],
             diff
         );
 
-        if (choice === 'Ablehnen') return false;
+        if (choice === 'Reject') return false;
 
-        const finalContent = choice === 'Komplett ersetzen' ? aiContent : additionsOnlyContent;
+        const finalContent = choice === 'Replace whole file' ? aiContent : additionsOnlyContent;
 
         this.history.record({ type: 'file_edit', description: `Smart-Merge (${choice})`, filePath: abs, previousContent: originalContent });
         fs.writeFileSync(abs, finalContent, 'utf-8');
@@ -485,7 +485,7 @@ export class FileManager {
         const rel = this.relDisplay(abs);
 
         if (!fs.existsSync(abs)) {
-            return { success: false, error: `Datei nicht gefunden: ${rel}` };
+            return { success: false, error: `File not found: ${rel}` };
         }
 
         const originalContent = fs.readFileSync(abs, 'utf-8');
@@ -513,10 +513,10 @@ export class FileManager {
             const [rm, add] = diff.stats;
             const choice = await confirmFn(
                 `Patch anwenden: **${rel}**\n−${rm} / +${add} Zeilen`,
-                ['Anwenden', 'Ablehnen'],
+                ['Apply', 'Reject'],
                 diff
             );
-            if (choice !== 'Anwenden') return { success: false };
+            if (choice !== 'Apply') return { success: false };
         }
 
         this.history.record({
@@ -550,9 +550,9 @@ export class FileManager {
 
         // 1. Has the change already been applied? If so, nothing needs to be done.
         if (replaceText.trim() && squish(content).includes(squish(replaceText))) {
-            return `Die Änderung ist in ${rel} BEREITS VORHANDEN – der neue Code steht `
-                + `schon in der Datei. Wiederhole diesen Patch nicht. Prüfe mit read_file, `
-                + `was noch offen ist, und arbeite am nächsten Punkt weiter.`;
+            return `The change is ALREADY PRESENT in ${rel} – the new code is `
+                + `in the file. Do not repeat this patch. Check with read_file `
+                + `what is still open and move on to the next point.`;
         }
 
         // 2. Find the first line of the search text – then it's up to the following lines
@@ -566,21 +566,21 @@ export class FileManager {
 
             if (hits.length > 0) {
                 const near = hits
-                    .map(h => `  Zeile ${h.no}: ${h.line.trim().slice(0, 120)}`)
+                    .map(h => `  line ${h.no}: ${h.line.trim().slice(0, 120)}`)
                     .join('\n');
-                return `Suchtext nicht gefunden in ${rel}. Die ERSTE Zeile passt, die `
-                    + `folgenden nicht – der Text muss ZEICHENGENAU stimmen, inklusive `
-                    + `Einrückung und Kommentaren.\n`
+                return `The search text was not found in ${rel}. The FIRST line matches, the `
+                    + `following ones do not – the text must match EXACTLY, including `
+                    + `indentation and comments.\n`
                     + `Gefunden hier:\n${near}\n`
-                    + `Lies den Bereich mit read_file und kopiere ihn wörtlich, oder nutze `
-                    + `replace_lines mit den Zeilennummern.`;
+                    + `Read the section with read_file and copy it verbatim, or use `
+                    + `replace_lines with the line numbers.`;
             }
         }
 
-        return `Suchtext nicht gefunden in ${rel} – die Datei sieht anders aus als `
-            + `angenommen (vielleicht durch eine frühere Änderung).\n`
-            + `Gesuchter Text war:\n${searchText.slice(0, 300)}\n`
-            + `Lies die Datei mit read_file neu und patche gegen den tatsächlichen Inhalt.`;
+        return `The search text was not found in ${rel} – the file looks different from what was `
+            + `assumed (perhaps because of an earlier change).\n`
+            + `The text searched for was:\n${searchText.slice(0, 300)}\n`
+            + `Read the file again with read_file and patch against its actual content.`;
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -622,12 +622,12 @@ export class FileManager {
         const rel = this.relDisplay(absPath);
 
         const kind: AppliedChange['kind'] = newContent === undefined
-            ? 'gelöscht'
-            : oldContent === undefined ? 'erstellt' : 'geändert';
+            ? 'deleted'
+            : oldContent === undefined ? 'created' : 'changed';
 
         // For new files, there is no meaningful diff – only the
         // line count matters. For changes, we show the real colored diff.
-        if (kind === 'geändert') {
+        if (kind === 'changed') {
             const hunks = computeDiff(oldContent!, newContent!);
             const stats = diffStats(hunks);
             AgentConsole.getInstance().change(rel, kind, stats[0], stats[1]);
@@ -640,7 +640,7 @@ export class FileManager {
         }
 
         const lines = (newContent ?? oldContent ?? '').split('\n').length;
-        const stats: [number, number] = kind === 'erstellt' ? [0, lines] : [lines, 0];
+        const stats: [number, number] = kind === 'created' ? [0, lines] : [lines, 0];
         AgentConsole.getInstance().change(rel, kind, stats[0], stats[1]);
         this.diffReporter?.({ path: rel, kind, diffText: '', stats });
     }

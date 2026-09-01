@@ -41,158 +41,158 @@ export class SettingsPanel {
 
     private static readonly SECTIONS: SectionDef[] = [
         {
-            title: '🔌 Verbindung',
-            hint: 'Lokaler llama.cpp-Server oder ein OpenAI-kompatibler Cloud-Anbieter.',
+            title: '🔌 Connection',
+            hint: 'A local llama.cpp server or an OpenAI-compatible cloud provider.',
             fields: [
                 {
-                    key: 'serverUrl', label: 'Server-URL', kind: 'text',
+                    key: 'serverUrl', label: 'Server URL', kind: 'text',
                     hint: 'llama.cpp: http://localhost:8080 · OpenRouter: https://openrouter.ai/api'
                 },
                 {
-                    key: 'apiKey', label: 'API-Key (optional)', kind: 'password',
-                    hint: 'Nur für Cloud-Anbieter. Lokaler llama.cpp-Server: leer lassen. '
-                        + 'Wird als "Authorization: Bearer <key>" gesendet.'
+                    key: 'apiKey', label: 'API key (optional)', kind: 'password',
+                    hint: 'Cloud providers only. A local llama.cpp server: leave empty. '
+                        + 'Sent as "Authorization: Bearer <key>".'
                 },
                 {
-                    key: 'model', label: 'Modell', kind: 'text',
-                    hint: 'Leer = Serverstandard. OpenRouter z.B. anthropic/claude-sonnet-4.5'
+                    key: 'model', label: 'Model', kind: 'text',
+                    hint: 'Empty = the server default. On OpenRouter e.g. anthropic/claude-sonnet-4.5'
                 },
                 {
-                    key: 'mcpEnabled', label: 'llama.cpp MCP-Protokoll verwenden', kind: 'boolean',
-                    hint: 'Bei Cloud-Anbietern mit API-Key wird automatisch die OpenAI-API genutzt.'
+                    key: 'mcpEnabled', label: 'Use the llama.cpp MCP protocol', kind: 'boolean',
+                    hint: 'For cloud providers with an API key the OpenAI API is used automatically.'
                 },
                 {
-                    key: 'nativeToolCalls', label: 'Werkzeuge über die Server-API (empfohlen)', kind: 'boolean',
-                    hint: 'Der Server übernimmt das modellspezifische Format – so läuft der Assistent '
-                        + 'mit Qwen, Gemma, Kimi, laguna, DeepSeek und Mistral gleichermaßen. '
-                        + 'Bei llama.cpp ist dafür --jinja nötig. Aus = Aufrufe werden aus dem Text geparst.'
+                    key: 'nativeToolCalls', label: 'Tools through the server API (recommended)', kind: 'boolean',
+                    hint: 'The server handles the model-specific format – which is what makes the '
+                        + 'assistant work with Qwen, Gemma, Kimi, laguna, DeepSeek and Mistral alike. '
+                        + 'llama.cpp needs --jinja for it. Off = calls are parsed out of the text.'
                 }
             ]
         },
         {
             title: '🤖 Agent',
-            hint: 'Wie selbständig der Assistent arbeitet.',
+            hint: 'How independently the assistant works.',
             fields: [
                 {
-                    key: 'mode', label: 'Arbeitsmodus', kind: 'select',
+                    key: 'mode', label: 'Working mode', kind: 'select',
                     options: [
-                        { value: 'ask', label: '🔒 Ask – jede Änderung bestätigen' },
-                        { value: 'auto', label: '⚡ Auto – ohne Rückfragen' },
-                        { value: 'plan', label: '📋 Plan – nur lesen und planen' }
+                        { value: 'ask', label: '🔒 Ask – confirm every change' },
+                        { value: 'auto', label: '⚡ Auto – no questions asked' },
+                        { value: 'plan', label: '📋 Plan – read and plan only' }
                     ],
-                    hint: 'Ask: jede Dateiänderung und jeder Shell-Befehl wird im Chat bestätigt. '
-                        + 'Auto: der Assistent arbeitet durch (alles per Undo rücknehmbar). '
-                        + 'Plan: nur Analyse und Plan, Änderungen sind gesperrt.'
+                    hint: 'Ask: every file change and every shell command is confirmed in the chat. '
+                        + 'Auto: the assistant works through (everything stays undoable). '
+                        + 'Plan: analysis and planning only, changes are blocked.'
                 },
                 {
-                    key: 'agentLoop', label: 'Agenten-Schleife', kind: 'boolean',
-                    hint: 'Analysieren → planen → ändern → testen → korrigieren, bis die Aufgabe erledigt ist.'
+                    key: 'agentLoop', label: 'Agent loop', kind: 'boolean',
+                    hint: 'Analyse → plan → change → test → fix, until the task is done.'
                 },
                 {
-                    key: 'maxAgentSteps', label: 'Max. Schritte pro Aufgabe', kind: 'number',
+                    key: 'maxAgentSteps', label: 'Max. steps per task', kind: 'number',
                     min: 1, max: 50
                 },
                 {
-                    key: 'planningEnabled', label: 'Planung (Todo-Liste)', kind: 'boolean',
-                    hint: 'Bei mehrschrittigen Aufgaben erst einen Plan erstellen, dann abarbeiten.'
+                    key: 'planningEnabled', label: 'Planning (todo list)', kind: 'boolean',
+                    hint: 'For a multi-step task, write a plan first and then work through it.'
                 },
                 {
-                    key: 'autoAnalyze', label: 'Erst analysieren, dann schreiben', kind: 'boolean',
-                    hint: 'Bestehenden Code mit read_file/grep/glob prüfen, bevor er geändert wird.'
+                    key: 'autoAnalyze', label: 'Read first, write second', kind: 'boolean',
+                    hint: 'Check the existing code with read_file/grep/glob before changing it.'
                 },
                 {
-                    key: 'showConsole', label: 'Arbeitsprotokoll im Terminal', kind: 'boolean',
-                    hint: 'Schreibt jeden Schritt, jeden Befehl und jede Ausgabe in ein Terminal '
-                        + '"AI Assistant". Dort wird nichts ausgeführt, nur angezeigt.'
+                    key: 'showConsole', label: 'Work log in a terminal', kind: 'boolean',
+                    hint: 'Writes every step, every command and every output into a terminal named '
+                        + '"AI Assistant". Nothing is executed there, it only displays.'
                 },
                 {
-                    key: 'autoCompact', label: 'Langen Verlauf zusammenfassen', kind: 'boolean',
-                    hint: 'Fasst den Verlauf zusammen, wenn er den Kontext des Modells zu füllen droht. '
-                        + 'Ohne das bricht die Anfrage bei langen Sitzungen ab.'
+                    key: 'autoCompact', label: 'Summarise a long history', kind: 'boolean',
+                    hint: 'Summarises the history when it threatens to fill the model context. '
+                        + 'Without it a long session eventually fails outright.'
                 },
                 {
-                    key: 'compactThresholdPercent', label: 'Zusammenfassen ab (% des Kontexts)',
+                    key: 'compactThresholdPercent', label: 'Summarise from (% of the context)',
                     kind: 'number', min: 50, max: 99
                 }
             ]
         },
         {
-            title: '🧪 Tests & Korrektur',
+            title: '🧪 Tests & repair',
             fields: [
                 {
-                    key: 'autoTest', label: 'Nach Änderungen automatisch testen', kind: 'boolean',
-                    hint: 'Der Assistent erkennt den Testbefehl (npm test, pytest, cargo test …) selbst.'
+                    key: 'autoTest', label: 'Test automatically after changes', kind: 'boolean',
+                    hint: 'The assistant works out the test command (npm test, pytest, cargo test …) itself.'
                 },
-                { key: 'autoFixOnError', label: 'Fehler automatisch korrigieren', kind: 'boolean' },
+                { key: 'autoFixOnError', label: 'Fix errors automatically', kind: 'boolean' },
                 {
-                    key: 'autoFixIterations', label: 'Max. Korrektur-Durchläufe', kind: 'number',
+                    key: 'autoFixIterations', label: 'Max. repair rounds', kind: 'number',
                     min: 1, max: 10
                 }
             ]
         },
         {
-            title: '🌐 Web-Suche',
-            hint: 'Ohne API-Key bleibt nur DuckDuckGo – und das liefert unter Last oft keine '
+            title: '🌐 Web search',
+            hint: 'Without an API key only DuckDuckGo is left – and under load it often returns no '
                 + 'Treffer. Seiten direkt abrufen (web_fetch) funktioniert immer.',
             fields: [
                 {
-                    key: 'searchProvider', label: 'Suchdienst', kind: 'select',
+                    key: 'searchProvider', label: 'Search service', kind: 'select',
                     options: [
-                        { value: 'auto', label: 'Automatisch (alles Verfügbare der Reihe nach)' },
-                        { value: 'tavily', label: 'Tavily – für KI gemacht, liefert Textauszüge' },
+                        { value: 'auto', label: 'Auto (everything available, in order)' },
+                        { value: 'tavily', label: 'Tavily – built for AI, returns text excerpts' },
                         { value: 'brave', label: 'Brave Search API' },
                         { value: 'google', label: 'Google Programmable Search' },
-                        { value: 'searxng', label: 'SearXNG (eigene Instanz)' },
-                        { value: 'duckduckgo', label: 'DuckDuckGo (ohne Schlüssel, unzuverlässig)' }
+                        { value: 'searxng', label: 'SearXNG (your own instance)' },
+                        { value: 'duckduckgo', label: 'DuckDuckGo (keyless, unreliable)' }
                     ]
                 },
                 {
-                    key: 'searchApiKey', label: 'API-Key des Suchdienstes', kind: 'password',
-                    hint: 'Tavily, Brave oder Google. Leer = nur DuckDuckGo.'
+                    key: 'searchApiKey', label: 'API key of the search service', kind: 'password',
+                    hint: 'Tavily, Brave or Google. Empty = DuckDuckGo only.'
                 },
                 {
-                    key: 'searchEndpoint', label: 'Instanz-Adresse bzw. Such-ID', kind: 'text',
-                    hint: 'SearXNG: Adresse der Instanz (https://searx.example.org). '
-                        + 'Google: die Such-ID (cx) der Programmable Search Engine.'
+                    key: 'searchEndpoint', label: 'Instance address or search id', kind: 'text',
+                    hint: 'SearXNG: the address of the instance (https://searx.example.org). '
+                        + 'Google: the search id (cx) of the Programmable Search Engine.'
                 }
             ]
         },
         {
-            title: '🔒 Sicherheit',
+            title: '🔒 Security',
             fields: [
-                { key: 'allowShellCommands', label: 'Shell-Befehle erlauben (WSL)', kind: 'boolean' },
-                { key: 'confirmDangerousOps', label: 'Vor gefährlichen Operationen warnen', kind: 'boolean' }
+                { key: 'allowShellCommands', label: 'Allow shell commands (WSL)', kind: 'boolean' },
+                { key: 'confirmDangerousOps', label: 'Warn before dangerous operations', kind: 'boolean' }
             ]
         },
         {
-            title: '⚙ Modell-Parameter',
+            title: '⚙ Model parameters',
             fields: [
-                { key: 'maxTokens', label: 'Max. Tokens pro Antwort', kind: 'number', min: 128, max: 200000 },
+                { key: 'maxTokens', label: 'Max. tokens per answer', kind: 'number', min: 128, max: 200000 },
                 {
                     key: 'temperature', label: 'Temperature', kind: 'number', min: 0, max: 2,
-                    hint: '0 = deterministisch, 2 = sehr kreativ. Für Code: 0.1 – 0.3'
+                    hint: '0 = deterministic, 2 = very creative. For code: 0.1 – 0.3'
                 },
                 {
-                    key: 'contextWarningThreshold', label: 'Kontext-Warnung ab (Token)', kind: 'number',
+                    key: 'contextWarningThreshold', label: 'Context warning from (tokens)', kind: 'number',
                     min: 1000, max: 1000000
                 },
                 {
-                    key: 'streamIdleTimeoutSeconds', label: 'Abbrechen bei Stille (Sekunden)',
+                    key: 'streamIdleTimeoutSeconds', label: 'Give up after silence (seconds)',
                     kind: 'number', min: 30, max: 3600,
-                    hint: 'Gemessen wird die Pause zwischen zwei Antwortteilen, nicht die Gesamtdauer. '
-                        + 'Bei einem ausgelasteten Server höher setzen.'
+                    hint: 'What is measured is the pause between two parts of the answer, not the total. '
+                        + 'Raise it for a busy server.'
                 }
             ]
         },
         {
-            title: '📄 Projekt-Anweisungen',
-            hint: 'Dateien, die bei jeder Anfrage als permanente Regeln geladen werden.',
+            title: '📄 Project instructions',
+            hint: 'Files loaded as permanent rules with every request.',
             fields: [
                 {
-                    key: 'instructionFiles', label: 'Anweisungsdateien', kind: 'list',
-                    hint: 'Eine pro Zeile, relativ zum Workspace. Nicht vorhandene werden übersprungen.'
+                    key: 'instructionFiles', label: 'Instruction files', kind: 'list',
+                    hint: 'One per line, relative to the workspace. Missing ones are skipped.'
                 },
-                { key: 'systemPrompt', label: 'System-Prompt', kind: 'textarea' }
+                { key: 'systemPrompt', label: 'System prompt', kind: 'textarea' }
             ]
         }
     ];
@@ -278,7 +278,7 @@ export class SettingsPanel {
                     changed.push(field.key);
                 } catch (err) {
                     failed.push(`${field.key}: ${(err as Error).message}`);
-                    this.logger.error(`Einstellung "${field.key}" konnte nicht gespeichert werden`, err);
+                    this.logger.error(`Could not save the setting "${field.key}"`, err);
                 }
             }
         }
@@ -286,17 +286,17 @@ export class SettingsPanel {
         if (failed.length > 0) {
             this.panel.webview.postMessage({
                 type: 'saved', success: false,
-                info: `${failed.length} Einstellung(en) fehlgeschlagen:\n${failed.join('\n')}`
+                info: `${failed.length} setting(s) failed:\n${failed.join('\n')}`
             });
             return;
         }
 
         const scope = target === vscode.ConfigurationTarget.Workspace ? 'Workspace' : 'global';
         const info = changed.length === 0
-            ? 'Keine Änderungen – alles bereits gespeichert.'
-            : `${changed.length} Einstellung(en) gespeichert (${scope}): ${changed.join(', ')}`;
+            ? 'No changes – everything is already saved.'
+            : `${changed.length} setting(s) saved (${scope}): ${changed.join(', ')}`;
 
-        this.logger.info(`Einstellungen gespeichert: ${changed.join(', ') || '(keine Änderung)'}`);
+        this.logger.info(`Settings saved: ${changed.join(', ') || '(no change)'}`);
         this.panel.webview.postMessage({ type: 'saved', success: true, info });
 
         // Modus-Listbox in allen offenen Chat-Tabs aktualisieren
@@ -308,7 +308,7 @@ export class SettingsPanel {
             try {
                 await config.update('autoApply', mode === 'auto', target);
             } catch (err) {
-                this.logger.warn(`autoApply konnte nicht angeglichen werden: ${(err as Error).message}`);
+                this.logger.warn(`Could not align autoApply: ${(err as Error).message}`);
             }
 
             const { ChatPanel } = require('./chatPanel') as typeof import('./chatPanel');
@@ -421,7 +421,7 @@ export class SettingsPanel {
                        value="${esc(String(v ?? ''))}">`;
 
             const reveal = f.kind === 'password'
-                ? `<button class="reveal" data-reveal="${f.key}" title="Anzeigen/Verbergen">👁</button>`
+                ? `<button class="reveal" data-reveal="${f.key}" title="Show/hide">👁</button>`
                 : '';
 
             return `
@@ -538,15 +538,15 @@ export class SettingsPanel {
 
 <div id="content">
   <h1>AI Assistant – Einstellungen</h1>
-  <div id="subtitle">Änderungen werden erst mit <strong>Speichern</strong> übernommen.</div>
+  <div id="subtitle">Changes take effect once you press <strong>Save</strong>.</div>
   ${sectionsHtml}
 </div>
 
 <div id="footer">
-  <button id="btn-save" class="primary">💾 Speichern</button>
-  <span id="dirty-dot" title="Nicht gespeicherte Änderungen"></span>
-  <button id="btn-test" class="ghost">🔌 Verbindung testen</button>
-  <button id="btn-reset" class="ghost">↺ Verwerfen</button>
+  <button id="btn-save" class="primary">💾 Save</button>
+  <span id="dirty-dot" title="Unsaved changes"></span>
+  <button id="btn-test" class="ghost">🔌 Test connection</button>
+  <button id="btn-reset" class="ghost">↺ Discard</button>
   <span class="spacer"></span>
   <span id="status"></span>
   <button id="btn-raw" class="ghost">VS Code JSON…</button>
@@ -577,7 +577,7 @@ let dirty = false;
 function markDirty() {
   dirty = true;
   dot.classList.add('on');
-  setStatus('Nicht gespeichert – Strg+S oder Speichern klicken.', 'busy');
+  setStatus('Not saved – press Ctrl+S or click Save.', 'busy');
 }
 function clearDirty() {
   dirty = false;
@@ -591,7 +591,7 @@ for (const el of fields()) {
 
 function save() {
   saveBtn.disabled = true;
-  setStatus('Speichern…', 'busy');
+  setStatus('Saving…', 'busy');
   vscode.postMessage({ type: 'save', values: collect() });
 }
 
@@ -599,7 +599,7 @@ saveBtn.addEventListener('click', save);
 document.getElementById('btn-test').addEventListener('click', () => {
   // Save first, then test – otherwise the old URL would be tested
   if (dirty) { vscode.postMessage({ type: 'save', values: collect() }); }
-  setStatus('Verbindung wird getestet…', 'busy');
+  setStatus('Testing the connection…', 'busy');
   vscode.postMessage({ type: 'testConnection' });
 });
 document.getElementById('btn-reset').addEventListener('click', () => {
@@ -635,7 +635,7 @@ window.addEventListener('message', (ev) => {
       else { setStatus('❌ ' + msg.info, 'err'); }
       break;
     case 'testing':
-      setStatus('Verbindung wird getestet…', 'busy');
+      setStatus('Testing the connection…', 'busy');
       break;
     case 'testResult':
       setStatus((msg.success ? '✅ ' : '❌ ') + msg.info, msg.success ? 'ok' : 'err');
@@ -647,7 +647,7 @@ window.addEventListener('message', (ev) => {
         else el.value = v === undefined || v === null ? '' : String(v);
       }
       clearDirty();
-      setStatus('Änderungen verworfen – gespeicherte Werte geladen.', 'busy');
+      setStatus('Changes discarded – the saved values are loaded.', 'busy');
       break;
   }
 });

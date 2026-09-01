@@ -205,7 +205,7 @@ export class PracticeStore {
             }
             return out;
         } catch (err) {
-            this.logger.warn(`Best Practices nicht lesbar: ${(err as Error).message}`);
+            this.logger.warn(`Practices file is not readable: ${(err as Error).message}`);
             return [];
         }
     }
@@ -216,11 +216,11 @@ export class PracticeStore {
             const body = [
                 '# Best Practices',
                 '',
-                'Regeln, die der AI Code Assistant aus geglückten Läufen abgeleitet hat.',
+                'Rules the AI Code Assistant derived from runs that worked.',
                 'Sie gehen in jede Anfrage ein.',
                 '',
                 'Diese Datei darf von Hand bearbeitet werden: eine Regel, die nicht stimmt,',
-                'einfach löschen. Neueste zuerst.',
+                'just delete it. Newest first.',
                 '',
                 ...this.all().map(e =>
                     `- ${e.rule}${e.why ? ` (${e.why})` : ''}`
@@ -229,7 +229,7 @@ export class PracticeStore {
             ].join('\n');
             fs.writeFileSync(this.file, body, 'utf-8');
         } catch (err) {
-            this.logger.warn(`Best Practices nicht schreibbar: ${(err as Error).message}`);
+            this.logger.warn(`Practices file is not writable: ${(err as Error).message}`);
         }
     }
 }

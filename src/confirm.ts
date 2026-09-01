@@ -38,8 +38,8 @@ export const autoConfirmFn: ConfirmFn = async (_msg, choices) => choices[0];
 export interface AppliedChange {
     /** Path relative to the Workspace */
     path: string;
-    /** What happened is */
-    kind: 'erstellt' | 'geändert' | 'gelöscht';
+    /** What happened */
+    kind: 'created' | 'changed' | 'deleted';
     /** Unified diff for colored display (empty for new/deleted files) */
     diffText: string;
     /** [removed lines, added lines] */

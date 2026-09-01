@@ -496,7 +496,7 @@ export function toolCallsToActions(
     }
 
     if (blocks.length > 0) {
-        logger?.info(`Tool-Calling: ${blocks.length} Aufruf(e) vom Server erhalten.`);
+        logger?.info(`Tool calling: received ${blocks.length} call(s) from the server.`);
     }
     if (unknown.length > 0) {
         logger?.warn(`Tool-Calling: unbekannte Werkzeuge ignoriert: ${unknown.join(', ')}.`);
@@ -601,12 +601,12 @@ export function normalizeToolCalls(text: string, logger?: ToolCallLogger): strin
     out = out.replace(/<\/?(tool_call|function_call|tool_use|invoke|arg_key|arg_value|parameter|function)[^>]*>/gi, '');
 
     if (total > 0) {
-        logger?.info(`Tool-Call-Parser: ${total} nativen Aufruf(e) übersetzt.`);
+        logger?.info(`Tool call parser: translated ${total} native call(s).`);
     }
     if (unknown.size > 0) {
         logger?.warn(
             `Tool-Call-Parser: unbekannte Werkzeuge ignoriert: ${[...unknown].join(', ')}. ` +
-            `Verfügbar sind: ${[...KNOWN_ACTIONS].join(', ')}.`
+            `Available are: ${[...KNOWN_ACTIONS].join(', ')}.`
         );
     }
     return out;

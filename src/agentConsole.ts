@@ -58,7 +58,7 @@ export class AgentConsole {
             open: () => {
                 this.opened = true;
                 this.raw(`${AgentConsole.C.dim}AI Assistant – Arbeitsprotokoll. ` +
-                    `Hier wird nur angezeigt, nichts ausgeführt.${AgentConsole.C.reset}\r\n`);
+                    `This only displays; nothing runs here.${AgentConsole.C.reset}\r\n`);
                 // Gepufferte Zeilen nachliefern
                 const pending = this.buffer;
                 this.buffer = [];
@@ -105,7 +105,7 @@ export class AgentConsole {
         this.ensureTerminal();
         this.line();
         this.line(`${C.bold}${C.cyan}${'═'.repeat(72)}${C.reset}`);
-        this.line(`${C.bold}${C.cyan}  AUFGABE${C.reset}  ${C.dim}(Modus: ${mode})${C.reset}`);
+        this.line(`${C.bold}${C.cyan}  TASK${C.reset}  ${C.dim}(mode: ${mode})${C.reset}`);
         this.line(`${C.cyan}${'═'.repeat(72)}${C.reset}`);
         for (const l of prompt.split('\n')) this.line('  ' + l);
         this.line();
@@ -115,7 +115,7 @@ export class AgentConsole {
     step(n: number, reason: string): void {
         const C = AgentConsole.C;
         this.line();
-        this.line(`${C.bold}${C.blue}── Schritt ${n} ${'─'.repeat(Math.max(0, 56 - String(n).length))}${C.reset}`);
+        this.line(`${C.bold}${C.blue}── Step ${n} ${'─'.repeat(Math.max(0, 58 - String(n).length))}${C.reset}`);
         this.line(`${C.blue}   ${reason}${C.reset}`);
     }
 
@@ -186,7 +186,7 @@ export class AgentConsole {
         const C = AgentConsole.C;
         this.line();
         this.line(`${C.bold}${C.cyan}── Fertig ${'─'.repeat(58)}${C.reset}`);
-        this.line(`${C.dim}   ${steps} Schritt(e), ${actions} Aktion(en), ${seconds}s${C.reset}`);
+        this.line(`${C.dim}   ${steps} step(s), ${actions} action(s), ${seconds}s${C.reset}`);
         this.line();
     }
 

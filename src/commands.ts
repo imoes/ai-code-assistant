@@ -85,7 +85,7 @@ export function parseBudget(rest: string): { budget: LoopBudget; task: string } 
             budget: {
                 minutes,
                 rounds: MAX_ROUNDS,
-                label: isHours ? `${value} Stunde(n)` : `${minutes} Minute(n)`
+                label: isHours ? `${value} hour(s)` : `${minutes} minute(s)`
             },
             task: trimmed.slice(time[0].length).trim()
         };
@@ -96,7 +96,7 @@ export function parseBudget(rest: string): { budget: LoopBudget; task: string } 
     if (count) {
         const rounds = Math.min(MAX_ROUNDS, Math.max(1, parseInt(count[1], 10)));
         return {
-            budget: { minutes: MAX_MINUTES, rounds, label: `${rounds} Runde(n)` },
+            budget: { minutes: MAX_MINUTES, rounds, label: `${rounds} round(s)` },
             task: trimmed.slice(count[0].length).trim()
         };
     }
@@ -107,7 +107,7 @@ export function parseBudget(rest: string): { budget: LoopBudget; task: string } 
     if (bare) {
         const minutes = Math.min(MAX_MINUTES, Math.max(1, parseInt(bare[1], 10)));
         return {
-            budget: { minutes, rounds: MAX_ROUNDS, label: `${minutes} Minute(n)` },
+            budget: { minutes, rounds: MAX_ROUNDS, label: `${minutes} minute(s)` },
             task: trimmed.slice(bare[0].length).trim()
         };
     }
@@ -116,35 +116,42 @@ export function parseBudget(rest: string): { budget: LoopBudget; task: string } 
         budget: {
             minutes: DEFAULT_MINUTES,
             rounds: DEFAULT_ROUNDS,
-            label: `${DEFAULT_MINUTES} Minuten`
+            label: `${DEFAULT_MINUTES} minutes`
         },
         task: trimmed
     };
 }
 
-/** Help text for `/help` – shown in the chat, therefore German. */
+/**
+ * Help text for `/help` – shown in the chat.
+ *
+ * English, like the rest of the interface. The German spellings of the commands
+ * (`/ziel`, `/schleife`) still work – see COMMANDS – they are just not
+ * advertised here: someone typing German will find them, and someone reading
+ * this list does not need two names for one command.
+ */
 export const HELP_TEXT = [
-    '**Befehle**',
+    '**Commands**',
     '',
-    '| Befehl | Wirkung |',
+    '| Command | Effect |',
     '|---|---|',
-    '| `/goal <Text>` | Ziel setzen. Gilt für jede weitere Anfrage und überlebt die Sitzung. |',
-    '| `/goal` | Aktuelles Ziel anzeigen. |',
-    '| `/goal löschen` | Ziel entfernen. |',
-    '| `/loop <Budget> <Aufgabe>` | Arbeitet wiederholt am Ziel, bis das Budget aufgebraucht ist. |',
-    '| `/help` | Diese Übersicht. |',
+    '| `/goal <text>` | Set the goal. Applies to every further request and outlives the session. |',
+    '| `/goal` | Show the current goal. |',
+    '| `/goal clear` | Remove the goal. |',
+    '| `/loop <budget> <task>` | Works towards the goal repeatedly until the budget is spent. |',
+    '| `/help` | This list. |',
     '',
-    '**Budget für `/loop`:** `5m`, `30 Minuten`, `2h`, `3x`, `3 Runden`.',
-    'Ohne Angabe: 10 Minuten, höchstens 6 Runden.',
+    '**Budget for `/loop`:** `5m`, `30 minutes`, `2h`, `3x`, `3 rounds`.',
+    'Left out: 10 minutes, at most 6 rounds.',
     '',
-    'Die Schleife endet, sobald das Budget aufgebraucht ist, der Assistent das Ziel',
-    'als erreicht meldet – oder du auf **Abbrechen** klickst. Eine neue Anweisung',
-    'im Eingabefeld unterbricht sie ebenfalls.',
+    'The loop ends once the budget is spent, the assistant reports the goal as',
+    'reached – or you click **Cancel**. A new instruction in the input field',
+    'interrupts it as well.',
     '',
-    '**Beispiel**',
+    '**Example**',
     '',
     '```',
-    '/goal Der Parser versteht Variablen und alle Tests sind grün',
-    '/loop 15m Finde die offenen Punkte und arbeite sie ab',
+    '/goal The parser understands variables and every test is green',
+    '/loop 15m Find what is still open and work through it',
     '```'
 ].join('\n');

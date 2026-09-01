@@ -13,7 +13,7 @@ export interface SearchResponse {
     query: string;
     results: SearchResult[];
     abstract?: string;    // Instant Answer falls vorhanden
-    answer?: string;      // Direkte Antwort (z.B. Währungsrechner)
+    answer?: string;      // direct answer (e.g. a currency conversion)
     /** Why no provider delivered a hit – for a usable report */
     problems?: string[];
 }
@@ -57,7 +57,7 @@ export class WebSearcher {
         const apiKey = config.get<string>('searchApiKey', '').trim();
         const endpoint = config.get<string>('searchEndpoint', '').trim();
 
-        this.logger.info(`Web-Suche: "${query}" (Anbieter: ${provider})`);
+        this.logger.info(`Web search: "${query}" (provider: ${provider})`);
 
         // Set the order: explicitly chosen provider alone,
         // otherwise all available in order of reliability.
@@ -75,7 +75,7 @@ export class WebSearcher {
             try {
                 const result = await this.runProvider(name, query, maxResults, apiKey, endpoint);
                 if (result && (result.results.length > 0 || result.abstract || result.answer)) {
-                    this.logger.info(`Web-Suche (${name}): ${result.results.length} Ergebnis(se)`);
+                    this.logger.info(`Web search (${name}): ${result.results.length} result(s)`);
                     return result;
                 }
                 // Pass through the justifications of the sub-queries. Otherwise, it stands
@@ -83,11 +83,11 @@ export class WebSearcher {
                 // Model experienced, whether blocked, throttled, or truly empty.
                 if (result?.problems?.length) problems.push(...result.problems);
                 else problems.push(`${name}: keine Treffer`);
-                this.logger.warn(`Web-Suche (${name}): keine Treffer`);
+                this.logger.warn(`Web search (${name}): no hits`);
             } catch (err) {
                 const msg = (err as Error).message;
                 problems.push(`${name}: ${msg}`);
-                this.logger.warn(`Web-Suche (${name}) fehlgeschlagen: ${msg}`);
+                this.logger.warn(`Web search (${name}) failed: ${msg}`);
             }
         }
 
@@ -237,11 +237,11 @@ export class WebSearcher {
         const attempt = async (name: string, run: () => Promise<SearchResponse>): Promise<Attempt> => {
             try {
                 const r = await run();
-                this.logger.info(`Web-Suche (${name}): ${r.results.length} Treffer`);
+                this.logger.info(`Web search (${name}): ${r.results.length} hits`);
                 return { name, response: r, error: '' };
             } catch (err) {
                 const msg = (err as Error).message;
-                this.logger.warn(`Web-Suche (${name}) fehlgeschlagen: ${msg}`);
+                this.logger.warn(`Web search (${name}) failed: ${msg}`);
                 return { name, response: null, error: msg };
             }
         };
@@ -639,7 +639,7 @@ export class WebSearcher {
 
         const text = this.htmlToText(raw);
         const clipped = text.length > maxChars
-            ? text.slice(0, maxChars) + `\n… [gekürzt, ${text.length - maxChars} Zeichen mehr]`
+            ? text.slice(0, maxChars) + `\n… [cut, ${text.length - maxChars} characters more]`
             : text;
 
         this.logger.info(`Seite abgerufen: ${url} (${text.length} Zeichen Text)`);
@@ -802,7 +802,7 @@ export class WebSearcher {
 
                 if (status >= 400) {
                     res.resume();
-                    reject(new Error(`HTTP ${status} für ${url}`));
+                    reject(new Error(`HTTP ${status} for ${url}`));
                     return;
                 }
 
@@ -814,7 +814,7 @@ export class WebSearcher {
             });
             req.on('error', reject);
             req.on('timeout', () => {
-                req.destroy(new Error(`Timeout nach 15s für ${url}`));
+                req.destroy(new Error(`Timed out after 15s for ${url}`));
             });
         });
     }

@@ -81,12 +81,12 @@ section('CodeAnalyzer: read_file');
     const part = analyzer.readFile('src/services/userService.ts', 4, 3);
     check('offset/limit greift', part.output.includes('findAll') && !part.output.includes('export class'),
         part.output.replace(/\n/g, ' | ').slice(0, 120));
-    check('meldet gekuerzten Rest', part.output.includes('nicht angezeigt'));
+    check('meldet gekuerzten Rest', part.output.includes('not shown'));
 
     // Tippfehler im Namen (Windows ist case-insensitiv, daher echter Schreibfehler)
     const missing = analyzer.readFile('src/services/userServic.ts');
     check('fehlende Datei -> Vorschlag',
-        !missing.success && missing.output.includes('Meintest du')
+        !missing.success && missing.output.includes('Did you mean')
         && missing.output.includes('userService.ts'),
         missing.output.replace(/\n/g, ' | ').slice(0, 160));
 
@@ -184,10 +184,10 @@ section('CodeAnalyzer: grep');
     check('case-sensitiv ohne Flag', !cs.success, cs.output.slice(0, 100));
 
     const none = analyzer.grep('zzz_gibt_es_nicht_zzz');
-    check('kein Treffer sauber gemeldet', !none.success && none.output.includes('Keine Treffer'));
+    check('kein Treffer sauber gemeldet', !none.success && none.output.includes('No matches'));
 
     const bad = analyzer.grep('([unclosed');
-    check('ungueltiges Regex faengt', !bad.success && /Regex/i.test(bad.output), bad.output.slice(0, 80));
+    check('ungueltiges Regex faengt', !bad.success && /regular expression/i.test(bad.output), bad.output.slice(0, 80));
 
     const scoped = analyzer.grep('class', undefined, 'src/services');
     check('path-Einschraenkung wirkt', scoped.success && !scoped.output.includes('index.ts'),
@@ -212,7 +212,7 @@ section('CodeAnalyzer: glob / list_dir / overview');
         d.output.slice(0, 150));
 
     const dRoot = analyzer.listDir('.');
-    check('list_dir markiert Ignore-Ordner', dRoot.output.includes('node_modules/   (übersprungen)'),
+    check('list_dir markiert Ignore-Ordner', dRoot.output.includes('node_modules/   (skipped)'),
         dRoot.output.slice(0, 200));
 
     const ov = analyzer.projectOverview();
@@ -220,7 +220,7 @@ section('CodeAnalyzer: glob / list_dir / overview');
     check('Overview gruppiert Ordner', ov.includes('src/services/:'), ov.slice(0, 400));
 
     const dirAsFile = analyzer.readFile('src');
-    check('read_file auf Ordner -> Listing', dirAsFile.success && dirAsFile.output.includes('Inhalt von'),
+    check('read_file auf Ordner -> Listing', dirAsFile.success && dirAsFile.output.includes('Contents of'),
         dirAsFile.output.slice(0, 100));
 }
 
@@ -239,7 +239,7 @@ section('CodeAnalyzer: absolute Pfade kuerzen');
         r.description.startsWith('read_file: src/services/userService.ts'), r.description);
 
     const d = analyzer.listDir(path.join(SANDBOX, 'src'));
-    check('list_dir Label relativ', d.description === 'list_dir: src → 2 Einträge', d.description);
+    check('list_dir Label relativ', d.description === 'list_dir: src → 2 entries', d.description);
 
     const g = analyzer.grep('class', undefined, path.join(SANDBOX, 'src', 'services'));
     check('grep Label relativ', g.description.includes('in src/services')
@@ -351,7 +351,7 @@ section('AIEngine: Plan-Parsing');
     check('erledigt erkannt', plan[0].status === 'done', plan[0].status);
     check('in Arbeit erkannt', plan[1].status === 'doing', plan[1].status);
     check('offen erkannt', plan[2].status === 'todo', plan[2].status);
-    check('Beschreibung zaehlt', r.description === 'Plan: 1/4 erledigt', r.description);
+    check('Beschreibung zaehlt', r.description === 'Plan: 1/4 done', r.description);
 
     const r2 = engine.handlePlanAction('1. [ ] Erster\n2. [x] Zweiter\n* [ ] Dritter\n- Vierter ohne Box');
     check('nummerierte + gemischte Listen', engine.getPlan().length === 4, JSON.stringify(engine.getPlan()));
@@ -377,7 +377,7 @@ section('AIEngine: Analyse-Aktionen via Parser');
     check('grep Aktion', c.output.includes('userService.ts'), c.description);
 
     const d = engine.handleAnalysisAction('grep', 'pattern: userservice\nignore_case: true');
-    check('grep ignore_case Feld', d.output.includes('Treffer'), d.description);
+    check('grep ignore_case Feld', d.output.includes('match'), d.description);
 
     const e = engine.handleAnalysisAction('glob', 'pattern: **/*.ts');
     check('glob Aktion', e.output.includes('src/index.ts'), e.description);
@@ -414,7 +414,7 @@ section('AIEngine: Aktions-Parser (Blockerkennung)');
         '```'
     ].join('\n');
 
-    return engine.parseAndExecuteActions(response, async () => 'Ausführen').then(actions => {
+    return engine.parseAndExecuteActions(response, async () => 'Run').then(actions => {
         check('3 Bloecke ausgefuehrt', actions.length === 3, JSON.stringify(actions.map(a => a.type)));
         check('read_file zuerst', actions[0].type === 'analysis', actions[0].type);
         check('grep als zweites', actions[1].type === 'analysis', actions[1].description);
@@ -422,15 +422,15 @@ section('AIEngine: Aktions-Parser (Blockerkennung)');
 
         // XML-Variante (Gemma/Qwen schreiben manchmal Tags)
         return engine.parseAndExecuteActions(
-            '<action:read_file>\npath: src/index.ts\n</action:read_file>', async () => 'Ausführen');
+            '<action:read_file>\npath: src/index.ts\n</action:read_file>', async () => 'Run');
     }).then(actions => {
         check('XML-Tag-Variante normalisiert', actions.length === 1 && actions[0].type === 'analysis',
             JSON.stringify(actions));
 
         return engine.parseAndExecuteActions(
-            '```action:done\nzusammenfassung: Bug behoben und getestet.\n```', async () => 'Ausführen');
+            '```action:done\nzusammenfassung: Bug behoben und getestet.\n```', async () => 'Run');
     }).then(actions => {
-        check('done-Aktion erkannt', actions.length === 1 && actions[0].description.includes('abgeschlossen'),
+        check('done-Aktion erkannt', actions.length === 1 && actions[0].description.includes('complete'),
             JSON.stringify(actions));
         check('done setzt Abschlussflag', engine.taskComplete === true);
 
@@ -525,7 +525,7 @@ function runPatchFenceTests() {
             'for (let i = 0; i <= list.length; i++) {',
             'for (let i = 0; i < list.length; i++) {');
         check('Diagnose: Aenderung bereits vorhanden',
-            /BEREITS VORHANDEN/.test(already) && /Wiederhole diesen Patch nicht/.test(already),
+            /ALREADY PRESENT/.test(already) && /Do not repeat this patch/.test(already),
             already.slice(0, 140));
 
         // Fall 2: erste Zeile passt, Folgezeilen nicht
@@ -534,13 +534,13 @@ function runPatchFenceTests() {
             'function f() {\n    // ganz anderer Inhalt\n}',
             'egal');
         check('Diagnose: erste Zeile passt, Rest nicht',
-            /ERSTE Zeile passt/.test(partial) && /Zeile 1:/.test(partial),
+            /FIRST line matches/.test(partial) && /line 1:/.test(partial),
             partial.slice(0, 200));
 
         // Fall 3: gar nichts passt
         const nothing = fm.explainPatchMiss('a.js', content, 'völlig anderer Code', 'egal');
         check('Diagnose: Datei sieht anders aus',
-            /sieht anders aus/.test(nothing) && /read_file/.test(nothing),
+            /looks different/.test(nothing) && /read_file/.test(nothing),
             nothing.slice(0, 160));
     }
 
@@ -602,7 +602,7 @@ function runPatchFenceTests() {
     check('Text ohne SEARCH unangetastet', engine.normalizePatchFences(noPatch) === noPatch);
 
     // Und jetzt End-zu-Ende durch den Parser: der Patch muss greifen
-    return engine.parseAndExecuteActions(modelOutput, async () => 'Anwenden').then(actions => {
+    return engine.parseAndExecuteActions(modelOutput, async () => 'Apply').then(actions => {
         const after = fs.readFileSync(target, 'utf-8');
         check('Patch trotz Zaun ausgefuehrt',
             actions.length === 1 && actions[0].success === true,
@@ -627,7 +627,7 @@ function runPatchFenceTests() {
             '        for (let i = 0; i < this.users.length; i++) {',
             '```'
         ].join('\n');
-        return engine.parseAndExecuteActions(multi, async () => 'Anwenden');
+        return engine.parseAndExecuteActions(multi, async () => 'Apply');
     }).then(actions => {
         const after = fs.readFileSync(target, 'utf-8');
         check('zwei Patches in einem Block', actions[0] && actions[0].success === true,
@@ -638,7 +638,7 @@ function runPatchFenceTests() {
 
         // End-zu-Ende mit Abschluss-Marker: nichts davon darf in der Datei landen
         fs.writeFileSync(target, buggy);
-        return engine.parseAndExecuteActions(withTerminator, async () => 'Anwenden');
+        return engine.parseAndExecuteActions(withTerminator, async () => 'Apply');
     }).then(actions => {
         const after = fs.readFileSync(target, 'utf-8');
         check('Patch mit >>>-Terminator angewandt', actions[0] && actions[0].success === true,
@@ -935,7 +935,7 @@ function runToolCallTests() {
         && cleaned.includes('Ich lese zuerst'), JSON.stringify(cleaned));
 
     // Und jetzt End-zu-Ende durch den Parser
-    return engine.parseAndExecuteActions(lagunaOutput, async () => 'Anwenden').then(actions => {
+    return engine.parseAndExecuteActions(lagunaOutput, async () => 'Apply').then(actions => {
         check('laguna-Ausgabe erzeugt 3 Aktionen', actions.length === 3,
             JSON.stringify(actions.map(a => a.type + ':' + a.description)));
         check('alle drei sind Analysen',
@@ -984,7 +984,7 @@ function runHistoryTests() {
             engine.conversationHistory.some(m => m.content.includes('Nachricht 9')),
             JSON.stringify(engine.conversationHistory.map(m => m.content.slice(0, 20))));
         check('Meldung nennt den Grund',
-            /komprimiert|gekürzt/i.test(String(n)), String(n));
+            /compacted|shortened/i.test(String(n)), String(n));
 
         // Abgeschaltet -> nichts passiert
         vscode.__settings.autoCompact = false;
@@ -1260,7 +1260,7 @@ function runLoopTests() {
     // Benutzer-Anweisung
     const s3 = engine.planNextStep([
         { type: 'shell', description: 'Abgelehnt: rm -rf /', success: false,
-          output: 'Benutzer-Anweisung: Nutze stattdessen npm ci' }
+          output: 'Instruction from the user: use npm ci instead' }
     ], 1, cfg);
     check('Benutzer-Anweisung erkannt', s3 && s3.prompt.includes('THE USER GAVE YOU AN INSTRUCTION'),
         s3 && s3.reason);
@@ -1387,7 +1387,7 @@ function runOutputCapTests(cfg) {
     check('Ende bleibt erhalten – dort steht der Fehler',
         step && step.prompt.includes(fuss), step && step.prompt.slice(-200));
     check('Kuerzung ist benannt',
-        step && /Zeichen ausgelassen/.test(step.prompt));
+        step && /characters omitted/.test(step.prompt));
     check('Kuerzung sagt, wie man den Rest bekommt',
         step && /read_file mit offset|grep/.test(step.prompt));
 
@@ -1477,6 +1477,50 @@ function runShellChoiceTests() {
         /no `&&`/.test(manual) && /Get-ChildItem/.test(manual), 'fehlt');
     check('Handbuch bevorzugt WSL',
         /Prefer WSL/.test(manual), 'fehlt');
+
+    // Und es muss sagen, dass Fragen erlaubt ist, wenn beide Wege taugen.
+    // Im Auto-Modus gibt es keinen Bestaetigungsdialog - dort ist die Frage
+    // des Modells der EINZIGE Weg, den Benutzer zu erreichen.
+    check('Handbuch erlaubt die Rueckfrage zur Shell',
+        /ask_user/.test(manual) && /Which shell should run this/.test(manual), 'fehlt');
+
+    // Das Beispiel im Handbuch muss der Parser auch lesen koennen - ein
+    // Beispiel im falschen Format bringt das Modell dazu, es falsch zu schreiben.
+    const beispiel = /```action:ask_user\n([\s\S]*?)```/.exec(manual);
+    check('Beispiel-Block im Handbuch gefunden', beispiel !== null);
+    if (beispiel) {
+        const geparst = AIEngine.parseAskBlock(beispiel[1]);
+        check('Beispiel liefert die Frage',
+            /Which shell/.test(geparst.question), JSON.stringify(geparst.question));
+        check('Beispiel liefert genau zwei Optionen',
+            geparst.options.length === 2,
+            JSON.stringify(geparst.options.map(o => o.label)));
+        check('Optionen heissen WSL und PowerShell',
+            geparst.options[0].label === 'WSL' && geparst.options[1].label === 'PowerShell',
+            JSON.stringify(geparst.options.map(o => o.label)));
+        check('und jede Option hat eine Erklaerung',
+            geparst.options.every(o => o.description && o.description.length > 5),
+            JSON.stringify(geparst.options));
+    }
+
+    // ── Der Umschalter im Bestaetigungsdialog ───────────────────────────────
+    // Die Frage "WSL oder PowerShell?" haengt am Befehl, nicht an einer
+    // Voreinstellung: `npm test` gehoert nach WSL, `Get-Service` geht nur in
+    // der PowerShell. Deshalb wird sie bei JEDEM Befehl mitangeboten - der
+    // Umweg ueber "Etwas anderes" kostet eine ganze Runde.
+    const src = fs.readFileSync(path.join(PROJECT, 'src', 'aiEngine.ts'), 'utf-8');
+    check('Dialog bietet den Wechsel an',
+        /Run in PowerShell|Run in WSL/.test(src), 'fehlt');
+    check('der Wechsel gilt nicht als Ablehnung',
+        /choice !== 'Run' && choice !== switchLabel/.test(src), 'fehlt');
+    check('ausgefuehrt wird mit der GEWAEHLTEN Shell',
+        /shellRunner\.run\([^)]*effectiveKind\)/.test(src),
+        'run() bekommt noch shellKind statt effectiveKind');
+    check('die Werkzeugzeile nennt die tatsaechliche Shell',
+        /resolveShell\(effectiveKind, config\)/.test(src), 'fehlt');
+    check('kein Wechsel angeboten, wenn PowerShell verboten ist',
+        /allowPowerShell/.test(src.slice(src.indexOf('const otherAvailable'),
+                                        src.indexOf('const switchLabel'))), 'fehlt');
 }
 
 // ── Entscheidungsfrage an den Benutzer ──────────────────────────────────────
@@ -1594,7 +1638,7 @@ function runVerifyAfterChangeTests(cfg) {
     engine.repeatCount = 0;
 
     const step = engine.planNextStep(
-        [{ type: 'file_edit', description: 'Gepacht: src/tokenizer.js (1 Änderung)', success: true }],
+        [{ type: 'file_edit', description: 'Patched: src/tokenizer.js (1 change)', success: true }],
         1, cfg);
 
     check('Aenderung ohne Test treibt die Schleife weiter', step !== null, JSON.stringify(step));
@@ -1775,7 +1819,7 @@ function runCommandTests() {
     check('Hilfe nennt beide Befehle',
         /\/goal/.test(HELP_TEXT) && /\/loop/.test(HELP_TEXT));
     check('Hilfe nennt die Abbruchbedingungen',
-        /Budget aufgebraucht/.test(HELP_TEXT) && /Abbrechen/.test(HELP_TEXT));
+        /budget is spent/.test(HELP_TEXT) && /Cancel/.test(HELP_TEXT));
 }
 
 // ── Eingereihte Anweisungen ─────────────────────────────────────────────────
@@ -1898,12 +1942,12 @@ function runPracticeTests() {
     return engine.parseAndExecuteActions(
         '```action:remember\nregel: Nach jeder Aenderung `npm run compile` laufen lassen\n'
         + 'warum: tsc meldet Fehler, die die Tests nicht sehen\n```',
-        async () => 'Ausführen'
+        async () => 'Run'
     ).then(actions => {
         check('remember-Aktion erfolgreich', actions.length === 1 && actions[0].success,
             JSON.stringify(actions));
         check('Beschreibung nennt die Regel',
-            /Gelernt/.test(actions[0].description), actions[0].description);
+            /Learned/.test(actions[0].description), actions[0].description);
         check('Regel ist im Speicher',
             engine.getPractices().all().some(e => /npm run compile/.test(e.rule)),
             JSON.stringify(engine.getPractices().all()));
@@ -1912,12 +1956,12 @@ function runPracticeTests() {
         // Fehlschlag und versucht es in der naechsten Runde noch einmal.
         return engine.parseAndExecuteActions(
             '```action:remember\nregel: Immer `npm run compile` nach einer Aenderung ausfuehren\n```',
-            async () => 'Ausführen');
+            async () => 'Run');
     }).then(actions => {
         check('Dublette ist kein Fehlschlag', actions[0].success === true,
             JSON.stringify(actions[0]));
         check('Dublette sagt es deutlich',
-            /Schon bekannt/.test(actions[0].description), actions[0].description);
+            /Already known/.test(actions[0].description), actions[0].description);
         check('Ausgabe verbietet den zweiten Versuch',
             /Do not try again/.test(actions[0].output), actions[0].output);
         check('immer noch nur eine Regel',
@@ -1956,9 +2000,9 @@ function runBareActionTests() {
     ].join('\n');
 
     engine.taskComplete = false;
-    return engine.parseAndExecuteActions(antwort, async () => 'Ausführen').then(actions => {
+    return engine.parseAndExecuteActions(antwort, async () => 'Run').then(actions => {
         check('zaunloses action:done wird ausgefuehrt',
-            actions.length === 1 && actions[0].description.includes('abgeschlossen'),
+            actions.length === 1 && actions[0].description.includes('complete'),
             JSON.stringify(actions));
         check('Abschlussflag gesetzt', engine.taskComplete === true);
 
@@ -2077,7 +2121,7 @@ function runDisplayStripTests() {
 
     // 6. Und beide UNTERSCHIEDLICHEN Bloecke muessen ausgefuehrt werden, nicht
     //    nur verschwinden - sonst arbeitet der Assistent die Haelfte nicht ab.
-    return engine.parseAndExecuteActions(zweiBloecke, async () => 'Ausführen').then(actions => {
+    return engine.parseAndExecuteActions(zweiBloecke, async () => 'Run').then(actions => {
         check('beide Bloecke ohne Zaun dazwischen werden ausgefuehrt',
             actions.length === 2, JSON.stringify(actions.map(a => a.description)));
         check('erster Block: src', actions[0] && /src/.test(actions[0].description),
@@ -2086,7 +2130,7 @@ function runDisplayStripTests() {
             actions[1] && actions[1].description);
 
         // Zweimal derselbe Befehl: einmal ausfuehren
-        return engine.parseAndExecuteActions(doppelt, async () => 'Ablehnen');
+        return engine.parseAndExecuteActions(doppelt, async () => 'Reject');
     }).then(actions => {
         check('doppelter Befehl laeuft nur einmal', actions.length === 1,
             JSON.stringify(actions.map(a => a.description)));
@@ -2095,7 +2139,7 @@ function runDisplayStripTests() {
         return engine.parseAndExecuteActions(
             '```action:read_file\npath: src/index.ts\n```\n'
             + '```action:read_file\npath: src/services/userService.ts\n```',
-            async () => 'Ausführen');
+            async () => 'Run');
     }).then(actions => {
         check('verschiedene Ziele bleiben zwei Aktionen', actions.length === 2,
             JSON.stringify(actions.map(a => a.description)));
@@ -2104,7 +2148,7 @@ function runDisplayStripTests() {
         return engine.parseAndExecuteActions(
             '```action:read_file\npath: src/index.ts\n```\n'
             + '```action:read_file\npath: src/index.ts\n```',
-            async () => 'Ausführen');
+            async () => 'Run');
     }).then(actions => {
         check('dieselbe Datei zweimal gelesen: nur einmal', actions.length === 1,
             JSON.stringify(actions.map(a => a.description)));
@@ -2170,7 +2214,7 @@ function runSeparatorTests() {
     // "Ausfuehren" bei der Shell. Wer pauschal "Ausfuehren" antwortet, lehnt
     // den Patch ab, ohne es zu merken.
     const jaBitte = async (_msg, choices) =>
-        (choices && choices.includes('Anwenden')) ? 'Anwenden' : 'Ausführen';
+        (choices && choices.includes('Apply')) ? 'Apply' : 'Run';
     const run = (response) => {
         rows.length = 0;
         return engine.parseAndExecuteActions(response, jaBitte, collect);
@@ -2226,13 +2270,13 @@ function runFeedbackTests() {
 
     const rows = [];
     const collect = (description, output, meta) => rows.push({ description, output, meta });
-    const run = (response, answer = 'Ausführen') => {
+    const run = (response, answer = 'Run') => {
         rows.length = 0;
         return engine.parseAndExecuteActions(response, async () => answer, collect);
     };
 
     // 1. Der gemeldete Fehler: ein abgelehnter Befehl hinterliess keine Spur.
-    return run('```action:shell\nnpm run build\n```', 'Ablehnen').then(() => {
+    return run('```action:shell\nnpm run build\n```', 'Reject').then(() => {
         check('abgelehnter Befehl bekommt eine Zeile', rows.length === 1,
             JSON.stringify(rows));
         check('und das Kommando steht darin',
@@ -2254,7 +2298,7 @@ function runFeedbackTests() {
         return run('```action:remember\nregel: Erst lesen, dann patchen.\nwarum: Patch schlug fehl.\n```');
     }).then(() => {
         check('remember bekommt eine Zeile', rows.length === 1, JSON.stringify(rows));
-        check('mit Werkzeug Gelernt', rows[0] && rows[0].meta.tool === 'Gelernt',
+        check('mit Werkzeug Learned', rows[0] && rows[0].meta.tool === 'Learned',
             JSON.stringify(rows[0] && rows[0].meta));
 
         // 4. read_file meldet selbst - dann KEINE zweite Zeile

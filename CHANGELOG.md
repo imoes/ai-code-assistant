@@ -2,6 +2,22 @@
 
 All notable changes to this project. Latest version at the top.
 
+## 0.12.0
+
+- **The interface is English.** Every text you read — buttons, settings and their
+  explanations, the mode list, tool rows, confirmation dialogs, error messages, the log —
+  is now English, so the project reads the same way for anyone who opens it. What has not
+  changed is the part that matters most: the assistant still **answers in the language you
+  asked in**. Ask in German and the chat, the plan and the closing summary come back in
+  German. German input still works too: `/ziel`, `/schleife`, `30 Minuten`, `3 Runden` are
+  understood as before.
+- **You choose the shell, per command.** Next to **Run**, the confirmation now offers
+  **Run in PowerShell** or **Run in WSL** — whichever is the other one. The question belongs
+  to the command, not to a setting: `npm test` belongs in WSL, a `Get-Service` only works in
+  PowerShell, and you often know which a moment before the assistant does. Switching costs
+  one click instead of a whole round through "Something else". In auto mode, where nothing is
+  confirmed, the assistant asks by itself when both routes would do.
+
 ## 0.11.8
 
 - **You see everything the assistant does.** Every action now leaves a line in the chat:

@@ -69,7 +69,7 @@ export class ActionHistory {
     async undoLast(): Promise<boolean> {
         const action = this.history.pop();
         if (!action) {
-            vscode.window.showInformationMessage('Kein KI-Verlauf zum Rückgängigmachen.');
+            vscode.window.showInformationMessage('There is no AI history to undo.');
             return false;
         }
         return this.revertAction(action);
@@ -87,7 +87,7 @@ export class ActionHistory {
             if (ok) successCount++;
         }
         vscode.window.showInformationMessage(
-            `${successCount} von ${toRevert.length} KI-Aktionen rückgängig gemacht.`
+            `${successCount} of ${toRevert.length} AI actions undone.`
         );
     }
 
@@ -98,7 +98,7 @@ export class ActionHistory {
                     // Delete created file
                     if (fs.existsSync(action.filePath)) {
                         fs.unlinkSync(action.filePath);
-                        this.logger.info(`UNDO: Datei gelöscht: ${action.filePath}`);
+                        this.logger.info(`UNDO: file deleted: ${action.filePath}`);
                     }
                     break;
 
@@ -116,7 +116,7 @@ export class ActionHistory {
                         const dir = path.dirname(action.filePath);
                         fs.mkdirSync(dir, { recursive: true });
                         fs.writeFileSync(action.filePath, action.previousContent, 'utf-8');
-                        this.logger.info(`UNDO: Datei wiederhergestellt: ${action.filePath}`);
+                        this.logger.info(`UNDO: file restored: ${action.filePath}`);
                     }
                     break;
 
@@ -124,13 +124,13 @@ export class ActionHistory {
                     // Rename renamed file back
                     if (action.newFilePath && fs.existsSync(action.newFilePath)) {
                         fs.renameSync(action.newFilePath, action.filePath);
-                        this.logger.info(`UNDO: Datei zurückbenannt: ${action.newFilePath} → ${action.filePath}`);
+                        this.logger.info(`UNDO: file renamed back: ${action.newFilePath} → ${action.filePath}`);
                     }
                     break;
             }
             return true;
         } catch (err) {
-            this.logger.error(`UNDO fehlgeschlagen für ${action.filePath}`, err);
+            this.logger.error(`UNDO failed for ${action.filePath}`, err);
             return false;
         }
     }

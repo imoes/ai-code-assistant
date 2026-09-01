@@ -8,10 +8,10 @@ The assistant works like a developer beside you: it **reads and searches** the e
 code, **plans** multi-step tasks, **changes** files, **runs the tests** and **corrects
 itself** from the error output – until the task is done.
 
-> **A note on language.** The user interface is German: buttons, log messages and the
-> assistant's answers. The instructions sent to the model are English, because models
-> follow them more reliably – but the assistant always answers in the language you asked
-> in. Code, comments and this documentation are English.
+> **A note on language.** The interface is English: buttons, settings, log messages. So are
+> the instructions sent to the model, because models follow them more reliably. The
+> assistant's **answers** are not: it always replies in the language you asked in — ask in
+> German and it answers in German, in the chat, in the plan and in its closing summary.
 
 📋 Changes: [CHANGELOG.md](CHANGELOG.md) · 📖 Project rules: [AGENTS.md](AGENTS.md) ·
 ⚖ License: [Apache-2.0](LICENSE)
@@ -68,14 +68,14 @@ Two commands you type into the input field. They belong together.
 
 The goal is not the task of one round; it is what all tasks work towards. It goes into
 **every** request, sits as a bar above the chat and outlives the session and a window
-restart — it is stored beside the conversation, not inside it. "Verlauf löschen" (clear
-history) removes the conversation, not the intention.
+restart — it is stored beside the conversation, not inside it. **Clear history** removes
+the conversation, not the intention.
 
 | Input | Effect |
 |---|---|
 | `/goal <text>` | Set the goal |
 | `/goal` | Show the current goal |
-| `/goal löschen` | Remove the goal (`clear` also works) |
+| `/goal clear` | Remove the goal (`löschen` also works) |
 
 ### `/loop` — work towards it repeatedly
 
@@ -88,8 +88,8 @@ is still missing for the goal, and carries on.
 
 | Budget | Examples |
 |---|---|
-| Time | `5m`, `30 Minuten`, `2h` |
-| Rounds | `3x`, `3 Runden` |
+| Time | `5m`, `30 minutes`, `2h` |
+| Rounds | `3x`, `3 rounds` |
 | omitted | 10 minutes, at most 6 rounds |
 
 Capped at two hours and 40 rounds — a loop changes files and costs tokens.
@@ -98,7 +98,7 @@ Capped at two hours and 40 rounds — a loop changes files and costs tokens.
 
 - The assistant reports the goal as reached **and** no plan step is open
 - The time or round budget is spent
-- You click **Abbrechen** (cancel)
+- You click **Cancel**
 - Two rounds in a row without any action
 
 The last one matters most: without it the budget runs dry while the model explains every
@@ -108,11 +108,11 @@ round anew that surely everything is done already.
 
 You can type at any time — including in the middle of a run. The instruction is **queued**
 and comes up after the current step, before the step the loop would have planned itself.
-It appears in the chat immediately, marked "⏳ eingereiht" (queued).
+It appears in the chat immediately, marked "⏳ queued".
 
 Why not interrupt straight away: cancelling mid-step leaves half-finished work behind —
 file changed, tests not run. At the end of a step the state is clean. If you really do want
-to stop at once, click **Abbrechen**.
+to stop at once, click **Cancel**.
 
 The addition stays part of the task in later rounds too — otherwise it would be forgotten
 one round later.
@@ -214,7 +214,7 @@ git clone <repo>
 cd ai-code-assistant
 npm install          # on Windows via WSL: wsl npm install
 npm run compile      # on Windows via WSL: wsl npm run compile
-npm test             # 782 checks, no network and no model server needed
+npm test             # 793 checks, no network and no model server needed
 npm run package
 ```
 
@@ -223,7 +223,7 @@ npm run package
 ## Configuration
 
 The easiest way is the **settings panel**: the ⚙ button in the chat toolbar, or
-`Ctrl+Shift+P` → *AI Assistant: Einstellungen öffnen*. Changes are collected there and only
+`Ctrl+Shift+P` → *AI Assistant: Open Settings*. Changes are collected there and only
 applied on **💾 Speichern** (or `Ctrl+S`) – that way an API key can be typed in full
 without intermediate states being saved. The **🔌 Verbindung testen** button saves first
 and then checks the endpoint.
@@ -376,7 +376,7 @@ older messages automatically and carries on – the last four are kept verbatim.
 size is queried from the server (`/v1/models` → `meta.n_ctx`). Threshold:
 `aiAssistant.compactThresholdPercent`, switched off via `aiAssistant.autoCompact`.
 
-The **🗑 Verlauf löschen** button removes all stored sessions from
+The **🗑 Clear history** button removes all stored sessions from
 `ai-code-assistant.json`. Code changes already applied stay in place, and so does the goal.
 
 ---
@@ -404,13 +404,13 @@ Führe npm test aus und erkläre eventuelle Fehler
 
 | Command | Description |
 |---|---|
-| `AI Assistant: Panel öffnen` | Focus the chat panel |
-| `AI Assistant: Einstellungen öffnen` | Open the settings panel |
-| `AI Assistant: Arbeitsmodus wählen` | Pick Ask / Auto / Plan |
-| `AI Assistant: Verbindung testen` | Ping the llama.cpp server |
-| `AI Assistant: Letzte KI-Aktion rückgängig machen` | Revert the last change |
-| `AI Assistant: Alle KI-Aktionen rückgängig machen` | Revert all changes |
-| `AI Assistant: Log anzeigen` | Open the output channel |
+| `AI Assistant: Open Panel` | Focus the chat panel |
+| `AI Assistant: Open Settings` | Open the settings panel |
+| `AI Assistant: Select Mode` | Pick Ask / Auto / Plan |
+| `AI Assistant: Test Connection` | Ping the llama.cpp server |
+| `AI Assistant: Undo Last AI Action` | Revert the last change |
+| `AI Assistant: Undo All AI Actions` | Revert all changes |
+| `AI Assistant: Show Log` | Open the output channel |
 
 ### Chat commands
 

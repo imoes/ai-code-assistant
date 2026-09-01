@@ -198,7 +198,7 @@ function listen() {
 
         const clipped = await ws.fetchPage(base + '/page', 40);
         check('maxChars wird eingehalten', clipped.text.length < 120, String(clipped.text.length));
-        check('Kuerzung wird gemeldet', /gekürzt/.test(clipped.text), clipped.text.slice(-60));
+        check('Kuerzung wird gemeldet', /\[cut,/.test(clipped.text), clipped.text.slice(-60));
     }
 
     section('DuckDuckGo-HTML: Titel und Auszug paaren');
