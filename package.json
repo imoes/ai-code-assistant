@@ -2,7 +2,7 @@
   "name": "ai-code-assistant",
   "displayName": "AI Code Assistant (llama.cpp MCP)",
   "description": "Autonomous coding assistant powered by llama.cpp or any OpenAI-compatible endpoint - reads, plans, writes and tests code in your workspace.",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

@@ -320,27 +320,101 @@ if (loaded.error) {
     // Anzeige geschnitten. Vorher ging die Anzeige beim ERSTEN Token aus - der
     // Absatz war leer, die Anzeige weg, und im Fenster sah es aus, als sei
     // nichts mehr los, waehrend das Modell eine ganze Datei schrieb.
-    section('Arbeitsanzeige waehrend eines Aktionsblocks');
+    section('Abbrechen-Knopf und Denkpunkte');
 
-    const sichtbar = () => store.get('thinking').classList.contains('visible');
+    // Zwei getrennte Zustaende, die einmal einer waren - und genau das war der
+    // Fehler: "manchmal ist der Cancel-Button da, manchmal nicht". Der Knopf
+    // sitzt in derselben Zeile wie die Denkpunkte, und die Zeile verschwand,
+    // sobald Antworttext kam. Eine Runde mit Prosa nahm den Knopf mit, eine mit
+    // reinem Werkzeugaufruf nicht.
+    const zeileDa = () => store.get('thinking').classList.contains('visible');
+    const punkteDa = () => zeileDa()
+        && !store.get('thinking').classList.contains('phase-hidden');
+    // Der Knopf ist sichtbar, solange die Zeile steht - er hat keine eigene
+    // Klasse, sondern lebt darin.
+    const abbrechenDa = zeileDa;
 
+    // ── Eine Runde, die mit einem Aktionsblock anfaengt ─────────────────────
     api.dispatch({ type: 'thinking', value: true });
+    check('Start: Knopf da', abbrechenDa() === true);
+    check('Start: Punkte da', punkteDa() === true);
+
     api.dispatch({ type: 'assistantMessageStart' });
     api.dispatch({ type: 'assistantToken', text: '```action:create_file\n' });
-    check('reines Aktionsmarkup laesst die Anzeige an', sichtbar() === true);
+    check('reines Aktionsmarkup: Punkte bleiben', punkteDa() === true);
+    check('reines Aktionsmarkup: Knopf bleibt', abbrechenDa() === true);
 
-    api.dispatch({ type: 'assistantToken', text: 'path: test/modulo.test.js\n---\nconst t = 1;\n' });
-    check('auch mitten im Block bleibt sie an', sichtbar() === true);
+    api.dispatch({ type: 'assistantToken', text: 'path: test/x.js\n---\nconst t = 1;\n' });
+    check('mitten im Block: Knopf bleibt', abbrechenDa() === true);
 
+    // ── Antworttext: Punkte gehen, Knopf bleibt ────────────────────────────
+    // Eine neue Runde, denn die Ansage steht VOR dem Aktionsblock. Text
+    // dahinter gehoert zum Block und wird zu Recht mit abgeschnitten.
     api.dispatch({ type: 'assistantMessageEnd' });
-    check('am Ende der Runde geht sie aus', sichtbar() === false);
-
-    // Kommt echter Text, verschwindet sie sofort - da steht ja etwas
     api.dispatch({ type: 'thinking', value: true });
     api.dispatch({ type: 'assistantMessageStart' });
-    api.dispatch({ type: 'assistantToken', text: 'Ich lese zuerst den Tokenizer.' });
-    check('bei echtem Text geht sie aus', sichtbar() === false);
+    api.dispatch({ type: 'assistantToken', text: 'Ich lege die Testdatei an.\n\n' });
+    check('bei echtem Text: Punkte gehen', punkteDa() === false);
+    check('bei echtem Text: Knopf BLEIBT', abbrechenDa() === true);
+
+    // Und der danach folgende Aktionsblock aendert daran nichts
+    api.dispatch({ type: 'assistantToken', text: '```action:create_file\npath: a.js\n' });
+    check('Block nach der Ansage: Knopf bleibt', abbrechenDa() === true);
+
+    // ── Ende der Antwort ist nicht Ende des Auftrags ────────────────────────
+    // Danach laufen die Aktionen, und die Agenten-Schleife kann weitere Runden
+    // anhaengen. Wer hier abschaltet, nimmt den Knopf mitten im Lauf weg.
     api.dispatch({ type: 'assistantMessageEnd' });
+    check('nach der Antwort: Knopf bleibt', abbrechenDa() === true);
+    check('nach der Antwort: Punkte aus', punkteDa() === false);
+
+    // ── Eine Nachricht mittendrin beendet nichts ───────────────────────────
+    // "Loop started" ist eine assistantMessage und kommt, wenn die Schleife
+    // ANFAENGT. Vorher verschwand der Knopf genau dort.
+    api.dispatch({ type: 'assistantMessage', text: '**Loop started** – budget 15 minutes' });
+    check('Nachricht mittendrin: Knopf bleibt', abbrechenDa() === true);
+
+    // Aktionen und Iterationen halten ihn ebenfalls
+    api.dispatch({ type: 'actionProgress', description: 'Shell: npm test', output: '',
+        meta: { tool: 'Bash', target: 'npm test', running: true } });
+    check('waehrend einer Aktion: Knopf bleibt', abbrechenDa() === true);
+
+    api.dispatch({ type: 'iterationMessage', iteration: 2, reason: 'Output received' });
+    check('zwischen zwei Runden: Knopf bleibt', abbrechenDa() === true);
+
+    // ── Eine Rueckfrage wartet auf den Benutzer ────────────────────────────
+    // Keine Denkpunkte - aber abbrechen darf man auch vor dem Antworten.
+    api.dispatch({ type: 'decisionRequest', requestId: 'r1', header: 'Shell',
+        question: 'Which shell?', options: [{ label: 'WSL', description: 'posix' },
+                                            { label: 'PowerShell', description: 'windows' }],
+        multi: false });
+    check('bei einer Rueckfrage: Knopf bleibt', abbrechenDa() === true);
+    check('bei einer Rueckfrage: keine Punkte', punkteDa() === false);
+
+    // ── Erst der Host beendet den Auftrag ──────────────────────────────────
+    api.dispatch({ type: 'inputEnabled', value: true });
+    check('Auftrag beendet: Knopf weg', abbrechenDa() === false);
+    check('Auftrag beendet: Punkte weg', punkteDa() === false);
+
+    // Und ein Fehler beendet ihn auch
+    api.dispatch({ type: 'thinking', value: true });
+    check('neuer Lauf: Knopf wieder da', abbrechenDa() === true);
+    api.dispatch({ type: 'errorMessage', text: 'kaputt' });
+    check('nach einem Fehler: Knopf weg', abbrechenDa() === false);
+
+    // ── Und der Hinweistext haengt am selben Zustand ────────────────────────
+    // Er sagt, ob Enter sendet oder einreiht. Vorher sprang er auf "sendet",
+    // sobald Antworttext kam - mitten im Lauf.
+    api.dispatch({ type: 'thinking', value: true });
+    api.dispatch({ type: 'assistantMessageStart' });
+    api.dispatch({ type: 'assistantToken', text: 'Ich schaue mir das an.' });
+    check('waehrend des Laufs sagt der Hinweis: einreihen',
+        /queues the instruction/.test(store.get('hint').textContent),
+        store.get('hint').textContent);
+    api.dispatch({ type: 'inputEnabled', value: true });
+    check('danach sagt er: senden',
+        /^Enter to send/.test(store.get('hint').textContent),
+        store.get('hint').textContent);
 
     // ── Hinweistext ────────────────────────────────────────────────────────
     section('Hinweistext unter dem Eingabefeld');

@@ -1438,6 +1438,12 @@ stand out: the assistant waits for the user at this point. */
       flex-shrink: 0;
     }
     #thinking.visible { display: flex; }
+    /* Die Punkte und der Phasentext gehen, der Abbrechen-Knopf bleibt.
+       Solange gearbeitet wird, muss man abbrechen koennen - auch waehrend
+       Antworttext im Chat steht. */
+    #thinking.phase-hidden .dot,
+    #thinking.phase-hidden #thinking-label { display: none; }
+    #thinking.phase-hidden { padding: 4px 16px; }
     .dot { width: 7px; height: 7px; background: var(--accent); border-radius: 50%; animation: bounce 1.2s infinite; }
     .dot:nth-child(2) { animation-delay: .2s; }
     .dot:nth-child(3) { animation-delay: .4s; }
@@ -1602,8 +1608,13 @@ function handleHostMessage(msg) {
     case 'narration':        appendNarration(msg.text); break;
     case 'clearChat':        chat.innerHTML = ''; resetPlan(); resetStats(); break;
     case 'assistantMessage':
+      // Beendet den Lauf NICHT: diese Nachricht kommt auch mittendrin -
+      // "Loop started", "Goal set", die Abschlusszusammenfassung. Wer hier
+      // den Zustand loescht, nimmt dem Benutzer den Abbrechen-Knopf genau in
+      // dem Moment, in dem die Schleife anfaengt. Das Ende sagt der Host mit
+      // 'inputEnabled'.
       append(makeAssistantMsg(msg.text));
-      setThinking(false); setInputEnabled(true); break;
+      setPhaseVisible(false); break;
     case 'assistantMessageStart':
       currentAssistantEl = makeAssistantMsg('');
       currentAssistantEl.dataset.raw = '';
@@ -1613,16 +1624,18 @@ function handleHostMessage(msg) {
       if (currentAssistantEl) {
         currentAssistantEl.dataset.raw += msg.text;
         updateAssistantEl(currentAssistantEl);
-        // Die Arbeitsanzeige darf erst weg, wenn wirklich etwas dasteht.
-        // Beginnt eine Runde direkt mit einem Aktionsblock, wird der aus der
-        // Anzeige geschnitten - dann war der Absatz leer UND die Anzeige aus:
-        // im Fenster sah das aus, als sei nichts mehr los, waehrend das Modell
-        // gerade eine ganze Datei schrieb.
-        setThinking(cutActionMarkup(currentAssistantEl.dataset.raw).trim() === '');
+        // Die Denkpunkte gehen, sobald wirklich etwas dasteht - der
+        // Abbrechen-Knopf bleibt, denn gearbeitet wird weiter. Und beginnt
+        // eine Runde direkt mit einem Aktionsblock, wird der aus der Anzeige
+        // geschnitten: dann bleiben auch die Punkte, sonst sieht es aus, als
+        // sei nichts mehr los, waehrend das Modell eine ganze Datei schreibt.
+        setPhaseVisible(cutActionMarkup(currentAssistantEl.dataset.raw).trim() === '');
         scrollBottom();
       } break;
     case 'assistantMessageEnd':
-      currentAssistantEl = null; setThinking(false); setInputEnabled(true); finalizeProgress(); break;
+      // Ende der ANTWORT, nicht des Auftrags: danach werden die Aktionen
+      // ausgefuehrt, und die Agenten-Schleife kann weitere Runden anhaengen.
+      currentAssistantEl = null; setPhaseVisible(false); finalizeProgress(); break;
     case 'thinking':
       setThinking(msg.value);
       if (msg.value) setInputEnabled(false); break;
@@ -1648,7 +1661,9 @@ function handleHostMessage(msg) {
       append(makeDecisionCard(msg.requestId, msg.header, msg.question, msg.options, msg.multi));
       pendingCount++;
       updateBanner();
-      setThinking(false);
+      // Gewartet wird auf den Benutzer, also keine Denkpunkte - aber der
+      // Auftrag laeuft, und abbrechen darf man auch vor dem Antworten.
+      setPhaseVisible(false);
       scrollBottom(); break;
     case 'confirmRequest':
       append(makeConfirmCard(
@@ -2414,13 +2429,38 @@ function scrollBottom() { requestAnimationFrame(() => { chat.scrollTop = chat.sc
 // The thinking state no longer blocks input: the user should be able to choose between
 // can send a new task to the iterations. Enter interrupts the
 // current task and then starts the new one.
+/**
+ * Laeuft gerade ein Auftrag?
+ *
+ * Das hier entscheidet ueber den Abbrechen-Knopf und den Hinweistext - nicht
+ * darueber, ob Denkpunkte zu sehen sind. Beides war einmal dasselbe, und das
+ * war der Fehler: sobald Antworttext kam, verschwand die ganze Zeile samt
+ * Abbrechen. Bei einer Runde mit Prosa war der Knopf weg, bei einer mit
+ * reinem Werkzeugaufruf blieb er - "manchmal da, manchmal nicht".
+ *
+ * Ausgeschaltet wird nur vom Host, wenn der Auftrag wirklich zu Ende ist.
+ */
 function setThinking(v) {
   isBusy = v;
   thinking.classList.toggle("visible", v);
+  if (v) thinking.classList.remove("phase-hidden");
   if (hintEl) hintEl.textContent = v
     ? "Enter queues the instruction \u2013 it comes up after the current step"
     : "Enter to send \\u00b7 Shift+Enter for a line break";
   if (v) scrollBottom();
+}
+
+/**
+ * Denkpunkte und Phasentext ein- oder ausblenden.
+ *
+ * Sie gehoeren weg, sobald im Chat wirklich etwas steht - zwei Anzeigen fuer
+ * denselben Zustand sind eine zu viel. Der Abbrechen-Knopf bleibt.
+ */
+function setPhaseVisible(v) {
+  thinking.classList.toggle("phase-hidden", !v);
+  // Ein laufender Auftrag ohne Denkpunkte braucht die Zeile weiterhin:
+  // ohne 'visible' waere auch der Knopf weg.
+  if (isBusy) thinking.classList.add("visible");
 }
 function setInputEnabled(v) {
   // Input and send remain always operable

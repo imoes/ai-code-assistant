@@ -2,6 +2,16 @@
 
 All notable changes to this project. Latest version at the top.
 
+## 0.12.2
+
+- **The Cancel button stays there while work is running.** It used to come and go: a round
+  in which the assistant wrote prose took the button with it, a round with nothing but a
+  tool call kept it. The reason was that the button and the "thinking" dots were one and
+  the same thing — and the dots are meant to disappear once there is something to read. Now
+  the two are separate: the dots go, the button stays, and only the end of the whole task
+  removes it. The hint below the input field follows the same state, so it no longer claims
+  Enter would send while an instruction would in fact be queued.
+
 ## 0.12.1
 
 - **The assistant only uses the shell your machine has.** On startup it checks the

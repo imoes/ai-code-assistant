@@ -11,7 +11,7 @@ server or a cloud provider such as OpenRouter).
 
 - Source: `src/*.ts`, entry point `src/extension.ts`
 - Build: `npm run compile` (TypeScript → `out/`)
-- Tests: `npm test` — 820 checks, no network and no model server needed. The suite runs
+- Tests: `npm test` — 837 checks, no network and no model server needed. The suite runs
   the real engine against a `vscode` stub (`test/vscode-stub.js`) and local test servers.
   New feature → add a test under `test/` and register it in `test/run-all.js`.
 - Packaging: `npm run package` (produces `ai-code-assistant-<version>.vsix`)
