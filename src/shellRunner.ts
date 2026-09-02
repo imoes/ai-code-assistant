@@ -35,6 +35,23 @@ const DANGEROUS_PATTERNS = [
  */
 export type ShellKind = 'auto' | 'wsl' | 'powershell' | 'bash';
 
+/**
+ * What this machine can run.
+ *
+ * The platform alone is not enough: Windows without WSL is an ordinary case,
+ * and on Linux there is usually no PowerShell. Both matter for the prompt as
+ * well – a model told about a shell that is not installed will reach for it.
+ */
+export interface ShellEnvironment {
+    platform: 'windows' | 'linux' | 'macos';
+    /** wsl.exe present (Windows only) */
+    wsl: boolean;
+    /** powershell.exe present (Windows only) */
+    powershell: boolean;
+    /** /bin/bash present (Linux and macOS) */
+    bash: boolean;
+}
+
 /** Dangerous PowerShell patterns – the counterpart to DANGEROUS_PATTERNS. */
 const DANGEROUS_PS_PATTERNS = [
     /Remove-Item\s+.*-Recurse.*-Force/i,
@@ -216,28 +233,92 @@ export class ShellRunner {
     }
 
     /**
-     * Welche Shell es am Ende wird.
+     * What this machine actually offers.
      *
-     * `auto` heißt: die Einstellung entscheidet, und deren Standard richtet sich
-     * nach dem Betriebssystem. Auf Linux und macOS gibt es kein WSL – dort war
-     * `wsl` früher fest verdrahtet und JEDER Befehl scheiterte, auch `echo test`.
+     * Not just the platform – whether the program is really there. Windows
+     * without WSL is an ordinary case (a fresh machine, a locked-down one), and
+     * on Linux there is usually no PowerShell. Both used to end the same way:
+     * the assistant sent a command, `wsl` or `powershell.exe` was missing,
+     * ENOENT, and the round was gone.
+     *
+     * Checked once and remembered. The answer cannot change while the window is
+     * open, and a file test per command would be wasted work.
+     */
+    static environment(): ShellEnvironment {
+        if (ShellRunner.envCache) return ShellRunner.envCache;
+
+        const platform: ShellEnvironment['platform'] =
+            process.platform === 'win32' ? 'windows'
+                : process.platform === 'darwin' ? 'macos' : 'linux';
+
+        const sysRoot = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+        const exists = (p: string): boolean => {
+            try { return fs.existsSync(p); } catch { return false; }
+        };
+
+        const env: ShellEnvironment = platform === 'windows'
+            ? {
+                platform,
+                // System32 only – wsl.exe in SysWOW64 is the 32-bit stub.
+                wsl: exists(path.join(sysRoot, 'System32', 'wsl.exe')),
+                powershell: exists(path.join(sysRoot, 'System32', 'WindowsPowerShell',
+                    'v1.0', 'powershell.exe')),
+                bash: false
+            }
+            : {
+                platform,
+                wsl: false,
+                powershell: false,
+                bash: exists('/bin/bash') || exists('/usr/bin/bash')
+            };
+
+        ShellRunner.envCache = env;
+        return env;
+    }
+
+    /** Only for the tests: forget what was detected. */
+    static resetEnvironment(): void {
+        ShellRunner.envCache = undefined;
+    }
+
+    private static envCache?: ShellEnvironment;
+
+    /**
+     * Which shell it ends up being.
+     *
+     * `auto` means the setting decides, and its default follows the operating
+     * system. But a request is only honoured where it can actually run: on
+     * Linux and macOS there is no WSL – `wsl` used to be hard-wired there and
+     * EVERY command failed, even `echo test`. The same hole was still open for
+     * `powershell`: a block with `shell: powershell` was honoured verbatim on
+     * Linux, and the model lost a round to ENOENT.
+     *
+     * On Windows without WSL the fallback runs the other way: PowerShell is
+     * there, so the command goes there rather than nowhere.
      */
     static resolveShell(
         requested: ShellKind,
         config: { get<T>(key: string, fallback: T): T }
     ): 'wsl' | 'powershell' | 'bash' {
-        const onWindows = process.platform === 'win32';
+        const env = ShellRunner.environment();
+        const onWindows = env.platform === 'windows';
 
-        if (requested === 'powershell') return 'powershell';
-        if (requested === 'wsl') return onWindows ? 'wsl' : 'bash';
-        if (requested === 'bash') return onWindows ? 'wsl' : 'bash';
+        // What is left when a wish cannot be met.
+        const posix = (): 'wsl' | 'bash' => (onWindows && env.wsl) ? 'wsl' : 'bash';
+        const fallback = (): 'wsl' | 'powershell' | 'bash' =>
+            (onWindows && !env.wsl && env.powershell) ? 'powershell' : posix();
+
+        if (requested === 'powershell') return onWindows ? 'powershell' : posix();
+        if (requested === 'wsl') return fallback();
+        if (requested === 'bash') return fallback();
 
         const preferred = config.get<string>('shell', 'auto');
-        if (preferred === 'powershell') return onWindows ? 'powershell' : 'bash';
-        if (preferred === 'wsl' || preferred === 'bash') return onWindows ? 'wsl' : 'bash';
+        if (preferred === 'powershell') return onWindows ? 'powershell' : posix();
+        if (preferred === 'wsl' || preferred === 'bash') return fallback();
 
-        // auto: under Windows WSL, because that's where build and test commands belong
-        return onWindows ? 'wsl' : 'bash';
+        // auto: WSL under Windows, because that is where build and test commands
+        // belong – unless it is not installed, then PowerShell is what there is.
+        return fallback();
     }
 
     /** Program and arguments for the selected shell. */

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { MCPClient } from './mcpClient';
 import { Logger } from './logger';
 import { getAssistantMode } from './aiEngine';
+import { ShellRunner } from './shellRunner';
 
 /** An input field in the settings panel. */
 interface FieldDef {
@@ -34,6 +35,33 @@ interface SectionDef {
 export class SettingsPanel {
     public static readonly viewType = 'aiAssistant.settingsPanel';
     private static current: SettingsPanel | undefined;
+
+    /**
+     * What this machine actually offers – written above the shell settings.
+     *
+     * Without it the section reads like a free choice between three options,
+     * when in truth two of them do nothing on a Linux machine. Better to say so
+     * than to let someone set PowerShell and wonder why nothing changes.
+     */
+    static shellHint(): string {
+        const env = ShellRunner.environment();
+        if (env.platform !== 'windows') {
+            const os = env.platform === 'macos' ? 'macOS' : 'Linux';
+            return `This is ${os}: commands run in the system shell. `
+                + 'There is no WSL and no PowerShell here, so those two options do nothing.';
+        }
+        if (env.wsl && env.powershell) {
+            return 'This is Windows with WSL: both shells are available, and the assistant '
+                + 'may pick one per command.';
+        }
+        if (env.powershell) {
+            return 'This is Windows WITHOUT WSL: every command runs in PowerShell. '
+                + 'Install WSL (wsl --install) if you want the project\'s build and test '
+                + 'commands to work.';
+        }
+        return 'Neither WSL nor PowerShell was found on this machine – shell commands '
+            + 'will fail. The reading and writing tools work regardless.';
+    }
 
     private readonly panel: vscode.WebviewPanel;
     private readonly logger = Logger.getInstance();
@@ -158,9 +186,28 @@ export class SettingsPanel {
             ]
         },
         {
-            title: '🔒 Security',
+            title: '🔒 Security and shell',
+            hint: SettingsPanel.shellHint(),
             fields: [
-                { key: 'allowShellCommands', label: 'Allow shell commands (WSL)', kind: 'boolean' },
+                {
+                    key: 'allowShellCommands', label: 'Allow shell commands', kind: 'boolean',
+                    hint: 'Off, the assistant can still read, search and write files – it just '
+                        + 'cannot build or test.'
+                },
+                {
+                    key: 'shell', label: 'Which shell', kind: 'select',
+                    options: [
+                        { value: 'auto', label: 'Auto – whatever this machine has' },
+                        { value: 'wsl', label: 'WSL / bash' },
+                        { value: 'powershell', label: 'Windows PowerShell' }
+                    ],
+                    hint: 'What is not installed is never used, whatever is set here.'
+                },
+                {
+                    key: 'allowPowerShell', label: 'Allow PowerShell commands', kind: 'boolean',
+                    hint: 'Off, the assistant is told to use WSL instead. Only has an effect '
+                        + 'on Windows.'
+                },
                 { key: 'confirmDangerousOps', label: 'Warn before dangerous operations', kind: 'boolean' }
             ]
         },

@@ -1030,7 +1030,59 @@ function runHistoryTests() {
 // zeigte: das Panel las `mode` direkt und bekam den Standard, ohne die
 // Migration vom alten `autoApply`. Ein Klick auf Speichern haette den
 // Auto-Modus stillschweigend abgeschaltet.
+// ── Jede Einstellung an BEIDEN Stellen ──────────────────────────────────────
+// Die Konvention steht in AGENTS.md: neue Einstellungen gehoeren in
+// package.json UND ins Einstellungsfenster. `shell` und `allowPowerShell`
+// standen nur in package.json - wer das Fenster benutzt, konnte die Shell
+// nicht waehlen und wusste nicht, dass es die Wahl gibt.
+function runSettingsCoverageTests() {
+    section('Einstellungen: package.json und Fenster deckungsgleich');
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(PROJECT, 'package.json'), 'utf-8'));
+    const declared = Object.keys(pkg.contributes.configuration.properties)
+        .map(k => k.replace(/^aiAssistant\./, ''));
+
+    const panelSrc = fs.readFileSync(path.join(PROJECT, 'src', 'settingsPanel.ts'), 'utf-8');
+    const inPanel = new Set(
+        [...panelSrc.matchAll(/key:\s*'([a-zA-Z]+)'/g)].map(m => m[1]));
+
+    // Veraltetes bleibt absichtlich draussen - es soll niemand neu setzen.
+    const ABSICHTLICH_DRAUSSEN = new Set(['autoApply']);
+
+    const fehlend = declared.filter(k => !inPanel.has(k) && !ABSICHTLICH_DRAUSSEN.has(k));
+    check('keine Einstellung fehlt im Fenster', fehlend.length === 0,
+        fehlend.join(', '));
+
+    // Und umgekehrt: das Fenster darf nichts anbieten, was es nicht gibt
+    const erfunden = [...inPanel].filter(k => !declared.includes(k));
+    check('das Fenster erfindet keine Einstellung', erfunden.length === 0,
+        erfunden.join(', '));
+
+    // Der Hinweis ueber dem Shell-Abschnitt sagt die Wahrheit ueber DIESEN Rechner
+    const { SettingsPanel } = require(path.join(PROJECT, 'out', 'settingsPanel.js'));
+    const { ShellRunner } = require(path.join(PROJECT, 'out', 'shellRunner.js'));
+
+    ShellRunner.resetEnvironment();
+    ShellRunner.envCache = { platform: 'linux', wsl: false, powershell: false, bash: true };
+    const linuxHint = SettingsPanel.shellHint();
+    check('Hinweis nennt Linux', /This is Linux/.test(linuxHint), linuxHint);
+    check('Hinweis sagt, dass die zwei Optionen nichts tun',
+        /do nothing/.test(linuxHint), linuxHint);
+
+    ShellRunner.envCache = { platform: 'windows', wsl: false, powershell: true, bash: false };
+    const noWslHint = SettingsPanel.shellHint();
+    check('Hinweis nennt Windows ohne WSL', /WITHOUT WSL/.test(noWslHint), noWslHint);
+    check('und nennt den Weg dahin', /wsl --install/.test(noWslHint), noWslHint);
+
+    ShellRunner.envCache = { platform: 'windows', wsl: true, powershell: true, bash: false };
+    check('Hinweis nennt beide Shells',
+        /both shells are available/.test(SettingsPanel.shellHint()));
+
+    ShellRunner.resetEnvironment();
+}
+
 function runModeConsistencyTests() {
+    runSettingsCoverageTests();
     section('Modus: Chat und Panel stimmen ueberein');
 
     const { getAssistantMode } = require(path.join(PROJECT, 'out', 'aiEngine.js'));
@@ -1442,14 +1494,16 @@ function runShellChoiceTests() {
     const cfgPs = { get: (k, d) => (k === 'shell' ? 'powershell' : d) };
     const onWindows = process.platform === 'win32';
 
-    check('powershell angefordert -> powershell',
-        ShellRunner.resolveShell('powershell', cfgAuto) === 'powershell');
-    check('wsl angefordert -> wsl bzw. bash',
-        ShellRunner.resolveShell('wsl', cfgAuto) === (onWindows ? 'wsl' : 'bash'));
-    check('auto folgt der Einstellung',
-        ShellRunner.resolveShell('auto', cfgPs) === (onWindows ? 'powershell' : 'bash'));
-    check('auto ohne Einstellung: WSL bzw. bash',
-        ShellRunner.resolveShell('auto', cfgAuto) === (onWindows ? 'wsl' : 'bash'));
+    // Die Aufloesung wird unten fuer jede Umgebung einzeln geprueft - mit
+    // gestellter Plattform, damit nicht nur der Rechner getestet wird, auf dem
+    // die Tests gerade laufen. Hier nur der Fall, der auf JEDEM System gilt:
+    // eine POSIX-Shell kommt immer heraus, niemals nichts.
+    check('wsl angefordert liefert eine POSIX-Shell',
+        ['wsl', 'bash', 'powershell'].includes(ShellRunner.resolveShell('wsl', cfgAuto)),
+        ShellRunner.resolveShell('wsl', cfgAuto));
+    check('auto liefert immer eine nutzbare Shell',
+        ['wsl', 'bash', 'powershell'].includes(ShellRunner.resolveShell('auto', cfgAuto)),
+        ShellRunner.resolveShell('auto', cfgAuto));
 
     // Aufrufparameter
     const [psExe, psArgs] = ShellRunner.spawnArgs('powershell', 'Get-Date');
@@ -1468,25 +1522,35 @@ function runShellChoiceTests() {
         ShellRunner.escapePsArg("D:\\Otto's Ordner") === "'D:\\Otto''s Ordner'",
         ShellRunner.escapePsArg("D:\\Otto's Ordner"));
 
-    // Das Handbuch muss beide Wege nennen, sonst nutzt das Modell sie nicht
-    const manual = engine.buildToolManual();
-    check('Handbuch nennt PowerShell', /PowerShell/.test(manual));
-    check('Handbuch nennt die Kopfzeile',
-        manual.includes('shell: powershell'), 'fehlt');
-    check('Handbuch warnt vor der Syntax',
-        /no `&&`/.test(manual) && /Get-ChildItem/.test(manual), 'fehlt');
-    check('Handbuch bevorzugt WSL',
-        /Prefer WSL/.test(manual), 'fehlt');
+    // ── Das Handbuch beschreibt NUR, was dieser Rechner kann ────────────────
+    // Vorher nannte es immer beide Wege, WSL und PowerShell, egal worauf der
+    // Assistent lief. Unter Linux ist das eine Einladung zum Scheitern: das
+    // Modell liest von `shell: powershell`, greift danach, und der Befehl
+    // stirbt an ENOENT. Windows ohne WSL ist der Spiegelfall.
+    //
+    // Geprueft werden alle drei Umgebungen, nicht nur die, auf der die Tests
+    // gerade laufen - sonst faellt genau der Fall durch, der den Fehler hat.
+    const setEnv = (platform, wsl, powershell, bash) => {
+        ShellRunner.resetEnvironment();
+        ShellRunner.envCache = { platform, wsl, powershell, bash };
+    };
 
-    // Und es muss sagen, dass Fragen erlaubt ist, wenn beide Wege taugen.
-    // Im Auto-Modus gibt es keinen Bestaetigungsdialog - dort ist die Frage
-    // des Modells der EINZIGE Weg, den Benutzer zu erreichen.
-    check('Handbuch erlaubt die Rueckfrage zur Shell',
-        /ask_user/.test(manual) && /Which shell should run this/.test(manual), 'fehlt');
+    // 1. Windows mit WSL: beide Wege, und die Wahl zaehlt
+    setEnv('windows', true, true, false);
+    const winBoth = AIEngine.shellManual();
+    check('Windows+WSL: nennt das Betriebssystem', /You are on Windows/.test(winBoth), winBoth.slice(0, 80));
+    check('Windows+WSL: nennt die Kopfzeile', winBoth.includes('shell: powershell'), 'fehlt');
+    check('Windows+WSL: warnt vor der Syntax',
+        /no `&&`/.test(winBoth) && /Get-ChildItem/.test(winBoth), 'fehlt');
+    check('Windows+WSL: bevorzugt WSL', /Prefer WSL/.test(winBoth), 'fehlt');
+    check('Windows+WSL: nennt die Pfadformen',
+        /\/mnt\/<drive>/.test(winBoth), 'fehlt');
+    check('Windows+WSL: erlaubt die Rueckfrage',
+        /ask_user/.test(winBoth) && /Which shell should run this/.test(winBoth), 'fehlt');
 
     // Das Beispiel im Handbuch muss der Parser auch lesen koennen - ein
     // Beispiel im falschen Format bringt das Modell dazu, es falsch zu schreiben.
-    const beispiel = /```action:ask_user\n([\s\S]*?)```/.exec(manual);
+    const beispiel = /```action:ask_user\n([\s\S]*?)```/.exec(winBoth);
     check('Beispiel-Block im Handbuch gefunden', beispiel !== null);
     if (beispiel) {
         const geparst = AIEngine.parseAskBlock(beispiel[1]);
@@ -1503,11 +1567,79 @@ function runShellChoiceTests() {
             JSON.stringify(geparst.options));
     }
 
+    // 2. Windows OHNE WSL: PowerShell ist alles, was da ist
+    setEnv('windows', false, true, false);
+    const winPs = AIEngine.shellManual();
+    check('Windows ohne WSL: sagt, dass WSL fehlt', /WSL is NOT installed/.test(winPs), winPs.slice(0, 90));
+    check('Windows ohne WSL: verbietet die Kopfzeile',
+        !winPs.includes('shell: powershell') && /leave it out/.test(winPs), winPs.slice(0, 200));
+    check('Windows ohne WSL: warnt vor POSIX-Befehlen',
+        /Get-Content/.test(winPs) && /use `;`/.test(winPs), 'fehlt');
+    check('Windows ohne WSL: fragt NICHT nach der Shell',
+        !/ask_user/.test(winPs), 'bietet eine Wahl, die es nicht gibt');
+
+    // 3. Linux: keine PowerShell, kein WSL
+    setEnv('linux', false, false, true);
+    const linux = AIEngine.shellManual();
+    check('Linux: nennt das Betriebssystem', /You are on Linux/.test(linux), linux.slice(0, 80));
+    check('Linux: nennt PowerShell NICHT als Weg',
+        !linux.includes('shell: powershell'), 'nennt eine Shell, die es nicht gibt');
+    check('Linux: sagt ausdruecklich, dass es sie nicht gibt',
+        /no WSL and no PowerShell/.test(linux), linux.slice(0, 200));
+    check('Linux: nennt POSIX-Werkzeuge', /systemctl/.test(linux), 'fehlt');
+    check('Linux: fragt NICHT nach der Shell', !/ask_user/.test(linux), 'fragt ohne Wahl');
+
+    // 4. macOS wird als macOS benannt, nicht als Linux
+    setEnv('macos', false, false, true);
+    check('macOS: nennt das Betriebssystem', /You are on macOS/.test(AIEngine.shellManual()));
+
+    // 5. Windows ohne alles: sagen, dass es nicht geht, statt etwas zu erfinden
+    setEnv('windows', false, false, false);
+    const nix = AIEngine.shellManual();
+    check('Windows ohne Shell: benennt die Lage',
+        /neither WSL nor PowerShell/.test(nix), nix.slice(0, 120));
+    check('Windows ohne Shell: verweist auf die anderen Werkzeuge',
+        /reading and writing tools/.test(nix), 'fehlt');
+
+    // ── Und die Auflösung haelt sich an dieselbe Wahrheit ───────────────────
+    // Der eigentliche Fehler sass hier: `shell: powershell` wurde auf JEDEM
+    // System woertlich genommen. Unter Linux hiess das powershell.exe starten.
+    setEnv('linux', false, false, true);
+    check('Linux: powershell angefordert -> bash',
+        ShellRunner.resolveShell('powershell', cfgAuto) === 'bash',
+        ShellRunner.resolveShell('powershell', cfgAuto));
+    check('Linux: Einstellung powershell -> bash',
+        ShellRunner.resolveShell('auto', cfgPs) === 'bash');
+
+    setEnv('windows', true, true, false);
+    check('Windows+WSL: powershell angefordert -> powershell',
+        ShellRunner.resolveShell('powershell', cfgAuto) === 'powershell');
+    check('Windows+WSL: auto -> wsl', ShellRunner.resolveShell('auto', cfgAuto) === 'wsl');
+
+    // Windows ohne WSL: der Befehl geht in die PowerShell statt ins Leere
+    setEnv('windows', false, true, false);
+    check('Windows ohne WSL: auto -> powershell',
+        ShellRunner.resolveShell('auto', cfgAuto) === 'powershell',
+        ShellRunner.resolveShell('auto', cfgAuto));
+    check('Windows ohne WSL: wsl angefordert -> powershell',
+        ShellRunner.resolveShell('wsl', cfgAuto) === 'powershell',
+        ShellRunner.resolveShell('wsl', cfgAuto));
+
+    // Und die echte Erkennung liefert etwas Brauchbares
+    ShellRunner.resetEnvironment();
+    const echt = ShellRunner.environment();
+    check('echte Erkennung nennt die Plattform',
+        ['windows', 'linux', 'macos'].includes(echt.platform), echt.platform);
+    check('echte Erkennung passt zu process.platform',
+        (process.platform === 'win32') === (echt.platform === 'windows'), echt.platform);
+    check('unter Linux keine PowerShell erkannt',
+        process.platform === 'win32' || echt.powershell === false, JSON.stringify(echt));
+
     // ── Der Umschalter im Bestaetigungsdialog ───────────────────────────────
     // Die Frage "WSL oder PowerShell?" haengt am Befehl, nicht an einer
     // Voreinstellung: `npm test` gehoert nach WSL, `Get-Service` geht nur in
     // der PowerShell. Deshalb wird sie bei JEDEM Befehl mitangeboten - der
-    // Umweg ueber "Etwas anderes" kostet eine ganze Runde.
+    // Umweg ueber "Something else" kostet eine ganze Runde.
     const src = fs.readFileSync(path.join(PROJECT, 'src', 'aiEngine.ts'), 'utf-8');
     check('Dialog bietet den Wechsel an',
         /Run in PowerShell|Run in WSL/.test(src), 'fehlt');
@@ -1518,9 +1650,10 @@ function runShellChoiceTests() {
         'run() bekommt noch shellKind statt effectiveKind');
     check('die Werkzeugzeile nennt die tatsaechliche Shell',
         /resolveShell\(effectiveKind, config\)/.test(src), 'fehlt');
-    check('kein Wechsel angeboten, wenn PowerShell verboten ist',
-        /allowPowerShell/.test(src.slice(src.indexOf('const otherAvailable'),
-                                        src.indexOf('const switchLabel'))), 'fehlt');
+    check('Wechsel nur bei installierter Gegenseite',
+        /env\.wsl && env\.powershell/.test(src.slice(src.indexOf('const otherAvailable'),
+                                                     src.indexOf('const switchLabel'))),
+        'der Dialog prueft nicht, ob die andere Shell da ist');
 }
 
 // ── Entscheidungsfrage an den Benutzer ──────────────────────────────────────

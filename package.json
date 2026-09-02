@@ -2,7 +2,7 @@
   "name": "ai-code-assistant",
   "displayName": "AI Code Assistant (llama.cpp MCP)",
   "description": "Autonomous coding assistant powered by llama.cpp or any OpenAI-compatible endpoint - reads, plans, writes and tests code in your workspace.",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -177,11 +177,11 @@
           "default": "auto",
           "enum": ["auto", "wsl", "powershell"],
           "enumDescriptions": [
-            "Auto – WSL/bash on Windows, the system shell elsewhere. The assistant may switch to PowerShell per command when the task needs Windows.",
-            "Always WSL/bash (the system shell on Linux and macOS).",
-            "Always Windows PowerShell. Careful: build and test commands usually expect a POSIX shell."
+            "Auto – whatever this machine has: WSL on Windows, PowerShell if WSL is missing, the system shell on Linux and macOS.",
+            "Always WSL/bash (the system shell on Linux and macOS). Falls back to PowerShell on a Windows machine without WSL.",
+            "Always Windows PowerShell. Ignored on Linux and macOS, where there is none. Careful: build and test commands usually expect a POSIX shell."
           ],
-          "markdownDescription": "Which shell the assistant uses by default.\n\nIt may still pick the other one per command – some tasks only work in one: `npm test` belongs in WSL, a `Get-Service` or talking to a Windows program only in PowerShell. The assistant is told about both in its prompt and is instructed to prefer WSL.\n\nWhen a command could go either way you are asked: the confirmation offers **Run in PowerShell** / **Run in WSL** next to **Run**, so switching costs one click."
+          "markdownDescription": "Which shell the assistant uses by default.\n\n**What is not installed is never used.** On startup the assistant checks the operating system and whether `wsl.exe` and `powershell.exe` are actually there, and its prompt describes only those routes – a model told about a shell that is missing will reach for it and lose a round to it. On Linux and macOS there is no `shell:` header and no PowerShell; on Windows without WSL every command goes to PowerShell.\n\nWhere both exist, the assistant may pick the other one per command – some tasks only work in one: `npm test` belongs in WSL, a `Get-Service` or talking to a Windows program only in PowerShell. It is instructed to prefer WSL.\n\nAnd then you are asked: the confirmation offers **Run in PowerShell** / **Run in WSL** next to **Run**, so switching costs one click. That option only appears where the other shell is installed."
         },
         "aiAssistant.allowPowerShell": {
           "type": "boolean",

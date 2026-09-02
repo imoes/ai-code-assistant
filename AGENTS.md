@@ -11,7 +11,7 @@ server or a cloud provider such as OpenRouter).
 
 - Source: `src/*.ts`, entry point `src/extension.ts`
 - Build: `npm run compile` (TypeScript → `out/`)
-- Tests: `npm test` — 793 checks, no network and no model server needed. The suite runs
+- Tests: `npm test` — 820 checks, no network and no model server needed. The suite runs
   the real engine against a `vscode` stub (`test/vscode-stub.js`) and local test servers.
   New feature → add a test under `test/` and register it in `test/run-all.js`.
 - Packaging: `npm run package` (produces `ai-code-assistant-<version>.vsix`)
@@ -233,8 +233,16 @@ broken escape sequence showed up as `00b7`. If you change the display, add a che
 - Singleton pattern: services offer `static getInstance()` (see `AIEngine`, `FileManager`).
 - No file access outside the workspace – always through `FileManager.resolvePath()`.
 - Read-only analysis (`read_file`, `grep`, `glob`, `list_dir`) runs natively in Node, not
-  through the shell. Shell commands run under WSL; PowerShell only when the command
-  genuinely needs Windows.
+  through the shell.
+- **Never assume a shell exists.** `ShellRunner.environment()` reports the platform and
+  whether `wsl.exe` / `powershell.exe` are really installed; `resolveShell()` honours a
+  request only where it can run, and `AIEngine.shellManual()` describes only those routes
+  in the prompt. Both halves matter: a model told about a missing shell reaches for it, and
+  a request honoured verbatim dies on ENOENT. `wsl` was hard-wired once and every command
+  failed on Linux; `powershell` had the same hole afterwards. The tests stub the
+  environment for all three platforms — do the same rather than testing only your own
+  machine.
 - New settings belong in `package.json` → `contributes.configuration` **and** in the
-  settings panel (`src/settingsPanel.ts`).
+  settings panel (`src/settingsPanel.ts`). A test compares the two, because `shell` and
+  `allowPowerShell` had gone missing from the panel.
 - Keep `CHANGELOG.md` up to date: new features and systemic changes, newest version first.

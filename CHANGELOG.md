@@ -2,6 +2,19 @@
 
 All notable changes to this project. Latest version at the top.
 
+## 0.12.1
+
+- **The assistant only uses the shell your machine has.** On startup it checks the
+  operating system and whether `wsl.exe` and `powershell.exe` are really installed, and it
+  is told about those routes only. On Linux and macOS PowerShell is no longer offered — and
+  a `shell: powershell` block is no longer taken at face value there either, which used to
+  mean trying to start `powershell.exe` and losing a round to the error. On Windows without
+  WSL it is the other way round: commands go to PowerShell instead of nowhere, with the
+  syntax that belongs to it. The **Run in PowerShell** / **Run in WSL** option appears only
+  where the other shell is actually installed.
+- The settings window gained the shell settings it was missing — which shell to use and
+  whether PowerShell is allowed — with a line above them saying what this machine offers.
+
 ## 0.12.0
 
 - **The interface is English.** Every text you read — buttons, settings and their

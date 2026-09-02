@@ -39,9 +39,20 @@ through it. The progress appears in the chat as a checklist with a progress bar.
 step. The loop ends when the assistant reports the task as done or the step limit is
 reached.
 
-**Two shells.** Build, tests and git run under WSL/bash. For anything that genuinely needs
-Windows – services, registry, drivers, WinGet, Windows-only executables – the assistant
-switches to PowerShell for that one command.
+**Use the shell this machine actually has.** On startup the assistant checks the operating
+system and whether `wsl.exe` and `powershell.exe` are really installed, and its prompt
+describes only those routes:
+
+| Machine | What the assistant is told |
+|---|---|
+| Windows with WSL | Both. Build, tests and git under WSL/bash; PowerShell for what genuinely needs Windows – services, registry, drivers, WinGet. It prefers WSL, and where a command could go either way it asks. |
+| Windows without WSL | PowerShell only, with the syntax that goes with it: `;` instead of `&&`, `Get-ChildItem` instead of `ls`. |
+| Linux, macOS | The system shell. No `shell:` header, no cmdlets, `systemctl` and `&&` work. |
+
+This matters more than it sounds: a model told about a shell that is not installed will
+reach for it, and the command dies on ENOENT. A `shell: powershell` block is therefore not
+only left out of the prompt on Linux — it is also refused at execution time and run in the
+system shell instead.
 
 **Respect the project rules.** `AGENTS.md`, `CLAUDE.md`, `command.md` and
 `.github/copilot-instructions.md` are loaded as permanent rules on every request.
@@ -214,7 +225,7 @@ git clone <repo>
 cd ai-code-assistant
 npm install          # on Windows via WSL: wsl npm install
 npm run compile      # on Windows via WSL: wsl npm run compile
-npm test             # 793 checks, no network and no model server needed
+npm test             # 820 checks, no network and no model server needed
 npm run package
 ```
 

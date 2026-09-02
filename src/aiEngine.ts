@@ -1119,6 +1119,70 @@ and append it as the last action:shell block.` : '';
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
+     * The shell part of the manual – only what this machine can actually run.
+     *
+     * Until now it always described both routes, WSL and PowerShell, whatever
+     * the assistant was running on. On Linux that is an invitation to fail: the
+     * model reads about `shell: powershell`, reaches for it, and the command
+     * dies on ENOENT. Windows without WSL is the mirror image.
+     *
+     * So the manual is assembled from what was detected. What is not there is
+     * not mentioned – and the operating system is named, because it decides
+     * what a sensible command even looks like: `Get-Service` against
+     * `systemctl`, backslashes against slashes.
+     */
+    static shellManual(): string {
+        const env = ShellRunner.environment();
+        const osName = env.platform === 'windows' ? 'Windows'
+            : env.platform === 'macos' ? 'macOS' : 'Linux';
+
+        // Windows with WSL: both routes, and the choice matters.
+        if (env.platform === 'windows' && env.wsl && env.powershell) {
+            return `Shell command. You are on ${osName} with WSL available.\n` +
+                `WSL/bash is the default – build, tests, git:\n` +
+                `\`\`\`action:shell\nnpm test\n\`\`\`\n` +
+                `Windows PowerShell when the command genuinely needs Windows (services, ` +
+                `registry, drivers, WinGet, Windows-only executables, COM). Mind the ` +
+                `syntax: no \`&&\`, use \`;\` – and \`Get-ChildItem\`, not \`ls\`:\n` +
+                `\`\`\`action:shell\nshell: powershell\n---\nGet-Service -Name Spooler | Select-Object Status, Name\n\`\`\`\n` +
+                `Prefer WSL. Only reach for PowerShell when WSL cannot do the job.\n` +
+                `Note the paths: under WSL the workspace is at /mnt/<drive>/…, in ` +
+                `PowerShell at <Drive>:\\….\n` +
+                `If a command could sensibly run in EITHER and the answer changes what you ` +
+                `do next, ask with action:ask_user instead of guessing — one round of asking ` +
+                `beats three rounds of a command failing in the wrong shell:\n` +
+                `\`\`\`action:ask_user\nheader: Shell\nquestion: Which shell should run this?\n` +
+                `options:\n` +
+                `- WSL — POSIX tools, the project's build and test commands\n` +
+                `- PowerShell — Windows services, registry, Windows-only programs\n\`\`\`\n\n`;
+        }
+
+        // Windows without WSL: PowerShell is all there is.
+        if (env.platform === 'windows' && env.powershell) {
+            return `Shell command. You are on ${osName}, and WSL is NOT installed – ` +
+                `every command runs in Windows PowerShell. Do not ask for WSL and do not ` +
+                `write POSIX commands: no \`&&\` (use \`;\`), \`Get-ChildItem\` instead of ` +
+                `\`ls\`, \`Get-Content\` instead of \`cat\`. Paths are <Drive>:\\….\n` +
+                `\`\`\`action:shell\nnpm test\n\`\`\`\n` +
+                `A \`shell:\` header is pointless here; leave it out.\n\n`;
+        }
+
+        // Linux, macOS – and Windows without any usable shell, where saying so
+        // is more useful than describing one that is missing.
+        if (env.platform === 'windows') {
+            return `Shell command. You are on ${osName}, but neither WSL nor PowerShell ` +
+                `was found. Shell commands will fail – solve the task with the reading and ` +
+                `writing tools, and say so if something genuinely needs a shell.\n\n`;
+        }
+
+        return `Shell command. You are on ${osName} – commands run in the system shell ` +
+            `(bash). There is no WSL and no PowerShell here: do not use a \`shell:\` header, ` +
+            `and do not write PowerShell cmdlets. Use POSIX tools – \`systemctl\`, \`ps\`, ` +
+            `\`ls\`, and \`&&\` works.\n` +
+            `\`\`\`action:shell\nnpm test\n\`\`\`\n\n`;
+    }
+
+    /**
      * Tool manual for the system prompt: all action blocks + workflow.
      *
      * Consciously split into two phases: first READ/ANALYZE, then WRITE. The assistant
@@ -1236,20 +1300,7 @@ and append it as the last action:shell block.` : '';
             `Replace a whole file (only when necessary – ALWAYS the complete content):\n` +
             `\`\`\`action:edit_file\npath: src/file.ts\n---\n<COMPLETE new file content>\n\`\`\`\n\n` +
             `Delete a file:\n\`\`\`action:delete_file\npath: src/old.ts\n\`\`\`\n\n` +
-            `Shell command – WSL/bash by default, for build, tests and git:\n` +
-            `\`\`\`action:shell\nnpm test\n\`\`\`\n` +
-            `Windows PowerShell when the command genuinely needs Windows (services, ` +
-            `registry, drivers, WinGet, Windows-only executables, COM). Mind the ` +
-            `syntax: no \`&&\`, use \`;\` – and \`Get-ChildItem\`, not \`ls\`:\n` +
-            `\`\`\`action:shell\nshell: powershell\n---\nGet-Service -Name Spooler | Select-Object Status, Name\n\`\`\`\n` +
-            `Prefer WSL. Only reach for PowerShell when WSL cannot do the job.\n` +
-            `If a command could sensibly run in EITHER and the answer changes what you ` +
-            `do next, ask with action:ask_user instead of guessing — one round of asking ` +
-            `beats three rounds of a command failing in the wrong shell:\n` +
-            `\`\`\`action:ask_user\nheader: Shell\nquestion: Which shell should run this?\n` +
-            `options:\n` +
-            `- WSL — POSIX tools, the project's build and test commands\n` +
-            `- PowerShell — Windows services, registry, Windows-only programs\n\`\`\`\n\n` +
+            AIEngine.shellManual() +
             `Web search (returns title, address and a short excerpt):\n` +
             `\`\`\`action:web_search\nquery: search terms\n\`\`\`\n\n` +
             `Fetch and read a page – almost always needed after a search, because the\n` +
@@ -2313,8 +2364,12 @@ and append it as the last action:shell block.` : '';
         const usingPowerShell = resolved === 'powershell';
         const shellLabel = usingPowerShell ? 'PowerShell' : 'WSL';
 
-        // The other shell is only worth offering where it exists and is allowed.
-        const otherAvailable = process.platform === 'win32'
+        // The other shell is only worth offering where it is actually INSTALLED
+        // and allowed. Offering a switch to something that is not there turns one
+        // click into a failed command – on Linux there is no PowerShell, and
+        // Windows without WSL has no other side either.
+        const env = ShellRunner.environment();
+        const otherAvailable = env.platform === 'windows' && env.wsl && env.powershell
             && (usingPowerShell || config.get<boolean>('allowPowerShell', true));
         const switchLabel = usingPowerShell ? 'Run in WSL' : 'Run in PowerShell';
 
